@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import SessionLocal, get_db
-from ..models import AuditEvent, Batch, Ticket, UploadedFile
+from ..models import AuditEvent, Batch, Project, Ticket, UploadedFile
 from ..schemas import BatchOut, TicketOut, TicketPatch
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
@@ -56,12 +56,19 @@ def _run_batch(batch_id: int, only_failed: bool = False) -> None:
 async def create_batch(
     background: BackgroundTasks,
     layout: str = Form("single"),
+    project_id: int | None = Form(None),
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
 ):
     if layout not in ("single", "grid_2x2"):
         raise HTTPException(422, "layout must be 'single' or 'grid_2x2'")
-    batch = Batch(layout=layout, status="uploaded")
+    if project_id is not None:
+        project = db.get(Project, project_id)
+        if not project:
+            raise HTTPException(404, "Project not found")
+        if project.status != "active":
+            raise HTTPException(409, "Project is archived; unarchive it to upload more tickets")
+    batch = Batch(layout=layout, status="uploaded", project_id=project_id)
     db.add(batch)
     db.flush()
     upload_dir = settings.storage_dir / "uploads" / str(batch.id)

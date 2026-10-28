@@ -1,6 +1,8 @@
 # TicketFlow (Phase 1 vertical slice)
 
-Upload a scanned PDF of delivery tickets -> split into individual tickets -> extract six fields with a vision model -> review/correct/verify -> download Excel.
+Upload scanned delivery tickets to a project -> split into individual tickets -> extract six fields with a vision model -> review/correct/verify -> price -> dashboard, filterable records, Excel export.
+
+Pages: Dashboard, Projects, Upload & Review, Records (filters + filtered export), Suppliers & Pricing.
 
 ## Architecture (deliberately small)
 
@@ -36,7 +38,7 @@ npm install
 npm run dev                   # http://localhost:3000
 ```
 
-Try `backend/sample_4_tickets.pdf` (synthetic, printed-style, not handwriting) with layout "Four tickets (2x2)".
+Create a project first (Projects page), then try `backend/sample_4_tickets.pdf` (synthetic, printed-style, not handwriting) with layout "Four tickets (2x2)".
 
 Privacy note: with a key set, cropped ticket images are sent to the Anthropic API for extraction. Disclose this to
 any customer before using their documents.
@@ -56,6 +58,6 @@ cd backend && source .venv/bin/activate && pytest -q
 
 ## Not built yet (by design)
 
-ZIP upload, manual crop boxes, projects, dashboard, filtering, auth, Alembic migrations.
+ZIP upload, manual crop boxes, auth/multi-company, Alembic migrations, deployment, invoice matching.
 
 Note: the SQLite file is created with create_all, which does not alter existing tables. If you ran an earlier version, delete backend/ticketflow.db once.

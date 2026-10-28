@@ -1,7 +1,8 @@
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+export type Project = { id: number; code: string; name: string; job_location: string | null; description: string | null; status: string };
 export type FileOut = { id: number; original_name: string; status: string; error: string | null };
-export type Batch = { id: number; layout: string; status: string; created_at: string; files: FileOut[] };
+export type Batch = { id: number; project_id: number | null; layout: string; status: string; created_at: string; files: FileOut[] };
 export type Ticket = {
   id: number;
   batch_id: number;
@@ -40,9 +41,10 @@ async function check(res: Response) {
   return res;
 }
 
-export async function uploadBatch(files: File[], layout: string): Promise<Batch> {
+export async function uploadBatch(files: File[], layout: string, projectId?: number): Promise<Batch> {
   const form = new FormData();
   form.append("layout", layout);
+  if (projectId !== undefined) form.append("project_id", String(projectId));
   files.forEach((f) => form.append("files", f));
   return (await check(await fetch(`${API}/api/batches`, { method: "POST", body: form }))).json();
 }
@@ -107,4 +109,35 @@ export async function saveRate(supplier_id: number, material_id: number, unit_pr
 }
 export async function deleteItem(kind: "suppliers" | "materials" | "rates", id: number) {
   await check(await fetch(`${API}/api/${kind}/${id}`, { method: "DELETE" }));
+}
+
+export type Filters = { project_id?: string; supplier?: string; material?: string; status?: string; date_from?: string; date_to?: string };
+const qs = (f: Filters) => {
+  const p = new URLSearchParams();
+  Object.entries(f).forEach(([k, v]) => v && p.set(k, v));
+  const t = p.toString();
+  return t ? `?${t}` : "";
+};
+export async function listProjects(includeArchived = false): Promise<Project[]> {
+  return (await check(await fetch(`${API}/api/projects?include_archived=${includeArchived}`))).json();
+}
+export async function createProject(body: { code: string; name: string; job_location?: string; description?: string }) {
+  await check(await fetch(`${API}/api/projects`, json("POST", body)));
+}
+export async function setProjectStatus(id: number, status: "active" | "archived") {
+  await check(await fetch(`${API}/api/projects/${id}`, json("PATCH", { status })));
+}
+export async function getRecords(f: Filters): Promise<Ticket[]> {
+  return (await check(await fetch(`${API}/api/records${qs(f)}`))).json();
+}
+export const recordsExportUrl = (f: Filters) => `${API}/api/records/export.xlsx${qs(f)}`;
+
+export type Group = { name: string; tickets: number; tons: string | number; cost: string | number };
+export type Dashboard = {
+  tickets: number; needs_review: number; verified: number; total_tons: string | number; total_cost: string | number;
+  unpriced_tickets: number; by_supplier: Group[]; by_material: Group[];
+  recent_batches: { id: number; status: string; created_at: string; files: number; project: string | null }[];
+};
+export async function getDashboard(projectId?: string): Promise<Dashboard> {
+  return (await check(await fetch(`${API}/api/dashboard${projectId ? `?project_id=${projectId}` : ""}`))).json();
 }

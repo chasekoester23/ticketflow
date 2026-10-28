@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import Base, engine
-from .routers import api, pricing
+from .routers import api, pricing, projects, reports
 
 
 @asynccontextmanager
@@ -19,6 +19,8 @@ app = FastAPI(title="TicketFlow", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"], allow_headers=["*"])
 app.include_router(api.router)
 app.include_router(pricing.router)
+app.include_router(projects.router)
+app.include_router(reports.router)
 
 
 @app.get("/health")

@@ -41,9 +41,21 @@ class SupplierRate(Base):
     material: Mapped[Material] = relationship()
 
 
+class Project(Base):
+    __tablename__ = "projects"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(50), unique=True)  # the user's own project/job number
+    name: Mapped[str] = mapped_column(String(200))
+    job_location: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | archived
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Batch(Base):
     __tablename__ = "batches"
     id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     layout: Mapped[str] = mapped_column(String(20))  # single | grid_2x2
     status: Mapped[str] = mapped_column(String(20), default="uploaded")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

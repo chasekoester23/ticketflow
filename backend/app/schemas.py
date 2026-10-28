@@ -15,6 +15,7 @@ class FileOut(BaseModel):
 class BatchOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    project_id: int | None = None
     layout: str
     status: str
     created_at: datetime

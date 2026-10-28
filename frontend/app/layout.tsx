@@ -12,7 +12,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <span className="text-lg font-semibold tracking-tight">TicketFlow</span>
             <span className="ml-3 text-sm text-slate-500">Material ticket processing</span>
             <nav className="ml-8 flex gap-4 text-sm">
-              <a href="/" className="text-slate-700 hover:underline">Tickets</a>
+              <a href="/" className="text-slate-700 hover:underline">Dashboard</a>
+              <a href="/projects" className="text-slate-700 hover:underline">Projects</a>
+              <a href="/upload" className="text-slate-700 hover:underline">Upload &amp; Review</a>
+              <a href="/records" className="text-slate-700 hover:underline">Records</a>
               <a href="/pricing" className="text-slate-700 hover:underline">Suppliers &amp; Pricing</a>
             </nav>
           </div>
