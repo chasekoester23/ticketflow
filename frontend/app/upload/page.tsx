@@ -391,7 +391,16 @@ function ReviewForm({
         </div>
       ))}
       <div className="rounded bg-slate-50 p-3 text-sm">
-        {ticket.unit_price ? (
+        {ticket.status === "verified" && ticket.price_snapshot_state === "priced" && (
+          <p className="mb-2 text-emerald-800">Unit price locked at verification. Later changes to supplier rates will not change this ticket.</p>
+        )}
+        {ticket.status === "verified" && ticket.price_snapshot_state === null && (
+          <p className="mb-2 font-medium text-amber-800">Legacy record: the historical rate is unknown. Enter the documented original rate as an override, then save and verify again.</p>
+        )}
+        {ticket.status === "verified" && ticket.price_snapshot_state === "unpriced" && (
+          <p className="mb-2 font-medium text-amber-800">Verified without a price. Enter the correct rate as an override, then save and verify again.</p>
+        )}
+        {ticket.unit_price !== null ? (
           <p>
             Rate: ${ticket.unit_price}/ton ({ticket.price_source === "override" ? "manual override" : "supplier rate"})
             {ticket.cost ? <> · Cost: <strong>${ticket.cost}</strong></> : " · cost appears after you verify the tonnage"}
