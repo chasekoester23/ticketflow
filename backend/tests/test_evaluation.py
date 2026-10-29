@@ -189,7 +189,10 @@ def test_cli_prepare_check_run_and_refuse_overwriting_report(tmp_path, monkeypat
         item["expected"] = dict(TICKETS[idx])
     manifest.write_text(json.dumps(raw))
     fake = KnownAnswers(wrong=True)
-    monkeypatch.setattr(cli, "get_extractor", lambda: fake)
+    monkeypatch.setattr(
+        cli, "make_benchmark_extractor",
+        lambda provider, *, model=None: fake,
+    )
     monkeypatch.setattr("sys.argv", [
         "evaluate_extraction.py", "check", "--manifest", str(manifest),
     ])
@@ -201,7 +204,10 @@ def test_cli_prepare_check_run_and_refuse_overwriting_report(tmp_path, monkeypat
     ])
     assert cli.main() == 0
     assert fake.calls == 4
-    report = json.loads((tmp_path / "accuracy-report.json").read_text())
+    report = json.loads((tmp_path / "accuracy-report-gemini.json").read_text())
+    assert report["provider"] == "gemini"
+    assert report["model"] == "gemini-3.1-pro-preview"
+    assert len(report["dataset_sha256"]) == 64
     assert report["ticket_exact_accuracy"] == .75
     assert report["fields"]["tonnage"]["non_null_accuracy"] == .75
     assert report["cases"][1]["fields"]["tonnage"] == "mismatch"
