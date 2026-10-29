@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { getAuthMe, logOut } from "../lib/api";
 
-type Owner = { id: number; username: string };
+type Owner = { id: number; username: string; organization_name?: string | null };
 
 export default function AuthShell({ children }: { children: ReactNode }) {
   const [owner, setOwner] = useState<Owner | null>(null);
@@ -49,7 +49,10 @@ export default function AuthShell({ children }: { children: ReactNode }) {
           <a href="/pricing" className="text-slate-700 hover:underline">Suppliers &amp; Pricing</a>
         </nav>
         <div className="ml-auto flex items-center gap-3 text-xs text-slate-600">
-          <span>{owner.username}</span>
+          <span className="max-w-44 truncate" title={owner.organization_name ?? "Workspace"}>
+            {owner.organization_name ?? "Workspace"}
+          </span>
+          <span className="border-l border-slate-200 pl-3">{owner.username}</span>
           <button type="button" className="font-semibold underline hover:text-slate-900"
             onClick={async () => {
               try { await logOut(); } finally { window.location.replace("/login"); }
