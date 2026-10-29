@@ -64,16 +64,15 @@ def main() -> int:
             print(f"CHECK OK: {results['labeled_tickets_checked']} labeled ticket crops validated; zero API calls.")
             return 0
 
-        # Preflight the entire manifest and every crop before incurring charges.
-        evaluate(cases, check_only=True)
-        extractor = get_extractor()
-        report = evaluate(cases, extractor)
+        # Check the output path and *all* crops before making paid calls.
         output = (args.output or args.manifest.resolve().parent / "accuracy-report.json").resolve()
-        # Keep reports in the local evaluation directory by default, not in the repo.
         if output.parent != args.manifest.resolve().parent:
             raise DatasetError("Write reports beside the manifest, not into the source-code folder")
         if output.exists():
             raise DatasetError("Accuracy report already exists; choose a new output filename")
+        evaluate(cases, check_only=True)
+        extractor = get_extractor()
+        report = evaluate(cases, extractor)
         output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(f"Benchmark: {report['tickets']} independently labeled tickets.")
         print(f"All six fields correct: {report['tickets_all_six_correct']} / {report['tickets']} ({report['ticket_exact_accuracy']:.1%})")
