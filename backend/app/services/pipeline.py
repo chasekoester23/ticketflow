@@ -47,11 +47,13 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
     crops_dir = settings.storage_dir / "crops" / str(file.batch_id)
     crops_dir.mkdir(parents=True, exist_ok=True)
     any_failure = False
+    detected_crops = 0
 
     for page_no, page_img in enumerate(pages, start=1):
         for crop in splitter.split_page(page_img, layout):
-            if layout != "single" and splitter.is_blank(crop.image):
-                continue  # empty quadrant (fewer than 4 tickets on the scan)
+            if splitter.is_blank(crop.image):
+                continue  # blank single-page scan or empty quadrant
+            detected_crops += 1
             key = (page_no, crop.position)
             visited.add(key)
             ticket = existing.get(key)
@@ -119,6 +121,18 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
             ticket.status = "needs_review"  # tonnage must be human-confirmed
             ticket.tonnage_confirmed = False
             db.add(ticket)
+
+    # Never report an all-white (or effectively empty) upload as completed.
+    # A contractor must see an explicit failure instead of an empty "success"
+    # queue that appears to account for every original delivery.
+    if detected_crops == 0:
+        file.status = "failed"
+        file.error = (
+            "No ticket content detected in this file. Inspect the original "
+            "scan and layout, then upload a corrected document."
+        )
+        db.commit()
+        return
 
     # A failed crop that was not encountered again must not silently disappear.
     any_failure = any_failure or any(
