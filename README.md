@@ -43,6 +43,35 @@ Create a project first (Projects page), then try `backend/sample_4_tickets.pdf` 
 Privacy note: with a key set, cropped ticket images are sent to the Anthropic API for extraction. Disclose this to
 any customer before using their documents.
 
+## Ticket review workflow
+
+Every uploaded ticket begins in **Needs review**. The AI never automatically
+accepts quantities or costs. After processing a batch, open Upload & Review:
+
+1. Compare the **original cropped scan** (left) to editable extracted values
+   (right). Use image zoom, rotation or Open full image to inspect handwriting.
+2. Correct any fields and click **Accept & next** to save, validate, verify and
+   advance to the next unreviewed ticket. The backend rejects incomplete or
+   invalid tickets; verified quantities alone count in project financial totals.
+3. Click **Flag for later** for ambiguous numbers or an unreadable image. This
+   saves edits, defers approval, and keeps the ticket visible in the separate
+   Flagged queue as well as Records and Excel. Flagged values **do not** count
+   as verified tonnage/cost.
+4. Switching tickets with unsaved edits prompts before discarding changes.
+   Browser navigation/closing warns about unsaved data. Use Save changes to
+   store a correction without approving it.
+5. **Skip non-ticket** excludes a blank or irrelevant scan from financial totals
+   and Excel; this action requires confirmation.
+
+Use `/upload?batch=<batch_id>&ticket=<ticket_id>` to open a specific record.
+Automatic extraction and human acceptance remain separate by design.
+
+**Manual browser QA before a customer pilot:** open the sample 2×2 PDF, verify
+image/text alignment and navigation, deliberately edit a field and try to leave
+without saving, flag a ticket, revisit it from Records, correct and accept it,
+confirm the progress counters, export the workbook, and repeat at mobile/tablet
+widths. Automated backend and build checks do not replace these user tests.
+
 ## Check your API key
 
 ```bash

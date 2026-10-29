@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Filters, Project, Ticket, getRecords, listProjects, recordsExportUrl } from "../../lib/api";
 
-const STATUS_LABEL: Record<string, string> = { needs_review: "Needs review", verified: "Verified", skipped: "Skipped", failed: "Failed" };
+const STATUS_LABEL: Record<string, string> = { needs_review: "Needs review", verified: "Verified", flagged: "Flagged", skipped: "Skipped", failed: "Failed" };
 
 export default function RecordsPage() {
   const [filters, setFilters] = useState<Filters>({});
@@ -42,7 +42,7 @@ export default function RecordsPage() {
         <label className="text-xs text-slate-500">To<input type="date" className={`${input} ml-2`} value={filters.date_to ?? ""} onChange={set("date_to")} /></label>
         <a href={recordsExportUrl(filters)} className="ml-auto rounded bg-emerald-700 px-4 py-2 text-sm font-medium text-white">Download Excel (filtered)</a>
       </div>
-      <p className="text-sm text-slate-600">{rows.length} records · {tons.toLocaleString(undefined, { maximumFractionDigits: 2 })} tons</p>
+      <p className="text-sm text-slate-600">{rows.length} records · {tons.toLocaleString(undefined, { maximumFractionDigits: 2 })} extracted tons (includes unverified quantities)</p>
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-100 text-xs uppercase text-slate-500">
@@ -60,7 +60,7 @@ export default function RecordsPage() {
                 <td className="px-3 py-2">{t.unit_price ?? "—"}</td>
                 <td className="px-3 py-2">{t.cost ? `$${t.cost}` : "—"}</td>
                 <td className="px-3 py-2">{STATUS_LABEL[t.status]}{t.duplicates.length > 0 && <span className="ml-2 rounded bg-red-100 px-1.5 text-xs text-red-800" title={t.duplicates.join("\n")}>dup?</span>}</td>
-                <td className="px-3 py-2"><a className="underline" href={`/upload?batch=${t.batch_id}`}>Open</a></td>
+                <td className="px-3 py-2"><a className="underline" href={`/upload?batch=${t.batch_id}&ticket=${t.id}`}>Open</a></td>
               </tr>
             ))}
           </tbody>

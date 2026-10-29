@@ -62,7 +62,7 @@ export default function DashboardPage() {
         <>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
             <Card label="Tickets" value={data.tickets} />
-            <Card label="Need review" value={data.needs_review} />
+            <Card label="Need review" value={data.needs_review} sub={data.flagged ? `${data.flagged} flagged for later` : undefined} />
             <Card label="Verified" value={data.verified} />
             <Card label="Verified tons" value={tons(data.total_tons)} sub={`${tons(data.pending_tons)} unverified tons excluded`} />
             <Card label="Verified material cost" value={money(data.total_cost)} sub={data.unpriced_tickets ? `${data.unpriced_tickets} verified tickets lack a rate` : "Cost shown only for verified, priced tickets"} />

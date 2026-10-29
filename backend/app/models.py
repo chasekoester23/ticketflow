@@ -109,7 +109,7 @@ class Ticket(Base):
 
     raw_extraction: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # untouched model output
     flags: Mapped[list] = mapped_column(JSON, default=list)  # deterministic review flags
-    status: Mapped[str] = mapped_column(String(20), default="needs_review")  # needs_review|verified|skipped|failed
+    status: Mapped[str] = mapped_column(String(20), default="needs_review")  # needs_review|verified|flagged|skipped|failed
     tonnage_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -229,6 +229,21 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db)):
     return _out(db, t)
 
 
+@router.post("/tickets/{ticket_id}/flag", response_model=TicketOut)
+def flag_ticket(ticket_id: int, db: Session = Depends(get_db)):
+    """Defer a questionable ticket without approving its quantity or cost."""
+    t = _ticket_or_404(db, ticket_id)
+    if t.status != "flagged":
+        db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="flagged"))
+    t.status = "flagged"
+    t.tonnage_confirmed = False
+    t.price_snapshot_state = "pending"
+    t.applied_unit_price = None
+    t.applied_price_source = None
+    db.commit()
+    return _out(db, t)
+
+
 @router.post("/tickets/{ticket_id}/skip", response_model=TicketOut)
 def skip_ticket(ticket_id: int, db: Session = Depends(get_db)):
     t = _ticket_or_404(db, ticket_id)
