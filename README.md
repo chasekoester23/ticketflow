@@ -71,12 +71,59 @@ the application is NOT yet safe for public deployment to unrelated contractors.
    with insecure cookies. The UI/API must also be configured as a
    same-site pair to use SameSite=Lax session cookies.
 
-**Security limitations:** These are preliminary owner-access controls, not a
-complete production security assessment. Multi-company authorization,
-production-grade distributed login rate limits, account recovery, HTTPS
-hosting, durable job workers, private object storage, audit identity,
-and backups are not yet implemented. Authentication alone must not
-be mistaken for customer-ready tenant isolation.
+**Security limitations:** Owner login and basic organization-scoped access
+controls are present, but they have not received an independent security review.
+Production-grade distributed login rate limits, account recovery, HTTPS hosting,
+durable job workers, private object storage, audit identity and backups are
+not yet implemented. Do not mistake passing security regression tests for
+a completed customer-ready SaaS platform.
+
+## Company data isolation (Batch #9)
+
+Each account now belongs to exactly one organization. Every operational API
+scopes access by **the organization stored on the signed-in user**, not by any
+client-supplied company ID. This includes project creation, uploads, ticket
+images, edits, audit history, retry, dashboards, records, Excel export,
+supplier/material catalogs and rates. Duplicate warnings are scoped to
+one company; company A cannot see company B's documents, prices or counts.
+
+**Existing local installation: do not delete or reset the database.**
+First stop both dev servers, then from your TicketFlow checkout:
+
+```bash
+git pull origin main
+cp backend/ticketflow.db backend/ticketflow-before-orgs.db
+cd backend
+python -m alembic upgrade head
+```
+
+The migration adds an `Original workspace` organization and **assigns
+all existing accounts, projects, uploads and supplier rates to it**. Your
+existing `owner` password and TEST-001 project remain attached to this
+workspace. Migration #9 rebuilds several SQLite tables to replace globally
+unique supplier names, material names and project codes with per-company
+uniqueness. **Make the backup before running it.** Existing tickets, cropped
+images, financial price snapshots and audit events are left in place.
+
+For local *development testing only*, a trusted machine administrator can
+provision another company plus its owner:
+
+```bash
+python scripts/create_company.py --name "Demo Company B" --username companybowner
+```
+
+Enter a new password at the terminal. The script refuses duplicate usernames.
+There is still **no public signup and no browser-based tenant switching**.
+
+**Security boundary / deployment caution:** This code adds backend company
+filters and regression tests using two authenticated users. It is not a
+completed SaaS security program. A production launch still needs a proper
+identity and permission model for multiple staff within one company, external
+security review, private cloud document storage, HTTPS, backups, a durable job
+worker, distributed login rate limiting, server-side request body limits,
+monitoring and a hardened database/deployment setup. SQLite remains a local
+development choice. Do not invite real contractors or put confidential data
+on a public server until those controls are complete.
 
 ## Ticket review workflow
 
