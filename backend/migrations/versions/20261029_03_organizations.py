@@ -44,10 +44,10 @@ def upgrade() -> None:
     for table in OWNED_TABLES:
         columns = {column["name"] for column in sa.inspect(bind).get_columns(table)}
         if "organization_id" not in columns:
-            op.add_column(table, sa.Column(
-                "organization_id", sa.Integer(), sa.ForeignKey("organizations.id"),
-                nullable=True,
-            ))
+            # SQLite cannot ALTER TABLE to add a foreign key in place.
+            # Add the nullable integer first, backfill it, then use one
+            # Alembic batch rebuild for NOT NULL + FK + tenant uniqueness.
+            op.add_column(table, sa.Column("organization_id", sa.Integer(), nullable=True))
         bind.execute(
             sa.text(f"UPDATE {table} SET organization_id = :id WHERE organization_id IS NULL"),
             {"id": first_id},
@@ -75,13 +75,24 @@ def upgrade() -> None:
             col["nullable"] for col in sa.inspect(bind).get_columns(table)
             if col["name"] == "organization_id"
         )
-        if nullable or old_unique or (unique and not has_new):
+        foreign_keys = sa.inspect(bind).get_foreign_keys(table)
+        has_fk = any(
+            "organization_id" in fk.get("constrained_columns", [])
+            and fk.get("referred_table") == "organizations"
+            for fk in foreign_keys
+        )
+        if nullable or old_unique or not has_fk or (unique and not has_new):
             with op.batch_alter_table(table, naming_convention=conv) as batch:
                 if old_unique:
                     batch.drop_constraint(old_unique, type_="unique")
                 if nullable:
                     batch.alter_column(
                         "organization_id", existing_type=sa.Integer(), nullable=False,
+                    )
+                if not has_fk:
+                    batch.create_foreign_key(
+                        f"fk_{table}_organization", "organizations",
+                        ["organization_id"], ["id"],
                     )
                 if unique and not has_new:
                     batch.create_unique_constraint(new_name, ["organization_id", old_col])
