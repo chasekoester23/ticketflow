@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   review-browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
@@ -30,7 +30,7 @@ jobs:
       - name: Install app dependencies
         run: npm ci
       - name: Install browser test runner without modifying the lockfile
-        run: npm install --no-save --package-lock=false @playwright/test@1.56.1
+        run: npm install --no-save --package-lock=false @playwright/test@1.61.0
       - name: Install test browser
         run: npx playwright install --with-deps chromium
       - name: Test ticket review interactions
