@@ -172,3 +172,56 @@ export type Dashboard = {
 export async function getDashboard(projectId?: string): Promise<Dashboard> {
   return (await check(await apiFetch(`${API}/api/dashboard${projectId ? `?project_id=${projectId}` : ""}`))).json();
 }
+
+
+// A supplier invoice LINE, manually entered and dynamically reconciled against
+// approved tickets. Comparison status is NOT payment approval.
+export type InvoiceLineInput = {
+  project_id: number;
+  invoice_number: string;
+  supplier_name: string;
+  material_name: string;
+  date_from: string;
+  date_to: string;
+  billed_tons: string;
+  billed_unit_price: string;
+  billed_subtotal: string;
+};
+export type InvoiceTicketMatch = {
+  ticket_id: number; batch_id: number; ticket_number: string | null;
+  tons: string | null; confirmed_price: string | null;
+};
+export type InvoiceLineComparison = InvoiceLineInput & {
+  id: number;
+  billed_extension: string;
+  invoice_arithmetic_difference: string;
+  verified_tons: string;
+  verified_subtotal: string | null;
+  quantity_difference: string;
+  subtotal_difference: string | null;
+  verified_count: number;
+  pending_count: number;
+  unpriced_count: number;
+  rate_mismatch_count: number;
+  status: "matches" | "discrepancy" | "incomplete" | "no_verified_tickets";
+  warnings: string[];
+  tickets: InvoiceTicketMatch[];
+  created_at: string;
+};
+export async function getInvoiceComparisons(): Promise<InvoiceLineComparison[]> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons"))).json();
+}
+export async function saveInvoiceComparison(
+  body: InvoiceLineInput, id?: number,
+): Promise<InvoiceLineComparison> {
+  const suffix = id !== undefined ? "/" + id : "";
+  return (await check(await apiFetch(
+    API + "/api/invoice-comparisons" + suffix,
+    json(id !== undefined ? "PUT" : "POST", body),
+  ))).json();
+}
+export async function getInvoiceHistory(id: number): Promise<{
+  field: string; old: string | null; new: string | null; at: string;
+}[]> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/audit"))).json();
+}
