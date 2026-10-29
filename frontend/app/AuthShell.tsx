@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { getAuthMe, logOut } from "../lib/api";
 
 type Owner = { id: number; username: string; organization_name?: string | null };
-type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers";
+type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers";
 
 function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
@@ -14,6 +14,7 @@ function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
     tickets: <><path d="M5 3h11l3 3v15H5zM15 3v4h4M8 11h8M8 15h8M8 19h5" /></>,
     records: <><path d="M4 4h16v16H4zM4 10h16M9 10v10M12 6h5M12 14h5M12 17h4" /></>,
     rates: <><rect x="3" y="6" width="18" height="15" rx="1.5" /><path d="M7 6V3h10v3M3 12h18M7 16h4" /></>,
+    invoices: <><path d="M5 3h14v18l-3-2-4 2-4-2-3 2zM8 8h8M8 12h8M8 16h5" /></>,
     menu: <path d="M4 7h16M4 12h16M4 17h16" />,
     close: <path d="M5 5l14 14M19 5L5 19" />,
     arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
@@ -29,6 +30,7 @@ const links: { href: string; label: string; icon: IconName; description?: string
   { href: "/projects", label: "Projects", icon: "projects" },
   { href: "/upload", label: "Ticket intake", icon: "tickets" },
   { href: "/records", label: "Delivery records", icon: "records" },
+  { href: "/invoices", label: "Invoice comparison", icon: "invoices" },
   { href: "/pricing", label: "Suppliers & rates", icon: "rates" },
 ];
 

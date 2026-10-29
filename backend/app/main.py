@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import Base, engine
-from .routers import api, auth as auth_router, pricing, projects, reports
+from .routers import api, auth as auth_router, invoices, pricing, projects, reports
 from .auth import current_user
 
 
@@ -80,6 +80,7 @@ async def csrf_header_gate(request: Request, call_next):
 app.include_router(auth_router.router)
 app.include_router(api.router, dependencies=[Depends(current_user)])
 app.include_router(pricing.router, dependencies=[Depends(current_user)])
+app.include_router(invoices.router, dependencies=[Depends(current_user)])
 app.include_router(projects.router, dependencies=[Depends(current_user)])
 app.include_router(reports.router, dependencies=[Depends(current_user)])
 

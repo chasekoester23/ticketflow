@@ -130,7 +130,7 @@ def test_migration_preserves_legacy_verification_without_guessing_rate(tmp_path)
         assert con.execute("SELECT price_snapshot_state FROM tickets WHERE id=1").fetchone()[0] is None
         assert con.execute("SELECT applied_unit_price FROM tickets WHERE id=1").fetchone()[0] is None
         assert con.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == 2
-        assert con.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261029_05"
+        assert con.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261029_06"
 
     # Running the migration twice should be safe/idempotent.
     command.upgrade(cfg, "head")
