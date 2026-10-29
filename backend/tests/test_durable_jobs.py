@@ -214,6 +214,9 @@ def test_migration_enqueues_preexisting_interrupted_batches_without_touching_app
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{target}")
     command.upgrade(cfg, "20261029_03")
     with sqlite3.connect(target) as db:
+        # Match a genuinely old physical schema. New installs created by
+        # current metadata already have later additive columns.
+        db.execute("ALTER TABLE batches DROP COLUMN intake_mode")
         db.execute(
             "INSERT INTO batches(id,organization_id,layout,status,created_at) "
             "VALUES (11,1,'grid_2x2','processing',CURRENT_TIMESTAMP)"
