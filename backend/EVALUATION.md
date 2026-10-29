@@ -26,6 +26,43 @@ provider on an independently hand-labeled sample.
   multi-page PDFs, and known difficult tickets. Start with 25–50; expand after
   seeing the error types. The sample is not automatically representative.
 
+## No-cost preflight: inspect every physical crop before evaluating handwriting
+
+When you receive authorized paper tickets, first run the local **scan preview**
+without configuring a Gemini key:
+
+\`\`\`bash
+# From backend/, with scans privately stored in the git-ignored folder:
+python scripts/preview_scans.py --scans evaluation_data --layout grid_2x2
+\`\`\`
+
+Use \`--layout single\` if each file/page contains only one whole ticket. It
+creates a new \`evaluation_data/scan_preview/\` folder containing:
+- \`pages/page-*.jpg\`: side-by-side previews labeled by crop position.
+- \`crops/crop-*.png\`: full-resolution individual crops for reading faint text.
+- \`reconciliation.csv\`: a row for **every potential position**, including
+  blank-looking crops, with \`human_ticket_present\` left empty.
+
+**Compare each crop against the original scan.** Mark each row's
+\`human_ticket_present\` as \`yes\`, \`no\`, or \`uncertain\`, with notes if
+needed. The \`looks_blank\` column is only a heuristic prediction. Even faint
+but genuine handwritten tickets can be labeled blank by software. Confirm the
+actual sheet count before claiming TicketFlow captured every delivery. Correct
+orientation or rescans as needed; do not assume a nonblank crop contains a
+ticket or a blank-looking crop does not.
+
+The preview script never calls Gemini, never connects to a server, never
+touches the database, and never modifies the original scans. It refuses to
+overwrite an existing preview directory. These previews **still contain
+possibly sensitive information**: keep them local, consented, and inside the
+git-ignored evaluation directory. If the folder already exists and you need
+another run, use a NEW direct subfolder name with
+\`--output evaluation_data/preview-second-pass\` rather than deleting old work.
+
+Run \`prepare\` only after deciding which crops are real tickets. The generated
+labels file still needs separate independent human annotation; it will not
+automatically take labels from the reconciliation CSV.
+
 ## Step 1: Prepare scans and ground truth
 
 From the `backend/` directory:
