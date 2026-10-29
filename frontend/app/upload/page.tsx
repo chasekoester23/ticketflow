@@ -94,7 +94,13 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [batch, refresh]);
 
-  const addFiles = (list: FileList | null) => list && setFiles((prev) => [...prev, ...Array.from(list)]);
+  const addFiles = (list: FileList | null) => {
+    if (!list) return;
+    // FileList is live. Snapshot it BEFORE clearing the file input; React
+    // may run a state updater after the input's FileList has become empty.
+    const selectedFiles = Array.from(list);
+    if (selectedFiles.length) setFiles((prev) => [...prev, ...selectedFiles]);
+  };
 
   async function onUpload() {
     if (formDirty && !window.confirm("You have unsaved ticket corrections. Discard them and start a new upload?")) return;
