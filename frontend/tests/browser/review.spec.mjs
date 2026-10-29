@@ -183,7 +183,7 @@ test("a rejected verification never advances or counts unapproved tonnage", asyn
 
 test("quick navigation uses actual ticket numbers, and keyboard movement guards unsaved work", async ({ page }) => {
   const { log } = await launch(page);
-  await expect(page.getByRole("group", { name: "Ticket number quick navigation" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Review queue quick navigation" })).toBeVisible();
   await page.getByRole("button", { name: "Open ticket 2: 10483" }).click();
   await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
   await page.keyboard.press("Alt+ArrowLeft");
