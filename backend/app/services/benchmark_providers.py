@@ -8,8 +8,6 @@ Do not make assertions of handwriting accuracy from fake-client unit tests.
 """
 from __future__ import annotations
 
-import base64
-
 from PIL import Image
 
 from ..config import settings
