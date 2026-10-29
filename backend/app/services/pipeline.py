@@ -116,14 +116,15 @@ def process_batch(db: Session, batch_id: int, extractor: Extractor, only_failed:
     for file in batch.files:
         if only_failed and file.status not in ("failed", "uploaded", "processing"):
             continue
+        file_id = file.id
         try:
             process_file(db, file, batch.layout, extractor)
         except Exception:
-            logger.exception("Unexpected failure processing stored file id %s", file.id)
+            logger.exception("Unexpected failure processing stored file id %s", file_id)
             db.rollback()
             # An unexpected crop, storage or API error should not prevent
             # processing the other files or erase already reviewed tickets.
-            recovered = db.get(UploadedFile, file.id)
+            recovered = db.get(UploadedFile, file_id)
             recovered.status = "failed"
             recovered.error = "Unexpected file-processing error. Please retry."
             db.commit()
