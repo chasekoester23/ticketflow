@@ -72,6 +72,22 @@ without saving, flag a ticket, revisit it from Records, correct and accept it,
 confirm the progress counters, export the workbook, and repeat at mobile/tablet
 widths. Automated backend and build checks do not replace these user tests.
 
+## Measure real handwriting accuracy (separate from synthetic tests)
+
+Automated tests use known printed-style fixture values, **not live handwriting
+recognition**. A real pilot needs independently labeled scans and measured
+six-field extraction accuracy before any performance or time-saving claims.
+
+See [backend/EVALUATION.md](backend/EVALUATION.md) for the local-only protocol:
+prepare private label templates, check every original PDF crop without an API
+call, then run a consented sample through the configured provider and generate
+a field-by-field report. Real documents and labels belong under
+`backend/evaluation_data/` (Git-ignored), never in this repository.
+
+**Important:** this tool is a benchmark, not an alternate upload process.
+The contractor must still click **Accept & next** on every ticket in TicketFlow.
+Supplier invoices and financial decisions must rely on human-verified records.
+
 ## Check your API key
 
 ```bash
