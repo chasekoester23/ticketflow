@@ -118,9 +118,12 @@ def test_companies_cannot_read_modify_or_price_each_others_data(client):
         b_tickets = client.get(f"/api/batches/{b_batch}/tickets").json()
         assert len(b_tickets) == 4
         assert all(t["duplicates"] == [] for t in b_tickets), "Duplicate flags leaked across orgs"
+        # Company A's verified copy must NOT block an identical image owned by
+        # company B; duplicate-approval protection is strictly tenant scoped.
+        assert client.post(f"/api/tickets/{b_tickets[0]['id']}/verify").status_code == 200
         assert len(client.get("/api/records").json()) == 4
         assert len(client.get("/api/projects").json()) == 1
-        assert client.get("/api/dashboard").json()["verified"] == 0
+        assert client.get("/api/dashboard").json()["verified"] == 1
 
         # Verify old company still sees only its own records and prices.
         _login(client, "alice")

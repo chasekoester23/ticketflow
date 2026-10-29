@@ -43,15 +43,34 @@ def parse_date(value: str | None) -> date | None:
     return None
 
 
+# Never strip arbitrary OCR characters from a numeric field. For example,
+# "1O.5" (letter O), "12/3" and "1e2" must not become valid, wrong tons.
+# Accept only a literal number, optional grouped thousands, and a known unit.
+_TONNAGE_PATTERN = re.compile(
+    r"(?P<number>[+-]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?)"
+    r"(?:\s+(?:net\s+)?(?:tons?|tonnes?|t))?",
+    re.IGNORECASE,
+)
+
+
 def parse_tonnage(value) -> Decimal | None:
     if value is None or value == "":
         return None
+    match = _TONNAGE_PATTERN.fullmatch(str(value).strip())
+    if match is None:
+        return None
     try:
-        text = re.sub(r"[^\d.\-]", "", str(value))  # strips "tons", commas, spaces
-        d = Decimal(text)
+        amount = Decimal(match.group("number").replace(",", ""))
+        # Oversized/overprecise model outputs must fail review, never crash a
+        # worker or get silently truncated to the database's Numeric(12, 3).
+        if not amount.is_finite():
+            return None
+        rounded = amount.quantize(Decimal("0.001"))
+        if abs(rounded) >= Decimal("1000000000"):
+            return None
+        return rounded
     except (InvalidOperation, ValueError):
         return None
-    return d.quantize(Decimal("0.001"))
 
 
 def compute_flags(

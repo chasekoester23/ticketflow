@@ -65,6 +65,18 @@ def test_parse_tonnage():
     assert parse_tonnage("abc") is None and parse_tonnage(None) is None
 
 
+def test_parse_tonnage_never_salvages_ambiguous_ocr_digits():
+    # OCR uncertainty should become a visible missing quantity for review.
+    for text in ("1O.5", "12x3", "12/3", "1e2", "23,45", "9..5", "$24.5",
+                 "24.5 yd3", "NaN", "Infinity", "9" * 100,
+                 "999999999.9999"):
+        assert parse_tonnage(text) is None, text
+    assert parse_tonnage("24.5 tons") == Decimal("24.500")
+    assert parse_tonnage("24.5 NET TONS") == Decimal("24.500")
+    assert parse_tonnage("1,024.25") == Decimal("1024.250")
+    assert parse_tonnage("-3 tons") == Decimal("-3.000")  # validation flags nonpositive values
+
+
 def _flags(**kw):
     base = dict(ticket_number="1", delivery_date=date(2026, 1, 1), material_type="Sand", tonnage=Decimal("20"),
                 supplier="S", job_location="J", today=date(2026, 10, 28))

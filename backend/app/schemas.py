@@ -1,7 +1,7 @@
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 class FileOut(BaseModel):
@@ -60,3 +60,22 @@ class TicketPatch(BaseModel):
     supplier: str | None = None
     job_location: str | None = None
     unit_price_override: Decimal | None = Field(default=None, ge=0)
+
+    @field_validator("tonnage", "unit_price_override")
+    @classmethod
+    def fits_storage_precision(cls, value: Decimal | None, info: ValidationInfo) -> Decimal | None:
+        """Reject unrepresentable manual values before a DB write or audit event.
+
+        The API intentionally accepts additional decimal places and rounds to
+        the stored precision, but rounding may not exceed Numeric(12, scale).
+        """
+        if value is None:
+            return None
+        scale = 3 if info.field_name == "tonnage" else 4
+        try:
+            rounded = value.quantize(Decimal(1).scaleb(-scale))
+        except InvalidOperation as exc:
+            raise ValueError("Number exceeds supported storage precision") from exc
+        if not rounded.is_finite() or rounded >= Decimal(10) ** (12 - scale):
+            raise ValueError("Number exceeds supported storage precision")
+        return rounded

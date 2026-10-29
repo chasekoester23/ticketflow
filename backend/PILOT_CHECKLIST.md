@@ -97,6 +97,25 @@ Do not import fictional tickets into a real customer project.
 - Track approximate minutes per ticket, missing fields, recurring scan
   problems, and how many times the user had to correct information.
 
+## Edge-case protection (synthetic-tested; not a substitute for checking source documents)
+
+- If every page/crop in a file is blank or below the blank-detection threshold,
+  the file now **fails visibly**, instead of reporting an empty completed queue.
+  An isolated blank quadrant in a four-up scan is still omitted. Review the
+  detected ticket count against the original scan; lighter or clipped tickets
+  can still be missed. Upload a corrected scan if necessary.
+- Exact scanned-image duplicates are displayed as warnings. Once one copy is
+  **verified in the same company**, the server refuses to verify an identical
+  crop again; flag/skip the extra copy rather than double-counting tons/cost.
+  Matching ticket numbers or similar loads with nonidentical images remain
+  **advisory warnings**, not a guarantee of uniqueness or fraud detection.
+- Ambiguous model tonnage like `1O.5`, `12/3`, or `1e2` becomes an unreadable
+  value requiring a person to correct it. We do not remove arbitrary characters
+  to manufacture a plausible number. Valid forms include `24.5`,
+  `1,024.25`, and `24.5 tons`.
+- For an interrupted worker, restart the **single** worker. Completed tickets
+  and approvals should be preserved, but confirm counts and exports afterward.
+
 ## When you are ready to measure actual AI extraction
 
 Follow `backend/EVALUATION.md` for independently labeled ground truth,
