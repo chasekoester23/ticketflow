@@ -6,6 +6,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import db as db_module
+from app.auth import current_user
+from app.models import User
 from app.config import settings
 from app.main import app
 from app.routers import api as api_module
@@ -45,6 +47,12 @@ def client(tmp_path, monkeypatch):
             s.close()
 
     app.dependency_overrides[db_module.get_db] = override
+    # Existing app tests exercise business behavior with a known signed-in
+    # single owner. Separate security tests exercise real cookie authorization.
+    app.dependency_overrides[current_user] = lambda: User(
+        id=1, username="test-owner", password_hash="fixture", active=True,
+    )
     with TestClient(app) as c:
+        c.headers.update({"X-TicketFlow-Request": "1"})
         yield c
     app.dependency_overrides.clear()
