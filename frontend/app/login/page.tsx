@@ -63,7 +63,7 @@ export default function LoginPage() {
             className="tf-field mt-1 w-full min-h-[44px]" />
         </label>
         <button type="submit" disabled={pending} className="tf-primary-button mt-1 min-h-[44px] w-full">
-          {pending ? "Signing in…" : "Sign in to workspace"}
+          {pending ? "Signing in…" : "Sign in"}
         </button>
       </form>
       <p className="mt-8 border-t border-[#e4e8ed] pt-5 text-[11px] leading-5 text-[#7c8996]">
