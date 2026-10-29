@@ -290,6 +290,29 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id
     blocking = [f for f in t.flags if not f.startswith("Tonnage unusually large")]
     if blocking:
         raise HTTPException(422, "Resolve ticket issues before verification: " + "; ".join(blocking))
+    if t.status != "verified" and t.crop_sha256:
+        # Duplicate warnings are advisory for similar ticket numbers/loads.
+        # An EXACT scan that has already been approved for this company is
+        # different: approving it again would double-count tons and cost.
+        # Other companies' documents must never influence this decision.
+        approved_copy = db.scalar(
+            select(Ticket.id)
+            .join(Batch, Batch.id == Ticket.batch_id)
+            .where(
+                Batch.organization_id == organization_id,
+                Ticket.crop_sha256 == t.crop_sha256,
+                Ticket.id != t.id,
+                Ticket.status == "verified",
+            )
+            .limit(1)
+        )
+        if approved_copy is not None:
+            raise HTTPException(
+                409,
+                "Identical scanned ticket already verified in this company. "
+                "Review the original; flag or skip the duplicate instead of "
+                "counting its quantity and cost twice.",
+            )
     if t.status == "verified":
         if t.price_snapshot_state is None:
             raise HTTPException(409, "Historical unit price is unknown. Enter the documented rate as a ticket override and verify again.")
