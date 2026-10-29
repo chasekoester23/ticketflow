@@ -211,11 +211,14 @@ def prepare_manifest(folder: Path, layout: str) -> dict[str, Any]:
 def _field_verdict(field: str, expected: Any, actual: Any) -> str:
     truth = _normalize(field, expected)
     prediction = _normalize(field, actual)
-    if truth == prediction:
+    # A nonempty but malformed predicted date/tonnage is NOT an acceptable
+    # empty value when the human reference is null.
+    invalid_prediction = (actual is not None and str(actual).strip() and prediction is None)
+    if truth == prediction and not invalid_prediction:
         return "correct"
     if truth is None:
-        return "unexpected"  # the model invented something where none was readable
-    if prediction is None:
+        return "unexpected"  # non-null or malformed model invention
+    if prediction is None and not invalid_prediction:
         return "missing"
     return "mismatch"
 
@@ -232,6 +235,8 @@ def evaluate(
     outcomes: list[dict[str, Any]] = []
     durations: list[float] = []
     summaries = {field: Counter() for field in FIELDS}
+    labeled_non_null = Counter()
+    correct_non_null = Counter()
     errors = 0
     for row in cases:
         image = load_crop(row)  # validate the actual scan/crop
@@ -246,7 +251,10 @@ def evaluate(
                 raise ExtractionError("Extractor returned an invalid ticket object")
             prediction = result.model_dump()
             failure = None
-        except ExtractionError as exc:
+        except Exception as exc:
+            # Unexpected provider/runtime failures are counted, never presented
+            # as valid OCR. The report intentionally omits exception messages
+            # because provider errors may contain document details.
             prediction = {field: None for field in FIELDS}
             failure = type(exc).__name__
             errors += 1
@@ -256,6 +264,10 @@ def evaluate(
         for field in FIELDS:
             verdict = _field_verdict(field, row["expected"][field], prediction[field])
             summaries[field][verdict] += 1
+            if row["expected"][field] is not None:
+                labeled_non_null[field] += 1
+                if verdict == "correct":
+                    correct_non_null[field] += 1
             verdicts[field] = verdict
         outcomes.append({
             "id": row["id"],
@@ -276,6 +288,12 @@ def evaluate(
             "mismatch": counts["mismatch"], "missing": counts["missing"],
             "unexpected": counts["unexpected"],
             "exact_accuracy": round(correct / total, 4),
+            "labeled_non_null": labeled_non_null[field],
+            "correct_non_null": correct_non_null[field],
+            "non_null_accuracy": (
+                round(correct_non_null[field] / labeled_non_null[field], 4)
+                if labeled_non_null[field] else None
+            ),
         }
     correct_all = sum(o["all_fields_correct"] for o in outcomes)
     return {
@@ -289,7 +307,8 @@ def evaluate(
         "cases": outcomes,
         "note": (
             "Metrics use independent human labels. Exact-field accuracy includes "
-            "correctly absent values; no ground-truth labels or extracted document "
+            "correctly absent values; non-null accuracy counts only readable truth "
+            "fields. No ground-truth labels or extracted document "
             "text are saved in this report. Timing excludes manual review."
         ),
     }
