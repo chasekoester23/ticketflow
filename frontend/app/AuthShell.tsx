@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { getAuthMe, logOut } from "../lib/api";
 
 type Owner = { id: number; username: string; organization_name?: string | null };
-type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers";
+type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers";
 
 function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
