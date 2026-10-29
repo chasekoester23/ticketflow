@@ -86,6 +86,7 @@ class Batch(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     layout: Mapped[str] = mapped_column(String(20))  # single | grid_2x2
+    intake_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="extract")  # extract | manual
     status: Mapped[str] = mapped_column(String(20), default="uploaded")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     files: Mapped[list["UploadedFile"]] = relationship(back_populates="batch", cascade="all, delete-orphan")

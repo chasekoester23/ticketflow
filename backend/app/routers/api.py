@@ -64,6 +64,7 @@ def _drain_job_for_tests() -> None:
 async def create_batch(
     background: BackgroundTasks,
     layout: str = Form("single"),
+    intake_mode: str = Form("extract"),
     project_id: int | None = Form(None),
     files: list[UploadFile] = File(...),
     organization_id: int = Depends(current_organization_id),
@@ -71,6 +72,8 @@ async def create_batch(
 ):
     if layout not in ("single", "grid_2x2"):
         raise HTTPException(422, "layout must be 'single' or 'grid_2x2'")
+    if intake_mode not in ("extract", "manual"):
+        raise HTTPException(422, "intake_mode must be 'extract' or 'manual'")
     if project_id is not None:
         project = db.scalar(select(Project).where(
             Project.id == project_id, Project.organization_id == organization_id
@@ -105,8 +108,8 @@ async def create_batch(
     if not validated:
         raise HTTPException(400, "No valid files were provided")
 
-    batch = Batch(layout=layout, status="uploaded", project_id=project_id,
-                  organization_id=organization_id)
+    batch = Batch(layout=layout, intake_mode=intake_mode, status="uploaded",
+                  project_id=project_id, organization_id=organization_id)
     upload_dir = None
     try:
         db.add(batch)

@@ -48,6 +48,50 @@ Create a project first (Projects page), then try `backend/sample_4_tickets.pdf` 
 Privacy note: with a key set, cropped ticket images are sent to the Anthropic API for extraction. Disclose this to
 any customer before using their documents.
 
+## Batches #12–13: efficient review + manual intake
+
+This release adds a **manual entry mode that never calls an AI model**,
+so ticket processing can be demonstrated and used locally without an
+Anthropic key. Every uploaded PDF/photo is still rendered and split by
+the separate processing worker. In manual mode, each actual nonblank crop
+becomes a **blank, unapproved** ticket record. A person fills the fields
+from the image and explicitly presses **Accept & next**. Required fields
+must pass the same server validation; manual mode does not mark anything
+verified or include any unverified tonnage in cost reporting.
+
+Also included: a ticket-number navigation strip beside the review workflow,
+a larger original-scan viewer, Alt+left/right navigation (when not editing
+a field), and Cmd/Ctrl+Enter to explicitly invoke the existing Accept &
+next button. Unsaved edits are still guarded and the server never accepts
+an invalid quantity.
+
+**Safely upgrade an existing local install:** Merge the batch PR, stop
+the running backend/worker, run `git pull origin main`, **back up**
+`backend/ticketflow.db`, then from `backend/` with the local virtual
+environment active run `python -m alembic upgrade head`. The additive
+`20261029_05` migration introduces `batches.intake_mode`, with old
+batches kept in extraction mode. Do not recreate users or delete data.
+
+To rehearse without any AI model:
+
+```bash
+cd backend
+source .venv/bin/activate
+python scripts/make_demo_tickets.py
+```
+
+Open TicketFlow, create/select a project clearly labeled as a demo, then
+choose **Manual entry** and **Four tickets per page** before uploading
+`backend/demo_output/synthetic-4up.pdf`. Run the normal API, frontend,
+and **processing worker** (three local terminals). The worker is needed
+to rasterize/split scans, but it will not call AI for manual batches.
+Check the four blank tickets, fill fields, verify, and inspect Excel export.
+
+See `backend/PILOT_CHECKLIST.md` for the exact next-morning scan protocol,
+privacy and consent requirements, and first real-ticket test. See
+`backend/EVALUATION.md` before any paid real-model benchmark. Synthetic
+data is **not** evidence of handwriting accuracy.
+
 ## Durable processing worker (Batch #10)
 
 TicketFlow now saves a processing job **in the same database transaction**

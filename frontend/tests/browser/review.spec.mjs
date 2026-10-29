@@ -179,3 +179,29 @@ test("a rejected verification never advances or counts unapproved tonnage", asyn
   await expect(page.getByText("0 / 2 resolved")).toBeVisible();
   expect(log.verified).toEqual([]);
 });
+
+
+test("quick navigation uses actual ticket numbers, and keyboard movement guards unsaved work", async ({ page }) => {
+  const { log } = await launch(page);
+  await expect(page.getByRole("group", { name: "Review queue quick navigation" })).toBeVisible();
+  await page.getByRole("button", { name: "Open ticket 2: 10483" }).click();
+  await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
+  await page.keyboard.press("Alt+ArrowLeft");
+  await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
+  await page.getByLabel("Tonnage (tons)").fill("28.250");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  // Keyboard moving away after the field loses focus must respect dirty guard.
+  await page.getByRole("heading", { name: "Original scanned ticket" }).click();
+  await page.keyboard.press("Alt+ArrowRight");
+  await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
+  expect(log.verified).toEqual([]);
+});
+
+test("Ctrl+Enter deliberately invokes the same validated Accept and next control", async ({ page }) => {
+  const { log } = await launch(page);
+  await page.getByLabel("Ticket number").focus();
+  await page.keyboard.press("Control+Enter");
+  await expect(page.getByText("1 / 2 resolved")).toBeVisible();
+  await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
+  expect(log.verified).toEqual([101]);
+});

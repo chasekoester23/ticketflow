@@ -13,7 +13,9 @@ provider on an independently hand-labeled sample.
 - Keep all real PDFs, annotations, and accuracy reports in
   `backend/evaluation_data/`. That directory is Git-ignored. Do **not** commit
   or publish actual tickets or any API keys. Do not use a public deployment:
-  TicketFlow has **no user authentication or tenant isolation yet**.
+  The local app has login and company-scoped records, but is **not yet
+  production hardened or approved for public deployment**. Keep real
+  ticket data off public repositories and demonstrations.
 - The extraction model receives a cropped image of each scanned ticket when
   you run `run`. Review your AI provider's data-handling terms and the
   customer's requirements before doing that. `prepare` and `check` make

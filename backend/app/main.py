@@ -41,6 +41,13 @@ async def lifespan(app: FastAPI):
             )
     if not inspect(engine).has_table("organizations"):
         raise RuntimeError("Organization migration missing; run alembic upgrade head.")
+    if "intake_mode" not in {
+        column["name"] for column in inspect(engine).get_columns("batches")
+    }:
+        raise RuntimeError(
+            "Manual ticket intake migration required: back up backend/ticketflow.db, "
+            "then run 'cd backend && python -m alembic upgrade head'."
+        )
     yield
 
 

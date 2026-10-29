@@ -40,6 +40,7 @@ const BATCH_LABEL: Record<string, string> = {
 
 export default function Home() {
   const [layout, setLayout] = useState<"single" | "grid_2x2">("grid_2x2");
+  const [intakeMode, setIntakeMode] = useState<"extract" | "manual">("manual");
   const [files, setFiles] = useState<File[]>([]);
   const [batch, setBatch] = useState<Batch | null>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -93,14 +94,20 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [batch, refresh]);
 
-  const addFiles = (list: FileList | null) => list && setFiles((prev) => [...prev, ...Array.from(list)]);
+  const addFiles = (list: FileList | null) => {
+    if (!list) return;
+    // FileList is live. Snapshot it BEFORE clearing the file input; React
+    // may run a state updater after the input's FileList has become empty.
+    const selectedFiles = Array.from(list);
+    if (selectedFiles.length) setFiles((prev) => [...prev, ...selectedFiles]);
+  };
 
   async function onUpload() {
     if (formDirty && !window.confirm("You have unsaved ticket corrections. Discard them and start a new upload?")) return;
     setError(null);
     setBusy(true);
     try {
-      const b = await uploadBatch(files, layout, projectId ? Number(projectId) : undefined);
+      const b = await uploadBatch(files, layout, projectId ? Number(projectId) : undefined, intakeMode);
       setFiles([]);
       setSelected(0);
       setFormDirty(false);
@@ -157,6 +164,27 @@ export default function Home() {
     setRotation(0);
   }
 
+  // Navigation shortcuts are opt-in (Alt + arrow), never steal typing
+  // from editable controls, and reuse the same unsaved-change guard as clicks.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || !tickets.length) return;
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      const element = event.target as HTMLElement | null;
+      if (element?.isContentEditable || element?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
+      event.preventDefault();
+      const next = selected + (event.key === "ArrowRight" ? 1 : -1);
+      if (next < 0 || next >= tickets.length) return;
+      if (formDirty && !window.confirm("Discard unsaved changes to this ticket? Select Save changes to keep your corrections.")) return;
+      setSelected(next);
+      setFormDirty(false);
+      setZoom(1);
+      setRotation(0);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, tickets.length, formDirty]);
+
   // Complete the pending queue first, then automatically revisit flagged tickets.
   // A ticket is never auto-accepted; only the explicit Accept action verifies.
   function advance() {
@@ -203,7 +231,7 @@ export default function Home() {
 
       {configured === false && (
         <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Extraction is not configured. Set ANTHROPIC_API_KEY in backend/.env and restart the backend before uploading.
+          AI extraction is not configured. <strong>Manual entry works without an API key.</strong> Select “Manual entry” below, then run the local processing worker to prepare your scans. AI extraction requires ANTHROPIC_API_KEY in backend/.env.
         </div>
       )}
       {error && (
@@ -268,6 +296,21 @@ export default function Home() {
                 </select>
               </label>
               {projects.length === 0 && <p className="text-xs text-amber-800">No projects yet. <a className="underline" href="/projects">Create one first</a>.</p>}
+              <fieldset className="rounded border border-[#dce1e6] p-3">
+                <legend className="px-1 text-xs font-bold text-[#425060]">How should these tickets be entered?</legend>
+                <div className="mt-1 grid gap-2">
+                  <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
+                    <input type="radio" name="intake-mode" value="manual" checked={intakeMode === "manual"}
+                      onChange={() => setIntakeMode("manual")} />
+                    <span><strong>Manual entry</strong><span className="mt-0.5 block text-[#718090]">Create blank fields beside each scan. No AI calls.</span></span>
+                  </label>
+                  <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
+                    <input type="radio" name="intake-mode" value="extract" checked={intakeMode === "extract"}
+                      onChange={() => setIntakeMode("extract")} />
+                    <span><strong>AI extraction</strong><span className="mt-0.5 block text-[#718090]">Requires a configured provider key. Always review before approval.</span></span>
+                  </label>
+                </div>
+              </fieldset>
               <label className="block text-sm font-medium text-slate-700">Document layout
                 <select value={layout} onChange={(e) => setLayout(e.target.value as "single" | "grid_2x2")}
                   className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-slate-700 focus:outline-none">
@@ -278,7 +321,7 @@ export default function Home() {
             </div>
             <button type="button" disabled={!files.length || !projectId || busy} onClick={onUpload}
               className="tf-primary-button w-full disabled:opacity-40">
-              {busy ? "Uploading..." : "Upload & queue"}
+              {busy ? "Uploading..." : intakeMode === "manual" ? "Queue for manual entry" : "Queue for AI extraction"}
             </button>
           </div>
         </div>
@@ -289,7 +332,7 @@ export default function Home() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="font-semibold text-slate-900">Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}</h2>
-              <p className="mt-1 text-sm text-slate-600">{tickets.length} tickets · {counts.verified} accepted · {counts.flagged} flagged · {counts.review} awaiting review</p>
+              <p className="mt-1 text-sm text-slate-600">{tickets.length} tickets · {counts.verified} accepted · {counts.flagged} flagged · {counts.review} awaiting review · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               {batch.status === "failed" && (
@@ -305,7 +348,8 @@ export default function Home() {
           {batch.status === "uploaded" && (
             <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700" role="status">
               Your files are saved in the processing queue. A separate TicketFlow worker must be running
-              to extract them. From the backend folder, run <code>python scripts/run_worker.py</code>.
+              to {batch.intake_mode === "manual" ? "prepare ticket images for manual entry" : "extract ticket fields"}.
+              From the backend folder, run <code>python scripts/run_worker.py</code>.
               The upload remains queued even if you close this page.
             </p>
           )}
@@ -348,6 +392,27 @@ export default function Home() {
             </div>
           </div>
 
+          <div className="tf-panel">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e7eaee] px-4 py-3">
+              <h3 className="text-[12px] font-bold text-[#3c4b5b]">Ticket numbers · quick navigation</h3>
+              <span className="text-[11px] text-[#7a8794]">Alt + ← / → to move between tickets</span>
+            </div>
+            <div className="flex gap-2 overflow-x-auto px-4 py-3" role="group" aria-label="Review queue quick navigation">
+              {tickets.map((ticket, index) => (
+                <button type="button" key={ticket.id}
+                  aria-label={`Open ticket ${index + 1}: ${ticket.ticket_number || "number not entered"}`}
+                  aria-current={selected === index ? "true" : undefined}
+                  onClick={() => selectTicket(index)}
+                  className={`shrink-0 rounded border px-3 py-2 text-left text-[11px] font-semibold tabular-nums ${selected === index ? "border-[#d66a34] bg-[#fff4ec] text-[#99501e]" : "border-[#dce1e6] bg-white text-[#455464] hover:border-[#aab5c0]"}`}>
+                  <span className="block">{ticket.ticket_number || `Ticket ${index + 1}`}</span>
+                  <span className={`mt-1 block text-[9px] uppercase tracking-wide ${ticket.status === "verified" ? "text-[#24854a]" : ticket.status === "flagged" ? "text-[#b26a22]" : "text-[#83909e]"}`}>
+                    {STATUS_LABEL[ticket.status] || ticket.status}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
             <section className="tf-panel">
               <div className="tf-panel-heading">
@@ -374,13 +439,13 @@ export default function Home() {
                 <a href={ticketImageUrl(current.id)} target="_blank" rel="noreferrer"
                   className="text-xs font-medium text-slate-700 underline-offset-2 hover:underline">Open full image</a>
               </div>
-              <div className="flex min-h-[350px] max-h-[72vh] items-start justify-center overflow-auto bg-[#e6e9eb] p-5">
+              <div className="flex min-h-[440px] max-h-[78vh] items-start justify-center overflow-auto bg-[#e6e9eb] p-5">
                 <img src={ticketImageUrl(current.id)} alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
                   className="h-auto max-h-none rounded-md border border-slate-200 bg-white shadow-sm"
                   style={{ width: zoom * 100 + "%", maxWidth: "none", transform: "rotate(" + rotation + "deg)" }} />
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3">
-                <p className="text-xs text-slate-500">Zoom or open the original to inspect handwriting.</p>
+                <p className="text-xs text-slate-500">Inspect handwriting closely. Alt + left/right arrow changes tickets.</p>
                 <div className="flex items-center gap-2">
                   <button type="button" disabled={selected === 0} onClick={() => selectTicket(selected - 1)}
                     className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-40">Previous</button>
@@ -393,6 +458,7 @@ export default function Home() {
             <ReviewForm
               key={current.id + "-" + current.status + "-" + current.tonnage + "-" + current.ticket_number + "-" + current.unit_price + "-" + current.cost}
               ticket={current}
+              manual={batch?.intake_mode === "manual"}
               onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
               onAdvance={advance}
               onDirtyChange={setFormDirty}
@@ -465,12 +531,14 @@ const FIELDS: { key: keyof Ticket; label: string; type?: string; flagWords: stri
 
 function ReviewForm({
   ticket,
+  manual,
   onChange,
   onAdvance,
   onDirtyChange,
   onError,
 }: {
   ticket: Ticket;
+  manual: boolean;
   onChange: (t: Ticket) => void;
   onAdvance: () => void;
   onDirtyChange: (dirty: boolean) => void;
@@ -480,6 +548,7 @@ function ReviewForm({
     Object.fromEntries(FIELDS.map((f) => [f.key, (ticket[f.key] as string | null) ?? ""])),
   );
   const [saving, setSaving] = useState(false);
+  const acceptButton = useRef<HTMLButtonElement>(null);
   const [override, setOverride] = useState(ticket.unit_price_override ?? "");
   const overrideDirty = override !== (ticket.unit_price_override ?? "");
 
@@ -512,17 +581,37 @@ function ReviewForm({
     if (t && advance) onAdvance();
   }
 
+  const filled = FIELDS.filter((field) => values[field.key].trim() !== "").length;
   const flaggedFor = (words: string[]) => ticket.flags.some((fl) => words.some((w) => fl.startsWith(w)));
+
+  // Cmd/Ctrl+Enter is a deliberate approval shortcut. It invokes the same
+  // guarded button used by mouse clicks, never bypassing server verification.
+  useEffect(() => {
+    function onApproveShortcut(event: KeyboardEvent) {
+      if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey) || event.repeat || event.isComposing) return;
+      if (event.target instanceof HTMLElement && event.target.closest("[role=dialog]")) return;
+      event.preventDefault();
+      acceptButton.current?.click();
+    }
+    window.addEventListener("keydown", onApproveShortcut);
+    return () => window.removeEventListener("keydown", onApproveShortcut);
+  }, []);
 
   return (
     <aside className="space-y-4 rounded-md border border-[#dce1e6] bg-white p-5 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
         <div>
-          <h3 className="text-[14px] font-bold text-[#1d2b38]">Extracted ticket information</h3>
-          <p className="mt-1 text-xs text-slate-500">Compare every value with the scan, then accept.</p>
+          <h3 className="text-[14px] font-bold text-[#1d2b38]">{manual ? "Manual ticket entry" : "Extracted ticket information"}</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            {manual ? "Enter the six required fields from the original. No AI populated these values." : "Compare every value with the scan, then accept."}
+          </p>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
       </div>
+      {manual && <div className="flex items-center justify-between gap-2 rounded border border-[#e5e9ec] bg-[#f8f9fa] px-3 py-2.5">
+        <span className="text-xs font-semibold text-[#526273]">Required fields entered</span>
+        <span className="text-xs font-bold tabular-nums text-[#293948]">{filled} / 6</span>
+      </div>}
       {ticket.error && <p className="text-sm text-red-700">{ticket.error}</p>}
       {ticket.flags.length > 0 && (
         <ul className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -587,6 +676,8 @@ function ReviewForm({
       {dirty && <p className="text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
       <div className="sticky bottom-0 z-10 -mx-5 flex flex-wrap gap-2 border-t border-slate-200 bg-white px-5 py-3">
         <button
+          ref={acceptButton}
+          title="Review and accept ticket (Cmd/Ctrl + Enter)"
           onClick={() =>
             run(async () => {
               const saved = await save();
