@@ -62,7 +62,8 @@ supplier/material and date range.
 - Comparison is **not** invoice approval or authorization to pay.
 - The output shows billed-minus-verified tons, billed-minus-verified material
   cost, arithmetic errors, unit-rate mismatches, unverified tickets, and
-  unpriced approved tickets. Unpriced or pending tickets cannot produce a
+  unpriced approved tickets. Unpriced, pending, or possibly relevant
+  unclassified tickets cannot produce a
   "figures match" result. A match is an arithmetic result, not proof of every
   delivery, invoice authenticity, or authorization to pay.
 - A matching ticket keeps its locked historical unit price, not the current
