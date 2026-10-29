@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     max_plausible_tons: float = 60.0
 
     cors_origins: list[str] = ["http://localhost:3000"]
+    # True for HTTPS production. False is allowed only for the localhost dev UI.
+    session_secure_cookie: bool = False
 
 
 settings = Settings()

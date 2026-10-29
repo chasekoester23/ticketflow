@@ -1,5 +1,33 @@
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// All APIs share the same revocable HTTP-only session cookie. A custom request
+// header protects state-changing endpoints against cross-site form requests.
+async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const headers = new Headers(init.headers);
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    headers.set("X-TicketFlow-Request", "1");
+  }
+  return fetch(url, { ...init, headers, credentials: "include", cache: "no-store" });
+}
+
+export type Owner = { id: number; username: string };
+
+export async function getAuthMe(): Promise<Owner> {
+  return (await check(await apiFetch(`${API}/api/auth/me`))).json();
+}
+
+export async function logIn(username: string, password: string): Promise<Owner> {
+  return (await check(await apiFetch(`${API}/api/auth/login`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  }))).json();
+}
+
+export async function logOut(): Promise<void> {
+  await check(await apiFetch(`${API}/api/auth/logout`, { method: "POST" }));
+}
+
 export type Project = { id: number; code: string; name: string; job_location: string | null; description: string | null; status: string };
 export type FileOut = { id: number; original_name: string; status: string; error: string | null };
 export type Batch = { id: number; project_id: number | null; layout: string; status: string; created_at: string; files: FileOut[] };
@@ -47,21 +75,21 @@ export async function uploadBatch(files: File[], layout: string, projectId?: num
   form.append("layout", layout);
   if (projectId !== undefined) form.append("project_id", String(projectId));
   files.forEach((f) => form.append("files", f));
-  return (await check(await fetch(`${API}/api/batches`, { method: "POST", body: form }))).json();
+  return (await check(await apiFetch(`${API}/api/batches`, { method: "POST", body: form }))).json();
 }
 
 export async function getBatch(id: number): Promise<Batch> {
-  return (await check(await fetch(`${API}/api/batches/${id}`))).json();
+  return (await check(await apiFetch(`${API}/api/batches/${id}`))).json();
 }
 
 export async function getTickets(batchId: number): Promise<Ticket[]> {
-  return (await check(await fetch(`${API}/api/batches/${batchId}/tickets`))).json();
+  return (await check(await apiFetch(`${API}/api/batches/${batchId}/tickets`))).json();
 }
 
 export async function patchTicket(id: number, body: Partial<Record<string, string | null>>): Promise<Ticket> {
   return (
     await check(
-      await fetch(`${API}/api/tickets/${id}`, {
+      await apiFetch(`${API}/api/tickets/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -71,11 +99,11 @@ export async function patchTicket(id: number, body: Partial<Record<string, strin
 }
 
 export async function ticketAction(id: number, action: "verify" | "flag" | "skip"): Promise<Ticket> {
-  return (await check(await fetch(`${API}/api/tickets/${id}/${action}`, { method: "POST" }))).json();
+  return (await check(await apiFetch(`${API}/api/tickets/${id}/${action}`, { method: "POST" }))).json();
 }
 
 export async function retryBatch(id: number): Promise<void> {
-  await check(await fetch(`${API}/api/batches/${id}/retry`, { method: "POST" }));
+  await check(await apiFetch(`${API}/api/batches/${id}/retry`, { method: "POST" }));
 }
 
 export const ticketImageUrl = (id: number) => `${API}/api/tickets/${id}/image`;
@@ -88,28 +116,28 @@ const json = (method: string, body?: unknown): RequestInit => ({
 });
 
 export async function getStatus(): Promise<{ extraction_configured: boolean; model: string }> {
-  return (await check(await fetch(`${API}/api/status`))).json();
+  return (await check(await apiFetch(`${API}/api/status`))).json();
 }
 export async function listSuppliers(): Promise<Supplier[]> {
-  return (await check(await fetch(`${API}/api/suppliers`))).json();
+  return (await check(await apiFetch(`${API}/api/suppliers`))).json();
 }
 export async function listMaterials(): Promise<Material[]> {
-  return (await check(await fetch(`${API}/api/materials`))).json();
+  return (await check(await apiFetch(`${API}/api/materials`))).json();
 }
 export async function listRates(): Promise<Rate[]> {
-  return (await check(await fetch(`${API}/api/rates`))).json();
+  return (await check(await apiFetch(`${API}/api/rates`))).json();
 }
 export async function createSupplier(name: string) {
-  await check(await fetch(`${API}/api/suppliers`, json("POST", { name })));
+  await check(await apiFetch(`${API}/api/suppliers`, json("POST", { name })));
 }
 export async function createMaterial(name: string) {
-  await check(await fetch(`${API}/api/materials`, json("POST", { name })));
+  await check(await apiFetch(`${API}/api/materials`, json("POST", { name })));
 }
 export async function saveRate(supplier_id: number, material_id: number, unit_price: string) {
-  await check(await fetch(`${API}/api/rates`, json("PUT", { supplier_id, material_id, unit_price })));
+  await check(await apiFetch(`${API}/api/rates`, json("PUT", { supplier_id, material_id, unit_price })));
 }
 export async function deleteItem(kind: "suppliers" | "materials" | "rates", id: number) {
-  await check(await fetch(`${API}/api/${kind}/${id}`, { method: "DELETE" }));
+  await check(await apiFetch(`${API}/api/${kind}/${id}`, { method: "DELETE" }));
 }
 
 export type Filters = { project_id?: string; supplier?: string; material?: string; status?: string; date_from?: string; date_to?: string };
@@ -120,16 +148,16 @@ const qs = (f: Filters) => {
   return t ? `?${t}` : "";
 };
 export async function listProjects(includeArchived = false): Promise<Project[]> {
-  return (await check(await fetch(`${API}/api/projects?include_archived=${includeArchived}`))).json();
+  return (await check(await apiFetch(`${API}/api/projects?include_archived=${includeArchived}`))).json();
 }
 export async function createProject(body: { code: string; name: string; job_location?: string; description?: string }) {
-  await check(await fetch(`${API}/api/projects`, json("POST", body)));
+  await check(await apiFetch(`${API}/api/projects`, json("POST", body)));
 }
 export async function setProjectStatus(id: number, status: "active" | "archived") {
-  await check(await fetch(`${API}/api/projects/${id}`, json("PATCH", { status })));
+  await check(await apiFetch(`${API}/api/projects/${id}`, json("PATCH", { status })));
 }
 export async function getRecords(f: Filters): Promise<Ticket[]> {
-  return (await check(await fetch(`${API}/api/records${qs(f)}`))).json();
+  return (await check(await apiFetch(`${API}/api/records${qs(f)}`))).json();
 }
 export const recordsExportUrl = (f: Filters) => `${API}/api/records/export.xlsx${qs(f)}`;
 
@@ -141,5 +169,5 @@ export type Dashboard = {
   recent_batches: { id: number; status: string; created_at: string; files: number; project: string | null }[];
 };
 export async function getDashboard(projectId?: string): Promise<Dashboard> {
-  return (await check(await fetch(`${API}/api/dashboard${projectId ? `?project_id=${projectId}` : ""}`))).json();
+  return (await check(await apiFetch(`${API}/api/dashboard${projectId ? `?project_id=${projectId}` : ""}`))).json();
 }
