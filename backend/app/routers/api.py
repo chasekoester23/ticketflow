@@ -145,14 +145,14 @@ async def create_batch(
     return batch
 
 @router.get("/batches", response_model=list[BatchOut])
-def list_batches(db: Session = Depends(get_db)):
+def list_batches(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     return db.scalars(select(Batch).where(
         Batch.organization_id == organization_id
     ).order_by(Batch.id.desc())).all()
 
 
 @router.get("/batches/{batch_id}", response_model=BatchOut)
-def get_batch(batch_id: int, db: Session = Depends(get_db)):
+def get_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     batch = db.scalar(select(Batch).where(
         Batch.id == batch_id, Batch.organization_id == organization_id
     ))
@@ -162,7 +162,7 @@ def get_batch(batch_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/batches/{batch_id}/retry", response_model=BatchOut)
-def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db)):
+def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     batch = db.scalar(select(Batch).where(
         Batch.id == batch_id, Batch.organization_id == organization_id
     ))
@@ -181,7 +181,7 @@ def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depend
 
 
 @router.get("/batches/{batch_id}/tickets", response_model=list[TicketOut])
-def list_tickets(batch_id: int, db: Session = Depends(get_db)):
+def list_tickets(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     batch = db.scalar(select(Batch.id).where(
         Batch.id == batch_id, Batch.organization_id == organization_id
     ))
@@ -240,7 +240,7 @@ def _refresh_flags(t: Ticket) -> None:
 
 
 @router.patch("/tickets/{ticket_id}", response_model=TicketOut)
-def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_db)):
+def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     t = _ticket_or_404(db, ticket_id, organization_id)
     changes = patch.model_dump(exclude_unset=True)
     changed = False
@@ -278,7 +278,7 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
 
 
 @router.post("/tickets/{ticket_id}/verify", response_model=TicketOut)
-def verify_ticket(ticket_id: int, db: Session = Depends(get_db)):
+def verify_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     t = _ticket_or_404(db, ticket_id, organization_id)
     # Validate the current values rather than trusting stale extraction flags.
     _refresh_flags(t)
@@ -308,7 +308,7 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/tickets/{ticket_id}/flag", response_model=TicketOut)
-def flag_ticket(ticket_id: int, db: Session = Depends(get_db)):
+def flag_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     """Defer a questionable ticket without approving its quantity or cost."""
     t = _ticket_or_404(db, ticket_id, organization_id)
     if t.status != "flagged":
@@ -323,7 +323,7 @@ def flag_ticket(ticket_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/tickets/{ticket_id}/skip", response_model=TicketOut)
-def skip_ticket(ticket_id: int, db: Session = Depends(get_db)):
+def skip_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     t = _ticket_or_404(db, ticket_id, organization_id)
     db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="skipped"))
     t.status = "skipped"
@@ -336,20 +336,20 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/tickets/{ticket_id}/image")
-def ticket_image(ticket_id: int, db: Session = Depends(get_db)):
+def ticket_image(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     t = _ticket_or_404(db, ticket_id, organization_id)
     return FileResponse(t.crop_path, media_type="image/png")
 
 
 @router.get("/tickets/{ticket_id}/audit")
-def ticket_audit(ticket_id: int, db: Session = Depends(get_db)):
+def ticket_audit(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     _ticket_or_404(db, ticket_id, organization_id)
     events = db.scalars(select(AuditEvent).where(AuditEvent.ticket_id == ticket_id).order_by(AuditEvent.id)).all()
     return [{"field": e.field, "old": e.old_value, "new": e.new_value, "at": e.created_at} for e in events]
 
 
 @router.get("/batches/{batch_id}/export.xlsx")
-def export_batch(batch_id: int, db: Session = Depends(get_db)):
+def export_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     if db.scalar(select(Batch.id).where(
         Batch.id == batch_id, Batch.organization_id == organization_id
     )) is None:
