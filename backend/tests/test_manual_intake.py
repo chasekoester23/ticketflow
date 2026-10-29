@@ -158,3 +158,23 @@ def test_manual_intake_schema_migration_preserves_original_batch_state(tmp_path)
     with sqlite3.connect(dbpath) as db:
         assert db.execute("SELECT intake_mode, status FROM batches WHERE id=12").fetchone() == ("extract", "ready_for_review")
         assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261029_05"
+
+
+def test_fictional_demo_generator_is_watermarked_and_wont_overwrite(tmp_path):
+    from pathlib import Path
+    import pytest
+    import pymupdf
+    from scripts.make_demo_tickets import make_demo_pdf
+    from PIL import Image
+
+    output = tmp_path / "demo.pdf"
+    assert make_demo_pdf(output, "grid_2x2") == output
+    assert output.read_bytes().startswith(b"%PDF")
+    with pymupdf.open(output) as doc:
+        assert doc.page_count == 1
+        pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(0.25, 0.25))
+        assert pix.width > 100 and pix.height > 100
+    with pytest.raises(FileExistsError):
+        make_demo_pdf(output, "grid_2x2")
+    with pytest.raises(ValueError):
+        make_demo_pdf(tmp_path / "not-a-pdf.png", "single")
