@@ -14,6 +14,9 @@ class Settings(BaseSettings):
 
     # Vision extraction. No key => extraction fails loudly (we never fake OCR).
     anthropic_api_key: str | None = None
+    # Opt-in/private benchmark candidates, not used by the production worker.
+    openai_api_key: str | None = None
+    gemini_api_key: str | None = None
     extraction_model: str = "claude-sonnet-5-5"
 
     max_upload_bytes: int = 25 * 1024 * 1024
