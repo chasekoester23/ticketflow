@@ -62,6 +62,16 @@ accepts quantities or costs. After processing a batch, open Upload & Review:
    store a correction without approving it.
 5. **Skip non-ticket** excludes a blank or irrelevant scan from financial totals
    and Excel; this action requires confirmation.
+6. When the pending queue is exhausted, the reviewer is taken to the flagged
+   queue automatically. Nothing is accepted automatically; each flagged ticket
+   still requires a deliberate **Accept & next** action.
+7. The queue can be searched by ticket number, supplier, material or job.
+   Searching only changes what is visible and never changes stored data.
+
+For larger batches, duplicate candidate detection and missing-rate catalog
+lookups are indexed/cached once per ticket list rather than re-querying the
+entire database for each ticket. Duplicate warnings remain advisory and are
+never used to automatically delete or exclude a delivery record.
 
 Use `/upload?batch=<batch_id>&ticket=<ticket_id>` to open a specific record.
 Automatic extraction and human acceptance remain separate by design.
