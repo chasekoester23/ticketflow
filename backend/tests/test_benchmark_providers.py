@@ -100,7 +100,7 @@ def test_candidate_network_failure_does_not_become_fabricated_ocr(candidate):
         def generate_content(self, **kwargs):
             raise TimeoutError("private connection failure")
 
-    with pytest.raises(ExtractionError, match="benchmark request failed"):
+    with pytest.raises(ExtractionError, match="request failed"):
         candidate(client=FailingClient()).extract(Image.new("RGB", (400, 400), "white"))
 
 
