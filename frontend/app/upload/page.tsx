@@ -40,6 +40,7 @@ const BATCH_LABEL: Record<string, string> = {
 
 export default function Home() {
   const [layout, setLayout] = useState<"single" | "grid_2x2">("grid_2x2");
+  const [intakeMode, setIntakeMode] = useState<"extract" | "manual">("manual");
   const [files, setFiles] = useState<File[]>([]);
   const [batch, setBatch] = useState<Batch | null>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -100,7 +101,7 @@ export default function Home() {
     setError(null);
     setBusy(true);
     try {
-      const b = await uploadBatch(files, layout, projectId ? Number(projectId) : undefined);
+      const b = await uploadBatch(files, layout, projectId ? Number(projectId) : undefined, intakeMode);
       setFiles([]);
       setSelected(0);
       setFormDirty(false);
@@ -203,7 +204,7 @@ export default function Home() {
 
       {configured === false && (
         <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Extraction is not configured. Set ANTHROPIC_API_KEY in backend/.env and restart the backend before uploading.
+          AI extraction is not configured. <strong>Manual entry works without an API key.</strong> Select “Manual entry” below, then run the local processing worker to prepare your scans. AI extraction requires ANTHROPIC_API_KEY in backend/.env.
         </div>
       )}
       {error && (
@@ -268,6 +269,21 @@ export default function Home() {
                 </select>
               </label>
               {projects.length === 0 && <p className="text-xs text-amber-800">No projects yet. <a className="underline" href="/projects">Create one first</a>.</p>}
+              <fieldset className="rounded border border-[#dce1e6] p-3">
+                <legend className="px-1 text-xs font-bold text-[#425060]">How should these tickets be entered?</legend>
+                <div className="mt-1 grid gap-2">
+                  <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
+                    <input type="radio" name="intake-mode" value="manual" checked={intakeMode === "manual"}
+                      onChange={() => setIntakeMode("manual")} />
+                    <span><strong>Manual entry</strong><span className="mt-0.5 block text-[#718090]">Create blank fields beside each scan. No AI calls.</span></span>
+                  </label>
+                  <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
+                    <input type="radio" name="intake-mode" value="extract" checked={intakeMode === "extract"}
+                      onChange={() => setIntakeMode("extract")} />
+                    <span><strong>AI extraction</strong><span className="mt-0.5 block text-[#718090]">Requires a configured provider key. Always review before approval.</span></span>
+                  </label>
+                </div>
+              </fieldset>
               <label className="block text-sm font-medium text-slate-700">Document layout
                 <select value={layout} onChange={(e) => setLayout(e.target.value as "single" | "grid_2x2")}
                   className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-slate-700 focus:outline-none">
@@ -278,7 +294,7 @@ export default function Home() {
             </div>
             <button type="button" disabled={!files.length || !projectId || busy} onClick={onUpload}
               className="tf-primary-button w-full disabled:opacity-40">
-              {busy ? "Uploading..." : "Upload & queue"}
+              {busy ? "Uploading..." : intakeMode === "manual" ? "Queue for manual entry" : "Queue for AI extraction"}
             </button>
           </div>
         </div>
@@ -289,7 +305,7 @@ export default function Home() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="font-semibold text-slate-900">Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}</h2>
-              <p className="mt-1 text-sm text-slate-600">{tickets.length} tickets · {counts.verified} accepted · {counts.flagged} flagged · {counts.review} awaiting review</p>
+              <p className="mt-1 text-sm text-slate-600">{tickets.length} tickets · {counts.verified} accepted · {counts.flagged} flagged · {counts.review} awaiting review · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               {batch.status === "failed" && (
@@ -305,7 +321,8 @@ export default function Home() {
           {batch.status === "uploaded" && (
             <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700" role="status">
               Your files are saved in the processing queue. A separate TicketFlow worker must be running
-              to extract them. From the backend folder, run <code>python scripts/run_worker.py</code>.
+              to {batch.intake_mode === "manual" ? "prepare ticket images for manual entry" : "extract ticket fields"}.
+              From the backend folder, run <code>python scripts/run_worker.py</code>.
               The upload remains queued even if you close this page.
             </p>
           )}
@@ -374,7 +391,7 @@ export default function Home() {
                 <a href={ticketImageUrl(current.id)} target="_blank" rel="noreferrer"
                   className="text-xs font-medium text-slate-700 underline-offset-2 hover:underline">Open full image</a>
               </div>
-              <div className="flex min-h-[350px] max-h-[72vh] items-start justify-center overflow-auto bg-[#e6e9eb] p-5">
+              <div className="flex min-h-[440px] max-h-[78vh] items-start justify-center overflow-auto bg-[#e6e9eb] p-5">
                 <img src={ticketImageUrl(current.id)} alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
                   className="h-auto max-h-none rounded-md border border-slate-200 bg-white shadow-sm"
                   style={{ width: zoom * 100 + "%", maxWidth: "none", transform: "rotate(" + rotation + "deg)" }} />
