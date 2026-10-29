@@ -12,6 +12,7 @@ from ..db import get_db
 from ..models import Batch, Project, Ticket
 from ..schemas import TicketOut
 from ..services import export as export_svc
+from ..services import duplicates as dup_svc
 from ..services import pricing as pricing_svc
 from .api import _out
 
@@ -51,7 +52,9 @@ def records(
     table = pricing_svc.rate_table(db)
     ts = filtered_tickets(db, project_id=project_id, supplier=supplier, material=material,
                           status=status, date_from=date_from, date_to=date_to)
-    return [_out(db, t, table) for t in ts]
+    index = dup_svc.load_index(db)
+    names = pricing_svc.catalog_names(db)
+    return [_out(db, t, table, duplicate_index=index, catalog=names) for t in ts]
 
 
 @router.get("/records/export.xlsx")
