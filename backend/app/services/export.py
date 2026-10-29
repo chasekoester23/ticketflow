@@ -19,8 +19,8 @@ CENTS = Decimal("0.01")
 
 
 def ticket_cost(t: Ticket, unit_price: Decimal | None) -> Decimal | None:
-    """Exact decimal math. Cost is only produced when tonnage is confirmed and a rate exists."""
-    if unit_price is None or t.tonnage is None or not t.tonnage_confirmed:
+    """Exact decimal math, available only for currently verified tickets."""
+    if t.status != "verified" or unit_price is None or t.tonnage is None or not t.tonnage_confirmed:
         return None
     return (t.tonnage * unit_price).quantize(CENTS)
 
