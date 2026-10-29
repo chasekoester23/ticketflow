@@ -46,7 +46,7 @@ def test_batched_duplicate_and_catalog_queries_do_not_grow_per_record(client):
     gen = app.dependency_overrides[get_db]()
     db = next(gen)
     try:
-        batch = Batch(layout="single", status="ready_for_review")
+        batch = Batch(organization_id=1, layout="single", status="ready_for_review")
         db.add(batch)
         db.flush()
         source = UploadedFile(
