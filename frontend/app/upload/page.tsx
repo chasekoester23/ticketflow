@@ -191,16 +191,14 @@ export default function Home() {
 
 
   return (
-    <div className="space-y-6 pb-14">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+    <div className="space-y-5 pb-14">
+      <div className="tf-page-heading">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">Delivery operations / Ticket intake</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">Upload & review tickets</h1>
-          <p className="mt-1 text-sm text-slate-600">AI enters the information. You verify every delivery against the original ticket.</p>
+          <p className="tf-eyebrow">DELIVERY DOCUMENTATION / TICKET INTAKE</p>
+          <h1 className="tf-page-title">Ticket intake & review</h1>
+          <p className="tf-page-description">Upload delivery scans, compare extracted information with the original, and approve each ticket.</p>
         </div>
-        <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600">
-          Human approval required
-        </div>
+        <div className="tf-status tf-status-attention">Human verification required</div>
       </div>
 
       {configured === false && (
@@ -214,10 +212,10 @@ export default function Home() {
         </div>
       )}
 
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+      <section className="tf-panel">
+        <div className="tf-panel-heading">
           <div>
-            <h2 className="font-semibold text-slate-900">1. Upload delivery tickets</h2>
+            <h2 className="tf-panel-title">1. Upload delivery tickets</h2>
             <p className="mt-0.5 text-xs text-slate-500">PDF, JPG, or PNG · All selected files must be valid; none are processed if any is rejected</p>
           </div>
           <a className="text-sm font-medium text-slate-700 underline-offset-2 hover:underline" href="/projects">Manage projects</a>
@@ -279,7 +277,7 @@ export default function Home() {
               </label>
             </div>
             <button type="button" disabled={!files.length || !projectId || busy} onClick={onUpload}
-              className="w-full rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40">
+              className="tf-primary-button w-full disabled:opacity-40">
               {busy ? "Uploading..." : "Upload & queue"}
             </button>
           </div>
@@ -287,7 +285,7 @@ export default function Home() {
       </section>
 
       {batch && (
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-live="polite">
+        <section className="tf-panel p-5" aria-live="polite">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="font-semibold text-slate-900">Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}</h2>
@@ -328,7 +326,7 @@ export default function Home() {
 
       {tickets.length > 0 && current && (
         <section className="space-y-4" aria-label="Ticket review workspace">
-          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+          <div className="tf-panel px-5 py-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">2. Compare & accept each ticket</h2>
@@ -351,8 +349,8 @@ export default function Home() {
           </div>
 
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <section className="tf-panel">
+              <div className="tf-panel-heading">
                 <div>
                   <h3 className="font-semibold text-slate-900">Original scanned ticket</h3>
                   <p className="mt-0.5 text-xs text-slate-500">
@@ -376,7 +374,7 @@ export default function Home() {
                 <a href={ticketImageUrl(current.id)} target="_blank" rel="noreferrer"
                   className="text-xs font-medium text-slate-700 underline-offset-2 hover:underline">Open full image</a>
               </div>
-              <div className="flex min-h-[350px] max-h-[72vh] items-start justify-center overflow-auto bg-slate-100 p-4">
+              <div className="flex min-h-[350px] max-h-[72vh] items-start justify-center overflow-auto bg-[#e6e9eb] p-5">
                 <img src={ticketImageUrl(current.id)} alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
                   className="h-auto max-h-none rounded-md border border-slate-200 bg-white shadow-sm"
                   style={{ width: zoom * 100 + "%", maxWidth: "none", transform: "rotate(" + rotation + "deg)" }} />
@@ -437,7 +435,7 @@ export default function Home() {
                 {queue.map(({ t, index }) => (
                   <button type="button" key={t.id} onClick={() => selectTicket(index)}
                     aria-current={selected === index ? "true" : undefined}
-                    className={selected === index ? "flex w-full flex-wrap items-center justify-between gap-3 border-l-4 border-slate-900 bg-slate-50 px-4 py-3 text-left" : "flex w-full flex-wrap items-center justify-between gap-3 border-l-4 border-transparent px-4 py-3 text-left transition hover:bg-slate-50"}>
+                    className={selected === index ? "flex w-full flex-wrap items-center justify-between gap-3 border-l-[3px] border-[#df702f] bg-[#fff8f2] px-4 py-3 text-left" : "flex w-full flex-wrap items-center justify-between gap-3 border-l-[3px] border-transparent px-4 py-3 text-left hover:bg-[#f8f9fa]"}>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-slate-900">#{index + 1} · {t.ticket_number || "Unrecognized number"}</span>
                       <span className="mt-0.5 block text-xs text-slate-500">{t.material_type || "Material not identified"} · {t.tonnage ?? "—"} tons</span>
@@ -517,10 +515,10 @@ function ReviewForm({
   const flaggedFor = (words: string[]) => ticket.flags.some((fl) => words.some((w) => fl.startsWith(w)));
 
   return (
-    <aside className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto">
+    <aside className="space-y-4 rounded-md border border-[#dce1e6] bg-white p-5 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
         <div>
-          <h3 className="font-semibold text-slate-950">Extracted ticket information</h3>
+          <h3 className="text-[14px] font-bold text-[#1d2b38]">Extracted ticket information</h3>
           <p className="mt-1 text-xs text-slate-500">Compare every value with the scan, then accept.</p>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
@@ -550,13 +548,13 @@ function ReviewForm({
             inputMode={f.type === "number" ? "decimal" : undefined}
             value={values[f.key]}
             onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-            className={`w-full rounded-lg border px-3 py-2.5 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-700/20 ${
+            className={`w-full rounded border px-3 py-2.5 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-[#e6a97b] ${
               flaggedFor(f.flagWords) ? "border-amber-400 bg-amber-50" : "border-slate-300"
             }`}
           />
         </div>
       ))}
-      <div className="rounded bg-slate-50 p-3 text-sm">
+      <div className="rounded border border-[#e2e7eb] bg-[#f7f8f9] p-3 text-sm">
         {ticket.status === "verified" && ticket.price_snapshot_state === "priced" && (
           <p className="mb-2 text-emerald-800">Unit price locked at verification. Later changes to supplier rates will not change this ticket.</p>
         )}
@@ -595,12 +593,12 @@ function ReviewForm({
               return saved ? ticketAction(ticket.id, "verify").then((t) => (onChange(t), t)).catch((e) => (onError(e.message), null)) : null;
             }, true)
           }
-          className="min-w-40 flex-1 rounded-lg bg-emerald-700 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-40"
+          className="min-w-40 flex-1 rounded bg-[#dc6c30] px-4 py-3 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
           disabled={saving || (ticket.status === "verified" && !dirty)}
         >
           {ticket.status === "verified" && !dirty ? "Accepted" : "Accept & next"}
         </button>
-        <button disabled={saving || !dirty} onClick={() => run(save)} className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-40">
+        <button disabled={saving || !dirty} onClick={() => run(save)} className="rounded border border-[#cfd6dc] px-3 py-2.5 text-sm font-semibold text-[#39495b] disabled:opacity-40">
           Save changes
         </button>
         <button disabled={saving} onClick={() => run(async () => {
@@ -608,7 +606,7 @@ function ReviewForm({
           if (!saved) return null;
           return ticketAction(ticket.id, "flag").then((t) => { onChange(t); return t; })
             .catch((e) => { onError(e.message); return null; });
-        }, true)} className="rounded-lg border border-orange-300 bg-orange-50 px-3 py-2.5 text-sm font-semibold text-orange-900 hover:bg-orange-100 disabled:opacity-40">
+        }, true)} className="rounded border border-[#e5b993] bg-[#fff7ee] px-3 py-2.5 text-sm font-semibold text-[#97511e] hover:bg-[#fff0dc] disabled:opacity-40">
           Flag for later
         </button>
         <button disabled={saving} onClick={() => {
