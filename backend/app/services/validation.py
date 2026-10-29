@@ -63,9 +63,12 @@ def parse_tonnage(value) -> Decimal | None:
         amount = Decimal(match.group("number").replace(",", ""))
         # Oversized/overprecise model outputs must fail review, never crash a
         # worker or get silently truncated to the database's Numeric(12, 3).
-        if not amount.is_finite() or amount >= Decimal("1000000000") or amount <= Decimal("-1000000000"):
+        if not amount.is_finite():
             return None
-        return amount.quantize(Decimal("0.001"))
+        rounded = amount.quantize(Decimal("0.001"))
+        if abs(rounded) >= Decimal("1000000000"):
+            return None
+        return rounded
     except (InvalidOperation, ValueError):
         return None
 
