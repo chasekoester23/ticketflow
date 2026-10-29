@@ -50,6 +50,7 @@ export default function Home() {
   const [rotation, setRotation] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [configured, setConfigured] = useState<boolean | null>(null);
@@ -109,6 +110,20 @@ export default function Home() {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onRetry() {
+    if (!batch || retrying) return;
+    setRetrying(true);
+    setError(null);
+    try {
+      await retryBatch(batch.id);
+      await refresh(batch.id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -187,7 +202,7 @@ export default function Home() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div>
             <h2 className="font-semibold text-slate-900">1. Upload delivery tickets</h2>
-            <p className="mt-0.5 text-xs text-slate-500">PDF, JPG, or PNG · Documents are not approved automatically</p>
+            <p className="mt-0.5 text-xs text-slate-500">PDF, JPG, or PNG · All selected files must be valid; none are processed if any is rejected</p>
           </div>
           <a className="text-sm font-medium text-slate-700 underline-offset-2 hover:underline" href="/projects">Manage projects</a>
         </div>
@@ -264,13 +279,21 @@ export default function Home() {
             </div>
             <div className="flex flex-wrap gap-2">
               {batch.status === "failed" && (
-                <button type="button" onClick={() => retryBatch(batch.id).then(() => refresh(batch.id)).catch((e) => setError(e.message))}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium">Retry failed</button>
+                <button type="button" onClick={onRetry} disabled={retrying}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium disabled:opacity-40">
+                  {retrying ? "Retrying…" : "Retry failed files"}
+                </button>
               )}
               <a className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 href={exportUrl(batch.id)}>Export Excel</a>
             </div>
           </div>
+          {batch.status === "failed" && (
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Some files failed to process. Any successfully extracted tickets are still available for review.
+              Retrying will preserve accepted tickets and manually corrected values.
+            </p>
+          )}
           <ul className="mt-3 space-y-1 text-xs text-slate-500">
             {batch.files.map((file) => <li key={file.id}>
               <span className="font-medium text-slate-700">{file.original_name}</span>: {BATCH_LABEL[file.status] ?? file.status}
