@@ -402,11 +402,13 @@ function ReviewForm({
   ticket,
   onChange,
   onAdvance,
+  onDirtyChange,
   onError,
 }: {
   ticket: Ticket;
   onChange: (t: Ticket) => void;
   onAdvance: () => void;
+  onDirtyChange: (dirty: boolean) => void;
   onError: (m: string | null) => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>(() =>
@@ -417,6 +419,7 @@ function ReviewForm({
   const overrideDirty = override !== (ticket.unit_price_override ?? "");
 
   const dirty = overrideDirty || FIELDS.some((f) => values[f.key] !== ((ticket[f.key] as string | null) ?? ""));
+  useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
 
   async function save(): Promise<Ticket | null> {
     const body: Record<string, string | null> = {};
@@ -447,10 +450,13 @@ function ReviewForm({
   const flaggedFor = (words: string[]) => ticket.flags.some((fl) => words.some((w) => fl.startsWith(w)));
 
   return (
-    <aside className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 lg:sticky lg:top-6 lg:self-start">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold">Review ticket</h3>
-        <span className={`rounded px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
+    <aside className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:sticky xl:top-4 xl:self-start">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
+        <div>
+          <h3 className="font-semibold text-slate-950">Extracted ticket information</h3>
+          <p className="mt-1 text-xs text-slate-500">Compare every value with the scan, then accept.</p>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
       </div>
       {ticket.error && <p className="text-sm text-red-700">{ticket.error}</p>}
       {ticket.flags.length > 0 && (
@@ -476,7 +482,7 @@ function ReviewForm({
             inputMode={f.type === "number" ? "decimal" : undefined}
             value={values[f.key]}
             onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-            className={`w-full rounded border px-3 py-2 text-sm ${
+            className={`w-full rounded-lg border px-3 py-2.5 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-700/20 ${
               flaggedFor(f.flagWords) ? "border-amber-400 bg-amber-50" : "border-slate-300"
             }`}
           />
@@ -508,31 +514,44 @@ function ReviewForm({
           className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
         />
       </div>
-      <p className="text-xs text-slate-500">
-        Verifying confirms the tonnage above matches the ticket image. Cost calculation requires confirmed tonnage.
+      <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+        <strong className="text-slate-800">Your acceptance is required.</strong> Confirm that the ticket number, date, material, tons, supplier and job match the original. Only accepted tickets count toward verified totals.
       </p>
+      {dirty && <p className="text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
       <div className="flex flex-wrap gap-2">
         <button
-          disabled={saving}
           onClick={() =>
             run(async () => {
               const saved = await save();
               return saved ? ticketAction(ticket.id, "verify").then((t) => (onChange(t), t)).catch((e) => (onError(e.message), null)) : null;
             }, true)
           }
-          className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+          className="min-w-40 flex-1 rounded-lg bg-emerald-700 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-40"
+          disabled={saving || (ticket.status === "verified" && !dirty)}
         >
-          Verify{dirty ? " & save" : ""}
+          {ticket.status === "verified" && !dirty ? "Accepted" : "Accept & next"}
         </button>
-        <button disabled={saving || !dirty} onClick={() => run(save)} className="rounded border border-slate-300 px-3 py-2 text-sm disabled:opacity-40">
+        <button disabled={saving || !dirty} onClick={() => run(save)} className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-40">
           Save changes
         </button>
-        <button
-          disabled={saving}
-          onClick={() => run(() => ticketAction(ticket.id, "skip").then((t) => (onChange(t), t)).catch((e) => (onError(e.message), null)), true)}
-          className="rounded border border-slate-300 px-3 py-2 text-sm"
-        >
-          Skip
+        <button disabled={saving} onClick={() => run(async () => {
+          const saved = await save();
+          if (!saved) return null;
+          return ticketAction(ticket.id, "flag").then((t) => { onChange(t); return t; })
+            .catch((e) => { onError(e.message); return null; });
+        }, true)} className="rounded-lg border border-orange-300 bg-orange-50 px-3 py-2.5 text-sm font-semibold text-orange-900 hover:bg-orange-100 disabled:opacity-40">
+          Flag for later
+        </button>
+        <button disabled={saving} onClick={() => {
+          if (!window.confirm("Skip this ticket? Skipped tickets are excluded from exports and financial totals.")) return;
+          run(async () => {
+            const saved = await save();
+            if (!saved) return null;
+            return ticketAction(ticket.id, "skip").then((t) => { onChange(t); return t; })
+              .catch((e) => { onError(e.message); return null; });
+          }, true);
+        }} className="rounded-lg px-3 py-2 text-xs font-medium text-slate-500 hover:text-slate-900 disabled:opacity-40">
+          Skip non-ticket
         </button>
       </div>
     </aside>
