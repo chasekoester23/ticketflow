@@ -64,6 +64,7 @@ def _drain_job_for_tests() -> None:
 async def create_batch(
     background: BackgroundTasks,
     layout: str = Form("single"),
+    intake_mode: str = Form("extract"),
     project_id: int | None = Form(None),
     files: list[UploadFile] = File(...),
     organization_id: int = Depends(current_organization_id),
