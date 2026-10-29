@@ -50,7 +50,13 @@ async def csrf_header_gate(request: Request, call_next):
         origin = request.headers.get("origin")
         if origin and origin not in settings.cors_origins:
             return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
-    return await call_next(request)
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    if request.url.path.startswith("/api/"):
+        # No browser/proxy cache may serve a previous owner's tickets, images,
+        # financial summaries, or login responses.
+        response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 app.include_router(auth_router.router)
