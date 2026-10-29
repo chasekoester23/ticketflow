@@ -458,7 +458,7 @@ export default function Home() {
             <ReviewForm
               key={current.id + "-" + current.status + "-" + current.tonnage + "-" + current.ticket_number + "-" + current.unit_price + "-" + current.cost}
               ticket={current}
-              manual={batch.intake_mode === "manual"}
+              manual={batch?.intake_mode === "manual"}
               onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
               onAdvance={advance}
               onDirtyChange={setFormDirty}
