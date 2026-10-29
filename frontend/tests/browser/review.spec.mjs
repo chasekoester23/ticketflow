@@ -15,14 +15,20 @@ function fixture(id, number) {
 async function launch(page, deepLink = 101) {
   const tickets = [fixture(101, "10482"), fixture(102, "10483")];
   const log = { verified: [], flagged: [], patched: [] };
+  const cors = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
+    "access-control-allow-headers": "content-type",
+  };
   const json = (route, value, status = 200) => route.fulfill({
-    status, contentType: "application/json", body: JSON.stringify(value),
+    status, contentType: "application/json", headers: cors, body: JSON.stringify(value),
   });
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
+    if (method === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
     if (path === "/api/status") return json(route, { extraction_configured: true, model: "test-only" });
     if (path === "/api/projects") return json(route, [{
       id: 1, code: "P-100", name: "Project A", job_location: "Site", description: null, status: "active",
