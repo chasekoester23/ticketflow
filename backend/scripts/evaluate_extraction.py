@@ -6,11 +6,11 @@ Usage from backend/:
   python scripts/evaluate_extraction.py check --manifest evaluation_data/labels.json
   python scripts/check_api_key.py
   python scripts/evaluate_extraction.py run --manifest evaluation_data/labels.json
-  # For permitted comparisons: --provider openai | --provider gemini
+  # For permitted comparisons: --provider anthropic | --provider openai
 
 Real documents, labels and reports are deliberately ignored by Git.
 Running 'check' never makes an API call. Running 'run' uses the explicitly chosen paid provider and may incur
-actual API charges. Alternative providers are evaluation-only, not production.
+actual API charges. Anthropic is an explicit fallback; OpenAI is evaluation-only.
 """
 from __future__ import annotations
 
@@ -47,8 +47,8 @@ def main() -> int:
     run.add_argument("--manifest", required=True, type=Path)
     run.add_argument("--output", type=Path, help="Default: manifest folder/accuracy-report-<provider>.json")
     run.add_argument(
-        "--provider", choices=tuple(DEFAULT_MODELS), default="anthropic",
-        help="Explicit paid benchmark provider (default: anthropic)",
+        "--provider", choices=tuple(DEFAULT_MODELS), default="gemini",
+        help="Explicit paid benchmark provider (default: gemini)",
     )
     run.add_argument(
         "--model", help="Optional API model ID; defaults to the current documented candidate",
