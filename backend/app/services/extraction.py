@@ -107,4 +107,18 @@ class AnthropicExtractor:
 
 
 def get_extractor() -> Extractor:
-    return AnthropicExtractor()
+    """The live worker uses ONLY the explicitly configured vision provider.
+
+    Gemini is the default for new installations. No API key means a visible
+    failed AI batch, while manual uploads still use zero model calls.
+    """
+    if settings.extraction_provider == "gemini":
+        # Lazy import avoids a circular dependency with the shared extractor
+        # protocol and keeps optional benchmark adapters out of normal startup.
+        from .benchmark_providers import GeminiBenchmarkExtractor
+        return GeminiBenchmarkExtractor(model=settings.gemini_model)
+    if settings.extraction_provider == "anthropic":
+        return AnthropicExtractor(model=settings.extraction_model)
+    raise ExtractionError(
+        "EXTRACTION_PROVIDER must be 'gemini' or 'anthropic'"
+    )
