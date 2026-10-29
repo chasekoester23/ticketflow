@@ -391,7 +391,7 @@ export default function Home() {
               <h3 className="text-[12px] font-bold text-[#3c4b5b]">Ticket numbers · quick navigation</h3>
               <span className="text-[11px] text-[#7a8794]">Alt + ← / → to move between tickets</span>
             </div>
-            <div className="flex gap-2 overflow-x-auto px-4 py-3" role="group" aria-label="Ticket number quick navigation">
+            <div className="flex gap-2 overflow-x-auto px-4 py-3" role="group" aria-label="Review queue quick navigation">
               {tickets.map((ticket, index) => (
                 <button type="button" key={ticket.id}
                   aria-label={`Open ticket ${index + 1}: ${ticket.ticket_number || "number not entered"}`}
