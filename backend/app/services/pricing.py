@@ -15,11 +15,14 @@ def norm(name: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
 
 
-def rate_table(db: Session) -> dict[tuple[str, str], Decimal]:
+def rate_table(db: Session, organization_id: int) -> dict[tuple[str, str], Decimal]:
     rows = db.execute(
         select(Supplier.name, Material.name, SupplierRate.unit_price)
         .join(SupplierRate, SupplierRate.supplier_id == Supplier.id)
         .join(Material, Material.id == SupplierRate.material_id)
+        .where(SupplierRate.organization_id == organization_id,
+               Supplier.organization_id == organization_id,
+               Material.organization_id == organization_id)
     ).all()
     return {(norm(s), norm(m)): p for s, m, p in rows}
 
@@ -52,20 +55,21 @@ def cost_for(t: Ticket, price: Decimal | None) -> Decimal | None:
     return (t.tonnage * price).quantize(CENTS)
 
 
-def catalog_names(db: Session) -> tuple[set[str], set[str]]:
+def catalog_names(db: Session, organization_id: int) -> tuple[set[str], set[str]]:
     """Load normalized supplier/material names once for an entire review queue."""
     return (
-        {norm(n) for n in db.scalars(select(Supplier.name))},
-        {norm(n) for n in db.scalars(select(Material.name))},
+        {norm(n) for n in db.scalars(select(Supplier.name).where(Supplier.organization_id == organization_id))},
+        {norm(n) for n in db.scalars(select(Material.name).where(Material.organization_id == organization_id))},
     )
 
 
 def unresolved_names(
-    db: Session, t: Ticket, names: tuple[set[str], set[str]] | None = None,
+    db: Session, t: Ticket, organization_id: int,
+    names: tuple[set[str], set[str]] | None = None,
 ) -> list[str]:
     """Why a rate is missing, with optional cached catalog name sets."""
     notes = []
-    suppliers, materials = names if names is not None else catalog_names(db)
+    suppliers, materials = names if names is not None else catalog_names(db, organization_id)
     if t.supplier and norm(t.supplier) not in suppliers:
         notes.append(f"Supplier '{t.supplier}' is not in your supplier list")
     if t.material_type and norm(t.material_type) not in materials:

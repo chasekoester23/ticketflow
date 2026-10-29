@@ -30,6 +30,17 @@ async def lifespan(app: FastAPI):
     for name in ("users", "login_sessions"):
         if not inspect(engine).has_table(name):
             raise RuntimeError("Authentication migration missing: run 'cd backend && alembic upgrade head'.")
+    # Fail closed if the organization migration was not applied. create_all()
+    # does not alter existing tables, so a legacy user must migrate first.
+    for name in ("users", "projects", "batches", "suppliers", "materials", "supplier_rates"):
+        columns = {c["name"] for c in inspect(engine).get_columns(name)}
+        if "organization_id" not in columns:
+            raise RuntimeError(
+                "Company ownership migration required: back up the database, "
+                "then run 'cd backend && python -m alembic upgrade head'."
+            )
+    if not inspect(engine).has_table("organizations"):
+        raise RuntimeError("Organization migration missing; run alembic upgrade head.")
     yield
 
 

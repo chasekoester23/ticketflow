@@ -1,4 +1,4 @@
-"""Single-workspace owner authentication (NOT multi-tenant authorization).
+"""Session authentication and explicit company identity for every API request.
 
 Opaque sessions are stored only as SHA-256 digests in SQLite. Passwords use
 salted scrypt. Do not put tokens in URLs, JS-visible storage or logs.
@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import get_db
-from .models import LoginSession, User
+from .models import LoginSession, Organization, User
 
 COOKIE_NAME = "ticketflow_session"
 SESSION_HOURS = 12
@@ -100,9 +100,18 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if not session or session.expires_at <= now:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired; sign in again")
     user = db.get(User, session.user_id)
-    if not user or not user.active:
+    if not user or not user.active or user.organization_id is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account unavailable")
+    if db.get(Organization, user.organization_id) is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account organization unavailable")
     return user
+
+
+def current_organization_id(user: User = Depends(current_user)) -> int:
+    """Never trust a company ID from a URL, header or request body."""
+    if user.organization_id is None:
+        raise HTTPException(403, "Account has no organization")
+    return user.organization_id
 
 
 class Credentials(BaseModel):

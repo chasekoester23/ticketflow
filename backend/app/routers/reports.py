@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..auth import current_organization_id
 from ..db import get_db
 from ..models import Batch, Project, Ticket
 from ..schemas import TicketOut
@@ -22,10 +23,12 @@ VALID_STATUS = {"needs_review", "verified", "skipped", "failed", "flagged"}
 
 
 def filtered_tickets(
-    db: Session, *, project_id: int | None, supplier: str | None, material: str | None,
+    db: Session, *, organization_id: int, project_id: int | None, supplier: str | None, material: str | None,
     status: str | None, date_from: date | None, date_to: date | None, include_skipped: bool = False,
 ) -> list[Ticket]:
-    q = select(Ticket).join(Batch, Batch.id == Ticket.batch_id)
+    q = select(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
+        Batch.organization_id == organization_id
+    )
     if project_id is not None:
         q = q.where(Batch.project_id == project_id)
     if supplier:
@@ -48,13 +51,14 @@ def records(
     project_id: int | None = None, supplier: str | None = None, material: str | None = None,
     status: str | None = None, date_from: date | None = None, date_to: date | None = None,
     db: Session = Depends(get_db),
+    organization_id: int = Depends(current_organization_id),
 ):
-    table = pricing_svc.rate_table(db)
-    ts = filtered_tickets(db, project_id=project_id, supplier=supplier, material=material,
+    table = pricing_svc.rate_table(db, organization_id)
+    ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=supplier, material=material,
                           status=status, date_from=date_from, date_to=date_to)
-    index = dup_svc.load_index(db)
-    names = pricing_svc.catalog_names(db)
-    return [_out(db, t, table, duplicate_index=index, catalog=names) for t in ts]
+    index = dup_svc.load_index(db, organization_id)
+    names = pricing_svc.catalog_names(db, organization_id)
+    return [_out(db, t, organization_id, table, duplicate_index=index, catalog=names) for t in ts]
 
 
 @router.get("/records/export.xlsx")
@@ -62,9 +66,10 @@ def export_records(
     project_id: int | None = None, supplier: str | None = None, material: str | None = None,
     status: str | None = None, date_from: date | None = None, date_to: date | None = None,
     db: Session = Depends(get_db),
+    organization_id: int = Depends(current_organization_id),
 ):
-    table = pricing_svc.rate_table(db)
-    ts = filtered_tickets(db, project_id=project_id, supplier=supplier, material=material,
+    table = pricing_svc.rate_table(db, organization_id)
+    ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=supplier, material=material,
                           status=status, date_from=date_from, date_to=date_to)
     prices = {t.id: p for t in ts if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
     return Response(
@@ -74,9 +79,10 @@ def export_records(
 
 
 @router.get("/dashboard")
-def dashboard(project_id: int | None = None, db: Session = Depends(get_db)):
-    table = pricing_svc.rate_table(db)
-    all_ts = filtered_tickets(db, project_id=project_id, supplier=None, material=None, status=None,
+def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
+              organization_id: int = Depends(current_organization_id)):
+    table = pricing_svc.rate_table(db, organization_id)
+    all_ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=None, material=None, status=None,
                               date_from=None, date_to=None, include_skipped=True)
     ts = [t for t in all_ts if t.status != "skipped"]
 
@@ -100,10 +106,12 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db)):
             row[2] += c or Decimal(0)
         return [{"name": k, "tickets": v[0], "tons": v[1], "cost": v[2]} for k, v in sorted(g.items())]
 
-    bq = select(Batch).order_by(Batch.id.desc()).limit(8)
+    bq = select(Batch).where(Batch.organization_id == organization_id).order_by(Batch.id.desc()).limit(8)
     if project_id is not None:
         bq = bq.where(Batch.project_id == project_id)
-    projects = {p.id: p.name for p in db.scalars(select(Project))}
+    projects = {p.id: p.name for p in db.scalars(select(Project).where(
+        Project.organization_id == organization_id
+    ))}
     return {
         "tickets": len(ts),
         "needs_review": sum(1 for t in ts if t.status in ("needs_review", "failed", "flagged")),

@@ -11,7 +11,7 @@ async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> 
   return fetch(url, { ...init, headers, credentials: "include", cache: "no-store" });
 }
 
-export type Owner = { id: number; username: string };
+export type Owner = { id: number; username: string; organization_name?: string | null };
 
 export async function getAuthMe(): Promise<Owner> {
   return (await check(await apiFetch(`${API}/api/auth/me`))).json();

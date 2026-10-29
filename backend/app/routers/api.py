@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..auth import current_organization_id
 from ..config import settings
 from ..db import SessionLocal, get_db
 from ..models import AuditEvent, Batch, Project, Ticket, UploadedFile
@@ -76,12 +77,15 @@ async def create_batch(
     layout: str = Form("single"),
     project_id: int | None = Form(None),
     files: list[UploadFile] = File(...),
+    organization_id: int = Depends(current_organization_id),
     db: Session = Depends(get_db),
 ):
     if layout not in ("single", "grid_2x2"):
         raise HTTPException(422, "layout must be 'single' or 'grid_2x2'")
     if project_id is not None:
-        project = db.get(Project, project_id)
+        project = db.scalar(select(Project).where(
+            Project.id == project_id, Project.organization_id == organization_id
+        ))
         if not project:
             raise HTTPException(404, "Project not found")
         if project.status != "active":
@@ -112,7 +116,8 @@ async def create_batch(
     if not validated:
         raise HTTPException(400, "No valid files were provided")
 
-    batch = Batch(layout=layout, status="uploaded", project_id=project_id)
+    batch = Batch(layout=layout, status="uploaded", project_id=project_id,
+                  organization_id=organization_id)
     upload_dir = None
     try:
         db.add(batch)
@@ -140,21 +145,27 @@ async def create_batch(
     return batch
 
 @router.get("/batches", response_model=list[BatchOut])
-def list_batches(db: Session = Depends(get_db)):
-    return db.scalars(select(Batch).order_by(Batch.id.desc())).all()
+def list_batches(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    return db.scalars(select(Batch).where(
+        Batch.organization_id == organization_id
+    ).order_by(Batch.id.desc())).all()
 
 
 @router.get("/batches/{batch_id}", response_model=BatchOut)
-def get_batch(batch_id: int, db: Session = Depends(get_db)):
-    batch = db.get(Batch, batch_id)
+def get_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    batch = db.scalar(select(Batch).where(
+        Batch.id == batch_id, Batch.organization_id == organization_id
+    ))
     if not batch:
         raise HTTPException(404, "Batch not found")
     return batch
 
 
 @router.post("/batches/{batch_id}/retry", response_model=BatchOut)
-def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db)):
-    batch = db.get(Batch, batch_id)
+def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    batch = db.scalar(select(Batch).where(
+        Batch.id == batch_id, Batch.organization_id == organization_id
+    ))
     if not batch:
         raise HTTPException(404, "Batch not found")
     if batch.status != "failed":
@@ -170,44 +181,53 @@ def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depend
 
 
 @router.get("/batches/{batch_id}/tickets", response_model=list[TicketOut])
-def list_tickets(batch_id: int, db: Session = Depends(get_db)):
+def list_tickets(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    batch = db.scalar(select(Batch.id).where(
+        Batch.id == batch_id, Batch.organization_id == organization_id
+    ))
+    if batch is None:
+        raise HTTPException(404, "Batch not found")
     q = select(Ticket).where(Ticket.batch_id == batch_id).order_by(Ticket.file_id, Ticket.source_page, Ticket.position)
-    table = pricing_svc.rate_table(db)
-    index = dup_svc.load_index(db)
-    names = pricing_svc.catalog_names(db)
+    table = pricing_svc.rate_table(db, organization_id)
+    index = dup_svc.load_index(db, organization_id)
+    names = pricing_svc.catalog_names(db, organization_id)
     return [
-        _out(db, ticket, table, duplicate_index=index, catalog=names)
+        _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names)
         for ticket in db.scalars(q).all()
     ]
 
 
 def _out(
-    db: Session, t: Ticket, table=None, *,
+    db: Session, t: Ticket, organization_id: int, table=None, *,
     duplicate_index: dup_svc.DuplicateIndex | None = None,
     catalog: tuple[set[str], set[str]] | None = None,
 ) -> TicketOut:
     """Ticket plus pricing and duplicates, reusing per-list data when supplied."""
-    table = table if table is not None else pricing_svc.rate_table(db)
+    table = table if table is not None else pricing_svc.rate_table(db, organization_id)
     price, source = pricing_svc.effective_price_for(t, table)
     if t.status == "verified" and t.price_snapshot_state is None:
         notes = ["Legacy verified ticket: its historical rate is unknown. Enter the documented rate as an override, then re-verify to lock its cost."]
     elif t.status == "verified" and t.price_snapshot_state == "unpriced":
         notes = ["No rate was available at verification. Enter the documented rate as an override and re-verify this ticket."]
     elif price is None:
-        notes = pricing_svc.unresolved_names(db, t, catalog) or ["No rate configured for this supplier and material"]
+        notes = pricing_svc.unresolved_names(db, t, organization_id, catalog) or ["No rate configured for this supplier and material"]
     else:
         notes = []
     out = TicketOut.model_validate(t)
     return out.model_copy(update=dict(
         unit_price=price, price_source=source, cost=pricing_svc.cost_for(t, price),
         duplicates=(duplicate_index.find(t) if duplicate_index is not None
-                    else dup_svc.find_duplicates(db, t)),
+                    else dup_svc.find_duplicates(db, t, organization_id)),
         pricing_notes=notes,
     ))
 
 
-def _ticket_or_404(db: Session, ticket_id: int) -> Ticket:
-    t = db.get(Ticket, ticket_id)
+def _ticket_or_404(db: Session, ticket_id: int, organization_id: int) -> Ticket:
+    t = db.scalar(
+        select(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
+            Ticket.id == ticket_id, Batch.organization_id == organization_id
+        )
+    )
     if not t:
         raise HTTPException(404, "Ticket not found")
     return t
@@ -220,8 +240,8 @@ def _refresh_flags(t: Ticket) -> None:
 
 
 @router.patch("/tickets/{ticket_id}", response_model=TicketOut)
-def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_db)):
-    t = _ticket_or_404(db, ticket_id)
+def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    t = _ticket_or_404(db, ticket_id, organization_id)
     changes = patch.model_dump(exclude_unset=True)
     changed = False
     for field, new in changes.items():
@@ -254,12 +274,12 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
         t.applied_price_source = None
     _refresh_flags(t)
     db.commit()
-    return _out(db, t)
+    return _out(db, t, organization_id)
 
 
 @router.post("/tickets/{ticket_id}/verify", response_model=TicketOut)
-def verify_ticket(ticket_id: int, db: Session = Depends(get_db)):
-    t = _ticket_or_404(db, ticket_id)
+def verify_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    t = _ticket_or_404(db, ticket_id, organization_id)
     # Validate the current values rather than trusting stale extraction flags.
     _refresh_flags(t)
     # Unusually high tonnage is a warning, not an absolute rejection: some
@@ -271,9 +291,9 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db)):
         if t.price_snapshot_state is None:
             raise HTTPException(409, "Historical unit price is unknown. Enter the documented rate as a ticket override and verify again.")
         if t.price_snapshot_state in ("priced", "unpriced"):
-            return _out(db, t)  # repeated verify must not reprice an approved ticket
+            return _out(db, t, organization_id)  # repeated verify must not reprice an approved ticket
 
-    price, source = pricing_svc.unit_price_for(t, pricing_svc.rate_table(db))
+    price, source = pricing_svc.unit_price_for(t, pricing_svc.rate_table(db, organization_id))
     db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="verified"))
     db.add(AuditEvent(
         ticket_id=t.id, field="verified_unit_price",
@@ -284,13 +304,13 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db)):
     t.price_snapshot_state = "priced" if price is not None else "unpriced"
     t.status, t.tonnage_confirmed = "verified", True
     db.commit()
-    return _out(db, t)
+    return _out(db, t, organization_id)
 
 
 @router.post("/tickets/{ticket_id}/flag", response_model=TicketOut)
-def flag_ticket(ticket_id: int, db: Session = Depends(get_db)):
+def flag_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     """Defer a questionable ticket without approving its quantity or cost."""
-    t = _ticket_or_404(db, ticket_id)
+    t = _ticket_or_404(db, ticket_id, organization_id)
     if t.status != "flagged":
         db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="flagged"))
     t.status = "flagged"
@@ -299,12 +319,12 @@ def flag_ticket(ticket_id: int, db: Session = Depends(get_db)):
     t.applied_unit_price = None
     t.applied_price_source = None
     db.commit()
-    return _out(db, t)
+    return _out(db, t, organization_id)
 
 
 @router.post("/tickets/{ticket_id}/skip", response_model=TicketOut)
-def skip_ticket(ticket_id: int, db: Session = Depends(get_db)):
-    t = _ticket_or_404(db, ticket_id)
+def skip_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    t = _ticket_or_404(db, ticket_id, organization_id)
     db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="skipped"))
     t.status = "skipped"
     t.tonnage_confirmed = False
@@ -312,28 +332,31 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db)):
     t.applied_unit_price = None
     t.applied_price_source = None
     db.commit()
-    return _out(db, t)
+    return _out(db, t, organization_id)
 
 
 @router.get("/tickets/{ticket_id}/image")
-def ticket_image(ticket_id: int, db: Session = Depends(get_db)):
-    t = _ticket_or_404(db, ticket_id)
+def ticket_image(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    t = _ticket_or_404(db, ticket_id, organization_id)
     return FileResponse(t.crop_path, media_type="image/png")
 
 
 @router.get("/tickets/{ticket_id}/audit")
-def ticket_audit(ticket_id: int, db: Session = Depends(get_db)):
+def ticket_audit(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    _ticket_or_404(db, ticket_id, organization_id)
     events = db.scalars(select(AuditEvent).where(AuditEvent.ticket_id == ticket_id).order_by(AuditEvent.id)).all()
     return [{"field": e.field, "old": e.old_value, "new": e.new_value, "at": e.created_at} for e in events]
 
 
 @router.get("/batches/{batch_id}/export.xlsx")
-def export_batch(batch_id: int, db: Session = Depends(get_db)):
-    if not db.get(Batch, batch_id):
+def export_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    if db.scalar(select(Batch.id).where(
+        Batch.id == batch_id, Batch.organization_id == organization_id
+    )) is None:
         raise HTTPException(404, "Batch not found")
     tickets = db.scalars(
         select(Ticket).where(Ticket.batch_id == batch_id).order_by(Ticket.file_id, Ticket.source_page, Ticket.position)).all()
-    table = pricing_svc.rate_table(db)
+    table = pricing_svc.rate_table(db, organization_id)
     prices = {t.id: p for t in tickets if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
     data = export_svc.build_workbook(list(tickets), prices)
     return Response(

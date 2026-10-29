@@ -1,11 +1,11 @@
 """SQLAlchemy models (Phase 1 subset of the full design).
 
-The single-workspace owner protects access; multi-company isolation is NOT built.
+Company-owned parent rows and fail-closed read/write scoping enforce tenant isolation.
 """
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -15,10 +15,17 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Organization(Base):
+    __tablename__ = "organizations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -32,21 +39,26 @@ class LoginSession(Base):
 
 class Supplier(Base):
     __tablename__ = "suppliers"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_supplier_org_name"),)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(200), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
     contact: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
 
 class Material(Base):
     __tablename__ = "materials"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_material_org_name"),)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(200), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
     unit: Mapped[str] = mapped_column(String(20), default="ton")
 
 
 class SupplierRate(Base):
-    """Price per unit for a supplier+material pair. Effective dates / project rates are later work."""
+    """Tenant-scoped price per supplier+material. Historical snapshots stay immutable."""
     __tablename__ = "supplier_rates"
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     id: Mapped[int] = mapped_column(primary_key=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id", ondelete="CASCADE"))
     material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"))
@@ -57,8 +69,10 @@ class SupplierRate(Base):
 
 class Project(Base):
     __tablename__ = "projects"
+    __table_args__ = (UniqueConstraint("organization_id", "code", name="uq_project_org_code"),)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[str] = mapped_column(String(50), unique=True)  # the user's own project/job number
+    code: Mapped[str] = mapped_column(String(50))  # the user's own project/job number
     name: Mapped[str] = mapped_column(String(200))
     job_location: Mapped[str | None] = mapped_column(String(200), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -68,6 +82,7 @@ class Project(Base):
 
 class Batch(Base):
     __tablename__ = "batches"
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     layout: Mapped[str] = mapped_column(String(20))  # single | grid_2x2

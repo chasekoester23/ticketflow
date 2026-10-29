@@ -17,7 +17,7 @@ from sqlalchemy import select
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.auth import password_hash  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
-from app.models import User  # noqa: E402
+from app.models import Organization, User  # noqa: E402
 
 
 def main() -> int:
@@ -42,7 +42,13 @@ def main() -> int:
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        db.add(User(username=username, password_hash=encoded))
+        original = db.scalar(select(Organization).order_by(Organization.id).limit(1))
+        if original is None:
+            print("Organization migration missing. Run alembic upgrade head.", file=sys.stderr)
+            return 1
+        db.add(User(
+            organization_id=original.id, username=username, password_hash=encoded,
+        ))
         db.commit()
     print("Single-workspace owner created. Start TicketFlow and visit /login.")
     return 0

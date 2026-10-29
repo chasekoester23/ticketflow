@@ -13,7 +13,7 @@ def _seed_owner():
     gen = app.dependency_overrides[get_db]()
     db = next(gen)
     try:
-        user = User(username="owner", password_hash=password_hash("correct-long-password"))
+        user = User(organization_id=1, username="owner", password_hash=password_hash("correct-long-password"))
         db.add(user)
         db.commit()
         return user.id

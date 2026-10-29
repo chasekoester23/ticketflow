@@ -37,7 +37,7 @@ test("sign-in renders a workspace and sign-out returns to login", async ({ page 
       return json(route, { ok: true });
     }
     if (pathname === "/api/auth/me") {
-      return json(route, { id: 1, username: "owner" });
+      return json(route, { id: 1, username: "owner", organization_name: "Original workspace" });
     }
     return json(route, { detail: "Not found" }, 404);
   });
@@ -56,6 +56,7 @@ test("sign-in renders a workspace and sign-out returns to login", async ({ page 
   await expect(page).toHaveURL("/");
   await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByText("Original workspace")).toBeVisible();
   expect(calls.login).toBe(1);
 
   await page.getByRole("button", { name: "Sign out" }).click();

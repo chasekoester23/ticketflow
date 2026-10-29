@@ -11,7 +11,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Ticket
+from ..models import Batch, Ticket
 from .pricing import norm
 
 
@@ -80,12 +80,14 @@ class DuplicateIndex:
         return reasons
 
 
-def load_index(db: Session) -> DuplicateIndex:
+def load_index(db: Session, organization_id: int) -> DuplicateIndex:
     """One database scan per list response, regardless of displayed row count."""
-    tickets = list(db.scalars(select(Ticket).where(Ticket.status != "skipped").order_by(Ticket.id)))
+    tickets = list(db.scalars(select(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
+        Batch.organization_id == organization_id, Ticket.status != "skipped"
+    ).order_by(Ticket.id)))
     return DuplicateIndex(tickets)
 
 
-def find_duplicates(db: Session, ticket: Ticket) -> list[str]:
+def find_duplicates(db: Session, ticket: Ticket, organization_id: int) -> list[str]:
     """Compatibility entry point for single-ticket reads and edits."""
-    return load_index(db).find(ticket)
+    return load_index(db, organization_id).find(ticket)
