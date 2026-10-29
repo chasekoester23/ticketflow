@@ -8,3 +8,9 @@ node_modules/
 .next/
 .DS_Store
 *.tsbuildinfo
+
+# Never commit real scanned documents, human labels, or evaluation reports.
+backend/evaluation_data/
+backend/evaluation_results/
+frontend/test-results/
+frontend/playwright-report/
