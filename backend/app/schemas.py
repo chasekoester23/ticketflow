@@ -17,6 +17,7 @@ class BatchOut(BaseModel):
     id: int
     project_id: int | None = None
     layout: str
+    intake_mode: str
     status: str
     created_at: datetime
     files: list[FileOut] = []
