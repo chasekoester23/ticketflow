@@ -52,11 +52,20 @@ def cost_for(t: Ticket, price: Decimal | None) -> Decimal | None:
     return (t.tonnage * price).quantize(CENTS)
 
 
-def unresolved_names(db: Session, t: Ticket) -> list[str]:
-    """Reasons a rate could not be found, to show the user what to configure."""
+def catalog_names(db: Session) -> tuple[set[str], set[str]]:
+    """Load normalized supplier/material names once for an entire review queue."""
+    return (
+        {norm(n) for n in db.scalars(select(Supplier.name))},
+        {norm(n) for n in db.scalars(select(Material.name))},
+    )
+
+
+def unresolved_names(
+    db: Session, t: Ticket, names: tuple[set[str], set[str]] | None = None,
+) -> list[str]:
+    """Why a rate is missing, with optional cached catalog name sets."""
     notes = []
-    suppliers = {norm(n) for n in db.scalars(select(Supplier.name))}
-    materials = {norm(n) for n in db.scalars(select(Material.name))}
+    suppliers, materials = names if names is not None else catalog_names(db)
     if t.supplier and norm(t.supplier) not in suppliers:
         notes.append(f"Supplier '{t.supplier}' is not in your supplier list")
     if t.material_type and norm(t.material_type) not in materials:
