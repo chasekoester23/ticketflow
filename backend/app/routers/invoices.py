@@ -70,6 +70,7 @@ class InvoiceLineOut(BaseModel):
     subtotal_difference: Decimal | None
     verified_count: int
     pending_count: int
+    unclassified_count: int
     unpriced_count: int
     rate_mismatch_count: int
     status: Literal["matches", "discrepancy", "incomplete", "no_verified_tickets"]
@@ -152,6 +153,27 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         if t.status == "verified" and t.tonnage_confirmed
     ]
     pending = [t for t in all_tickets if t not in verified]
+    # A ticket still under review might lack a date, supplier or material,
+    # so it cannot be definitively assigned to an invoice scope. Never show
+    # a clean match while a potentially relevant unknown ticket is present.
+    # If any KNOWN attribute contradicts the invoice scope, exclude it.
+    candidate_q = select(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
+        Batch.organization_id == organization_id,
+        Batch.project_id == item.project_id,
+        Ticket.status.notin_(["verified", "skipped"]),
+    )
+    scoped_ids = {t.id for t in all_tickets}
+    unclassified = []
+    for ticket in db.scalars(candidate_q):
+        if ticket.id in scoped_ids:
+            continue
+        if ticket.delivery_date is not None and not (item.date_from <= ticket.delivery_date <= item.date_to):
+            continue
+        if norm(ticket.supplier) not in ("", item.supplier_key):
+            continue
+        if norm(ticket.material_type) not in ("", item.material_key):
+            continue
+        unclassified.append(ticket)
     verified_tons = sum((t.tonnage or Decimal(0) for t in verified), Decimal(0))
     unpriced = [t for t in verified if t.price_snapshot_state != "priced" or t.applied_unit_price is None]
     rate_mismatch = [
@@ -180,6 +202,11 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         warnings.append("No verified delivery tickets match this invoice line.")
     if pending:
         warnings.append(f"{len(pending)} matching ticket(s) still need review; comparison is incomplete.")
+    if unclassified:
+        warnings.append(
+            f"{len(unclassified)} unreviewed project ticket(s) lack enough date/supplier/material "
+            "information to rule out this invoice; classification is required."
+        )
     if unpriced:
         warnings.append(f"{len(unpriced)} verified ticket(s) have no locked unit price.")
     if rate_mismatch:
@@ -193,7 +220,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
 
     if not verified:
         status = "no_verified_tickets"
-    elif pending or unpriced:
+    elif pending or unclassified or unpriced:
         status = "incomplete"
     elif quantity_difference or arithmetic_difference or subtotal_difference or rate_mismatch:
         status = "discrepancy"
@@ -212,6 +239,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         quantity_difference=quantity_difference,
         subtotal_difference=subtotal_difference,
         verified_count=len(verified), pending_count=len(pending),
+        unclassified_count=len(unclassified),
         unpriced_count=len(unpriced), rate_mismatch_count=len(rate_mismatch),
         status=status, warnings=warnings,
         tickets=[
@@ -223,7 +251,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
                     and t.price_snapshot_state == "priced" else None
                 ),
             )
-            for t in all_tickets
+            for t in all_tickets + unclassified
         ],
         created_at=item.created_at.date() if hasattr(item.created_at, "date") else item.created_at,
     )
