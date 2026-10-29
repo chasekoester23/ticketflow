@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Filters, Project, Ticket, getRecords, listProjects, recordsExportUrl } from "../../lib/api";
 
-const STATUS_LABEL: Record<string, string> = { needs_review: "Needs review", verified: "Verified", skipped: "Skipped", failed: "Failed" };
+const STATUS_LABEL: Record<string, string> = { needs_review: "Needs review", verified: "Verified", flagged: "Flagged", skipped: "Skipped", failed: "Failed" };
 
 export default function RecordsPage() {
   const [filters, setFilters] = useState<Filters>({});
