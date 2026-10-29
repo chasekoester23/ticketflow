@@ -80,6 +80,7 @@ async def csrf_header_gate(request: Request, call_next):
 app.include_router(auth_router.router)
 app.include_router(api.router, dependencies=[Depends(current_user)])
 app.include_router(pricing.router, dependencies=[Depends(current_user)])
+app.include_router(invoices.router, dependencies=[Depends(current_user)])
 app.include_router(projects.router, dependencies=[Depends(current_user)])
 app.include_router(reports.router, dependencies=[Depends(current_user)])
 
