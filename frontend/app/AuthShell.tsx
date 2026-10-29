@@ -30,6 +30,7 @@ const links: { href: string; label: string; icon: IconName; description?: string
   { href: "/projects", label: "Projects", icon: "projects" },
   { href: "/upload", label: "Ticket intake", icon: "tickets" },
   { href: "/records", label: "Delivery records", icon: "records" },
+  { href: "/invoices", label: "Invoice comparison", icon: "invoices" },
   { href: "/pricing", label: "Suppliers & rates", icon: "rates" },
 ];
 
