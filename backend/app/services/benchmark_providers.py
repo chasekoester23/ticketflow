@@ -1,8 +1,8 @@
 """Opt-in model candidates for PRIVATE, permissioned handwritten-ticket benchmarks.
 
-These adapters are intentionally not wired into the production processing
-worker. The production model stays Anthropic until we compare real labeled
-scans. No API requests occur until extract() is explicitly called.
+The Gemini adapter is the primary reader in the production worker when
+EXTRACTION_PROVIDER=gemini (the default). OpenAI is benchmark-only; Claude is
+an explicit opt-in fallback. No paid requests occur until extract() is called.
 
 Do not make assertions of handwriting accuracy from fake-client unit tests.
 """
@@ -91,12 +91,12 @@ class GeminiBenchmarkExtractor:
             return
         key = api_key or settings.gemini_api_key
         if not key:
-            raise ExtractionError("GEMINI_API_KEY is not set; no benchmark calls made")
+            raise ExtractionError("GEMINI_API_KEY is not set; cannot run extraction")
         try:
             from google import genai
         except ImportError as exc:
             raise ExtractionError(
-                "Gemini benchmark SDK missing; install requirements-benchmark.txt"
+                "Gemini SDK missing; run pip install -r requirements-dev.txt"
             ) from exc
         self.client = genai.Client(api_key=key, http_options={"timeout": 60000})
 
