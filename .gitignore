@@ -14,3 +14,6 @@ backend/evaluation_data/
 backend/evaluation_results/
 frontend/test-results/
 frontend/playwright-report/
+
+# Synthetic demonstration PDFs are locally generated, not source assets.
+backend/demo_output/
