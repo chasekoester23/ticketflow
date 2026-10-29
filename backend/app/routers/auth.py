@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import Credentials, current_user, login, logout
 from ..db import get_db
-from ..models import User
+from ..models import Organization, User
 
 router = APIRouter(prefix="/api/auth")
 
@@ -21,5 +21,10 @@ def sign_out(request: Request, response: Response, db: Session = Depends(get_db)
 
 
 @router.get("/me")
-def me(user: User = Depends(current_user)):
-    return {"id": user.id, "username": user.username}
+def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    organization = db.get(Organization, user.organization_id)
+    return {
+        "id": user.id,
+        "username": user.username,
+        "organization_name": organization.name if organization else None,
+    }
