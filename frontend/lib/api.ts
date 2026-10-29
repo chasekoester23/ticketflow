@@ -30,7 +30,7 @@ export async function logOut(): Promise<void> {
 
 export type Project = { id: number; code: string; name: string; job_location: string | null; description: string | null; status: string };
 export type FileOut = { id: number; original_name: string; status: string; error: string | null };
-export type Batch = { id: number; project_id: number | null; layout: string; status: string; created_at: string; files: FileOut[] };
+export type Batch = { id: number; project_id: number | null; layout: string; intake_mode?: "extract" | "manual"; status: string; created_at: string; files: FileOut[] };
 export type Ticket = {
   id: number;
   batch_id: number;
@@ -70,9 +70,10 @@ async function check(res: Response) {
   return res;
 }
 
-export async function uploadBatch(files: File[], layout: string, projectId?: number): Promise<Batch> {
+export async function uploadBatch(files: File[], layout: string, projectId?: number, intakeMode: "extract" | "manual" = "extract"): Promise<Batch> {
   const form = new FormData();
   form.append("layout", layout);
+  form.append("intake_mode", intakeMode);
   if (projectId !== undefined) form.append("project_id", String(projectId));
   files.forEach((f) => form.append("files", f));
   return (await check(await apiFetch(`${API}/api/batches`, { method: "POST", body: form }))).json();
