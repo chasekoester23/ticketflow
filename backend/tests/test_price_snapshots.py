@@ -49,6 +49,13 @@ def test_verified_price_does_not_change_with_supplier_rates(client):
     assert Decimal(locked["cost"]) == Decimal("735")
 
     _rate(client, "45")
+    # Ticket 2 is a *different material* (No. 8 Stone). Set its own rate;
+    # TicketFlow correctly matches by both supplier and material.
+    supplier_id = client.get("/api/suppliers").json()[0]["id"]
+    stone8 = client.post("/api/materials", json={"name": "No. 8 Stone"}).json()
+    assert client.put("/api/rates", json={
+        "supplier_id": supplier_id, "material_id": stone8["id"], "unit_price": "45",
+    }).status_code == 200
     unchanged = client.get(f"/api/batches/{bid}/tickets").json()[0]
     assert unchanged["price_snapshot_state"] == "priced"
     assert Decimal(unchanged["unit_price"]) == Decimal("30")
