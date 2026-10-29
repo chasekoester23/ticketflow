@@ -6,14 +6,16 @@ Usage from backend/:
   python scripts/evaluate_extraction.py check --manifest evaluation_data/labels.json
   python scripts/check_api_key.py
   python scripts/evaluate_extraction.py run --manifest evaluation_data/labels.json
+  # For permitted comparisons: --provider openai | --provider gemini
 
 Real documents, labels and reports are deliberately ignored by Git.
-Running 'check' never makes an API call. Running 'run' uses the configured
-Anthropic vision model and may incur actual API charges.
+Running 'check' never makes an API call. Running 'run' uses the explicitly chosen paid provider and may incur
+actual API charges. Alternative providers are evaluation-only, not production.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -88,6 +90,11 @@ def main() -> int:
         report = evaluate(cases, extractor)
         report["provider"] = args.provider
         report["model"] = args.model or DEFAULT_MODELS[args.provider]
+        # A digest permits comparison of reports only when every original
+        # human label is unchanged, without copying any sensitive label values.
+        report["dataset_sha256"] = hashlib.sha256(
+            args.manifest.resolve().read_bytes()
+        ).hexdigest()
         output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(f"Benchmark: {report['provider']} / {report['model']}, "
               f"{report['tickets']} independently labeled tickets.")
