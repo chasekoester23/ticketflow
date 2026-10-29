@@ -157,6 +157,7 @@ def _refresh_flags(t: Ticket) -> None:
 def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_db)):
     t = _ticket_or_404(db, ticket_id)
     changes = patch.model_dump(exclude_unset=True)
+    changed = False
     for field, new in changes.items():
         if isinstance(new, str):
             new = new.strip() or None
@@ -167,14 +168,17 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
         old = getattr(t, field)
         if old == new:
             continue
+        changed = True
         db.add(AuditEvent(ticket_id=t.id, field=field, old_value=None if old is None else str(old),
                           new_value=None if new is None else str(new)))
         setattr(t, field, new)
         if field == "tonnage":  # a changed quantity must be re-confirmed
             t.tonnage_confirmed = False
         if t.status == "verified":
+            # Any changed field (including price) invalidates the previous approval.
             t.status = "needs_review"
-    if t.status == "failed" and changes:
+            t.tonnage_confirmed = False
+    if t.status == "failed" and changed:
         t.status, t.error = "needs_review", None  # manual entry recovers a failed extraction
     _refresh_flags(t)
     db.commit()
@@ -184,11 +188,15 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
 @router.post("/tickets/{ticket_id}/verify", response_model=TicketOut)
 def verify_ticket(ticket_id: int, db: Session = Depends(get_db)):
     t = _ticket_or_404(db, ticket_id)
-    if t.tonnage is None or t.tonnage <= 0:
-        raise HTTPException(422, "A positive tonnage is required before verifying")
-    if not t.ticket_number:
-        raise HTTPException(422, "A ticket number is required before verifying")
-    db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="verified"))
+    # Validate the current values rather than trusting stale extraction flags.
+    _refresh_flags(t)
+    # Unusually high tonnage is a warning, not an absolute rejection: some
+    # legitimate delivery tickets may be for a bulk shipment.
+    blocking = [f for f in t.flags if not f.startswith("Tonnage unusually large")]
+    if blocking:
+        raise HTTPException(422, "Resolve ticket issues before verification: " + "; ".join(blocking))
+    if t.status != "verified":
+        db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="verified"))
     t.status, t.tonnage_confirmed = "verified", True
     db.commit()
     return _out(db, t)
@@ -199,6 +207,7 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db)):
     t = _ticket_or_404(db, ticket_id)
     db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="skipped"))
     t.status = "skipped"
+    t.tonnage_confirmed = False
     db.commit()
     return _out(db, t)
 
