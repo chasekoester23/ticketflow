@@ -10,6 +10,7 @@ pillow>=10,<13
 opencv-python-headless>=4.10,<5
 openpyxl>=3.1,<4
 anthropic>=0.40,<1
+google-genai>=1,<4  # primary Gemini handwriting OCR
 pytest>=8,<10
 httpx>=0.27,<1
 reportlab>=4,<5

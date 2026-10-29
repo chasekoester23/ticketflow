@@ -1,6 +1,7 @@
-"""Verify your Anthropic API key works: `python scripts/check_api_key.py` (run from the backend folder).
+"""Check configured TicketFlow extraction provider with one small REAL paid API call.
 
-Makes one tiny real API call (a few tokens, effectively free) and prints a clear result.
+Run from backend/: python scripts/check_api_key.py
+The script never prints the API key and does not send any ticket document.
 """
 import sys
 from pathlib import Path
@@ -11,28 +12,57 @@ from app.config import settings  # noqa: E402
 
 
 def main() -> int:
-    if not settings.anthropic_api_key:
-        print("FAIL: ANTHROPIC_API_KEY is empty. Copy .env.example to .env and paste your key after the '='.")
+    provider = settings.extraction_provider
+    if provider == "gemini":
+        model = settings.gemini_model
+        if not settings.gemini_api_key:
+            print("FAIL: GEMINI_API_KEY is missing in backend/.env. No API calls made.")
+            return 1
+        try:
+            from google import genai
+            client = genai.Client(
+                api_key=settings.gemini_api_key, http_options={"timeout": 30000},
+            )
+            response = client.models.generate_content(
+                model=model, contents="Reply with the single word: ok",
+            )
+            if not response.text:
+                print("FAIL: Gemini model returned an empty response; check access and quotas.")
+                return 1
+        except Exception as exc:
+            print(f"FAIL: Gemini API request failed ({type(exc).__name__}). "
+                  "Check your key, enabled model, billing and quota.")
+            return 1
+    elif provider == "anthropic":
+        model = settings.extraction_model
+        if not settings.anthropic_api_key:
+            print("FAIL: ANTHROPIC_API_KEY is missing in backend/.env. No API calls made.")
+            return 1
+        try:
+            import anthropic
+            client = anthropic.Anthropic(
+                api_key=settings.anthropic_api_key, timeout=30.0, max_retries=0,
+            )
+            response = client.messages.create(
+                model=model, max_tokens=10,
+                messages=[{"role": "user", "content": "Reply with the single word: ok"}],
+            )
+            if not any(
+                getattr(part, "type", None) == "text" and part.text
+                for part in response.content
+            ):
+                print("FAIL: Anthropic model returned an empty response.")
+                return 1
+        except Exception as exc:
+            print(f"FAIL: Anthropic API request failed ({type(exc).__name__}). "
+                  "Check your key, model, billing and quota.")
+            return 1
+    else:
+        print("FAIL: EXTRACTION_PROVIDER must be gemini or anthropic")
         return 1
-    import anthropic
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=30.0, max_retries=0)
-    try:
-        resp = client.messages.create(
-            model=settings.extraction_model, max_tokens=10,
-            messages=[{"role": "user", "content": "Reply with the single word: ok"}],
-        )
-    except anthropic.AuthenticationError:
-        print("FAIL: the key was rejected (invalid or revoked). Create a new one at console.anthropic.com.")
-        return 1
-    except anthropic.NotFoundError:
-        print(f"FAIL: model '{settings.extraction_model}' not found. Set EXTRACTION_MODEL in .env to a model your account can use.")
-        return 1
-    except Exception as exc:
-        print(f"FAIL: {type(exc).__name__}: {exc}")
-        return 1
-    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
-    print(f"OK: key works with model '{settings.extraction_model}' (reply: {text!r})")
+    print(f"OK: {provider} key and model '{model}' responded successfully.")
+    print("This does NOT establish real handwriting recognition accuracy.")
     return 0
 
 

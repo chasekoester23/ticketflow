@@ -92,4 +92,8 @@ def health():
 @app.get("/api/status", dependencies=[Depends(current_user)])
 def status():
     """Lets the UI warn when extraction isn't configured. Never returns the key itself."""
-    return {"extraction_configured": bool(settings.anthropic_api_key), "model": settings.extraction_model}
+    if settings.extraction_provider == "gemini":
+        return {"extraction_configured": bool(settings.gemini_api_key), "model": settings.gemini_model}
+    if settings.extraction_provider == "anthropic":
+        return {"extraction_configured": bool(settings.anthropic_api_key), "model": settings.extraction_model}
+    return {"extraction_configured": False, "model": "Invalid extraction provider configuration"}

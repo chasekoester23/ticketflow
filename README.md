@@ -28,9 +28,9 @@ tonnage is always human-confirmed; no confidence scores, only deterministic flag
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env          # then put your key in ANTHROPIC_API_KEY=...
+test -f .env || cp .env.example .env  # keep any existing local secrets intact
 alembic upgrade head          # safe additive schema migration, required before starting
-python scripts/create_owner.py --username owner  # prompted securely for a 12+ character password
+python scripts/create_owner.py --username owner  # ONLY for first-time installation; never recreate existing owner
 uvicorn app.main:app --reload --port 8000
 
 # Worker (third terminal; use the same Python environment)
@@ -45,8 +45,49 @@ npm run dev                   # http://localhost:3000
 
 Create a project first (Projects page), then try `backend/sample_4_tickets.pdf` (synthetic, printed-style, not handwriting) with layout "Four tickets (2x2)".
 
-Privacy note: with a key set, cropped ticket images are sent to the Anthropic API for extraction. Disclose this to
-any customer before using their documents.
+Privacy note: with `EXTRACTION_PROVIDER=gemini` and a valid Gemini key, cropped ticket images
+are sent to the Google Gemini API for extraction. If you explicitly select Anthropic,
+images go to Anthropic instead. **Get document-owner authorization before sending
+real contractor scans to ANY external provider.** Paid/free data-handling policies differ.
+
+## Gemini primary handwriting reader (Batch #14 candidate)
+
+**Gemini 3.1 Pro Preview is the selected primary reader.** We chose the
+vendor, **not a verified handwriting accuracy number**; our synthetic
+automated tests cannot predict real performance with sloppy delivery notes.
+This Gemini model is in preview and availability/pricing can change.
+
+For an existing installation, do not copy .env.example over your .env.
+Keep your existing database, projects and user account. Update the existing
+\`backend/.env\` locally (never commit keys):
+
+\`\`\`ini
+EXTRACTION_PROVIDER=gemini
+GEMINI_MODEL=gemini-3.1-pro-preview
+GEMINI_API_KEY=YOUR_PRIVATE_KEY_HERE
+\`\`\`
+
+From \`backend/\` in your existing virtual environment:
+
+\`\`\`bash
+python -m pip install -r requirements-dev.txt
+python scripts/check_api_key.py   # ONE small live call; requires billing/model access
+\`\`\`
+
+Restart the backend and the **separate worker** to pick up environment changes.
+On the Upload page choose **AI extraction** to invoke Gemini on the individual
+stored ticket crops, then verify every field in the original-image review UI.
+**Manual entry** remains zero-AI and works without any key. No database schema
+changes are needed.
+
+Without a Gemini key, an AI batch fails visibly; it NEVER fabricates OCR.
+An old \`ANTHROPIC_API_KEY\` does not enable the Gemini reader. Anthropic is an
+explicit opt-in alternative (\`EXTRACTION_PROVIDER=anthropic\` and
+\`EXTRACTION_MODEL=...\`). This is not an automatic provider fallback.
+
+Private, permissioned benchmark support is in \`backend/EVALUATION.md\`.
+The model's actual recognition accuracy, cost per ticket and value to
+contractors remain unmeasured.
 
 ## Batches #12–13: efficient review + manual intake
 

@@ -16,10 +16,11 @@ provider on an independently hand-labeled sample.
   The local app has login and company-scoped records, but is **not yet
   production hardened or approved for public deployment**. Keep real
   ticket data off public repositories and demonstrations.
-- The extraction model receives a cropped image of each scanned ticket when
-  you run `run`. Review your AI provider's data-handling terms and the
-  customer's requirements before doing that. `prepare` and `check` make
-  **zero network/model API calls**.
+- The selected extraction provider (Gemini by default) receives a cropped image
+  of each scanned ticket when you run `run`. Verify the selected account's
+  data-handling terms, billing tier, privacy requirements, and customer consent
+  before doing that. Free-tier data policies can differ from paid-tier policies.
+  `prepare` and `check` make **zero network/model API calls**.
 - Use a diverse, deliberately chosen pilot sample: different suppliers,
   handwriting styles, dates, material formats, scan quality, rotations,
   multi-page PDFs, and known difficult tickets. Start with 25–50; expand after
@@ -94,17 +95,33 @@ AI inference and does not establish handwriting accuracy**.
 
 ## Step 3: Evaluate the real model
 
-Configure `ANTHROPIC_API_KEY` in `backend/.env` and verify model access:
+Configure `EXTRACTION_PROVIDER=gemini`, `GEMINI_API_KEY` and (optionally)
+`GEMINI_MODEL` in `backend/.env`, then verify API access. **Do not share keys
+in chat, commit them to Git, or use unauthorized employer documents.**
 
 ```bash
 python scripts/check_api_key.py
-python scripts/evaluate_extraction.py run --manifest evaluation_data/labels.json
+python scripts/evaluate_extraction.py run --provider gemini --manifest evaluation_data/labels.json
 ```
+
+For a consented model comparison, the optional alternatives use the **same
+independently labeled crop manifest**, prompt and image-size cap:
+
+```bash
+# Only if you choose to spend additional API calls and have provider keys:
+# python -m pip install -r requirements-benchmark.txt
+# python scripts/evaluate_extraction.py run --provider anthropic --manifest evaluation_data/labels.json
+# python scripts/evaluate_extraction.py run --provider openai --manifest evaluation_data/labels.json
+```
+
+Reports default to separate `accuracy-report-gemini.json` and provider-specific
+filenames and refuse to overwrite a previous result. Reports include an SHA-256
+fingerprint of the annotation file to make incompatible comparisons detectable.
+**The fingerprint is not an anonymization guarantee; keep reports private.**
 
 This invokes the live extractor **once per labeled ticket**; the provider
 SDK may retry transient failures, and real API charges depend on usage. Start with a
-small, consented sample and monitor your API usage/billing separately. By
-default the result is written to `evaluation_data/accuracy-report.json`;
+small, consented sample and monitor your API usage/billing separately. By default the result is written to `evaluation_data/accuracy-report-gemini.json`;
 the script refuses to overwrite a previous report. Use
 `--output evaluation_data/accuracy-report-second-run.json` for a new run.
 
@@ -119,6 +136,27 @@ per-field and all-six-field metrics. **Timing excludes human review.** The
 report does not contain ground-truth values, predicted text, or ticket images;
 the private labels file still contains sensitive data. Neither cost-per-call
 nor PDF splitting recall is currently measured—do not claim either metric.
+
+## What the business decision will use
+
+A conservative rollout emphasizes **wrong net tonnage**, not simply average
+character accuracy. Count unreadable/missing values separately from mismatches
+and invented non-null values, and review ticket numbers, date and material.
+Compare wall-clock **human review time** and repeated corrections separately
+from API latency. Price and tokens per ticket need to be measured against
+actual invoices; this CLI does not collect reliable cost accounting.
+
+If comparing providers, use reports from the SAME source and human labels,
+and run:
+
+```bash
+python scripts/compare_extraction_reports.py \
+  evaluation_data/accuracy-report-gemini.json \
+  evaluation_data/accuracy-report-anthropic.json
+```
+
+Use a distinct held-out set before claiming that prompt or preprocessing
+improvements generalize. Never approve any cost or tonnage without a person.
 
 ## Step 4: Use the findings
 

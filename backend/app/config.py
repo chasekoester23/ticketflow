@@ -12,9 +12,16 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{BASE_DIR / 'ticketflow.db'}"
     storage_dir: Path = BASE_DIR / "storage"
 
-    # Vision extraction. No key => extraction fails loudly (we never fake OCR).
+    # Gemini is the primary image reader. Claude remains an explicit fallback
+    # option, not an automatic hidden retry or an accidental paid API call.
+    # Missing keys always fail visibly; manual entry never needs a key.
+    extraction_provider: str = "gemini"  # gemini | anthropic
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.1-pro-preview"
     anthropic_api_key: str | None = None
-    extraction_model: str = "claude-sonnet-5-5"
+    extraction_model: str = "claude-sonnet-5-5"  # legacy Anthropic model setting
+    # Optional comparison-only provider; never selected by the live worker.
+    openai_api_key: str | None = None
 
     max_upload_bytes: int = 25 * 1024 * 1024
     render_dpi: int = 200

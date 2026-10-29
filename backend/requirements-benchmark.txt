@@ -1,0 +1,4 @@
+# Optional: compare against OpenAI on independently labeled, permissioned tickets.
+# Gemini is already installed with normal TicketFlow requirements.
+-r requirements-dev.txt
+openai>=2,<4
