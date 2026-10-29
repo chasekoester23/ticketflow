@@ -30,6 +30,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env          # then put your key in ANTHROPIC_API_KEY=...
 alembic upgrade head          # safe additive schema migration, required before starting
+python scripts/create_owner.py --username owner  # prompted securely for a 12+ character password
 uvicorn app.main:app --reload --port 8000
 
 # Frontend (second terminal)
@@ -42,6 +43,40 @@ Create a project first (Projects page), then try `backend/sample_4_tickets.pdf` 
 
 Privacy note: with a key set, cropped ticket images are sent to the Anthropic API for extraction. Disclose this to
 any customer before using their documents.
+
+## Single-owner authentication (Batch #8)
+
+**Authentication is now required.** This protects the existing local
+single-workspace prototype. **It is NOT multi-company data isolation**, and
+the application is NOT yet safe for public deployment to unrelated contractors.
+
+1. Back up your SQLite database before upgrading. From `backend/`, run
+   `alembic upgrade head`. The new migration adds `users` and
+   `login_sessions` without deleting existing ticket data.
+2. Run `python scripts/create_owner.py --username owner` once and enter
+   a unique 12+ character password when prompted. The account setup script
+   refuses to create a second user: all existing records belong to this
+   *single workspace*, not separate companies.
+3. Start FastAPI and Next.js, visit `http://localhost:3000/login`, and
+   sign in. Existing scans, dashboards, pricing, exports, and image endpoints
+   require authentication; a signed-out user receives HTTP 401.
+4. Sessions use HTTP-only cookies (not localStorage), hashed opaque tokens
+   in the database, a 12-hour expiry, and server-side logout invalidation.
+   Mutating API requests require `X-TicketFlow-Request: 1`. Browser requests
+   from origins not in `CORS_ORIGINS` are rejected.
+5. For localhost development `SESSION_SECURE_COOKIE=false` works with
+   `http://localhost`. For a future HTTPS deployment, set
+   `SESSION_SECURE_COOKIE=true`, set explicit HTTPS `CORS_ORIGINS`, and
+   run behind TLS. The backend refuses non-localhost frontend origins
+   with insecure cookies. The UI/API must also be configured as a
+   same-site pair to use SameSite=Lax session cookies.
+
+**Security limitations:** These are preliminary owner-access controls, not a
+complete production security assessment. Multi-company authorization,
+production-grade distributed login rate limits, account recovery, HTTPS
+hosting, durable job workers, private object storage, audit identity,
+and backups are not yet implemented. Authentication alone must not
+be mistaken for customer-ready tenant isolation.
 
 ## Ticket review workflow
 
