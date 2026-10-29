@@ -15,7 +15,7 @@ export type Ticket = {
   supplier: string | null;
   job_location: string | null;
   flags: string[];
-  status: "needs_review" | "verified" | "skipped" | "failed";
+  status: "needs_review" | "verified" | "flagged" | "skipped" | "failed";
   tonnage_confirmed: boolean;
   error: string | null;
   unit_price_override: string | null;
@@ -70,7 +70,7 @@ export async function patchTicket(id: number, body: Partial<Record<string, strin
   ).json();
 }
 
-export async function ticketAction(id: number, action: "verify" | "skip"): Promise<Ticket> {
+export async function ticketAction(id: number, action: "verify" | "flag" | "skip"): Promise<Ticket> {
   return (await check(await fetch(`${API}/api/tickets/${id}/${action}`, { method: "POST" }))).json();
 }
 
@@ -135,7 +135,7 @@ export const recordsExportUrl = (f: Filters) => `${API}/api/records/export.xlsx$
 
 export type Group = { name: string; tickets: number; tons: string | number; cost: string | number };
 export type Dashboard = {
-  tickets: number; needs_review: number; verified: number; total_tons: string | number; total_cost: string | number;
+  tickets: number; needs_review: number; flagged: number; verified: number; total_tons: string | number; total_cost: string | number;
   pending_tons: string | number; unpriced_tickets: number; pending_cost_tickets: number;
   by_supplier: Group[]; by_material: Group[];
   recent_batches: { id: number; status: string; created_at: string; files: number; project: string | null }[];
