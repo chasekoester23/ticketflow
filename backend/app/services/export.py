@@ -13,7 +13,7 @@ HEADERS = [
     "Ticket Number", "Delivery Date", "Material Type", "Tonnage", "Supplier", "Job Location",
     "Unit Price", "Calculated Cost", "Verification Status", "Source File Reference",
 ]
-STATUS_LABEL = {"verified": "Verified", "needs_review": "Needs review", "failed": "Extraction failed", "skipped": "Skipped"}
+STATUS_LABEL = {"verified": "Verified", "needs_review": "Needs review", "failed": "Extraction failed", "skipped": "Skipped", "flagged": "Flagged for review"}
 HEADER_FILL = PatternFill("solid", fgColor="1F2937")
 CENTS = Decimal("0.01")
 
