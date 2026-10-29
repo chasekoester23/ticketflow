@@ -63,7 +63,7 @@ def test_batched_duplicate_and_catalog_queries_do_not_grow_per_record(client):
                 crop_path="/not-needed.png", crop_sha256=f"unique-{i}",
                 ticket_number=str(100000 + i), delivery_date=date(2026, 10, 15),
                 material_type="Unlisted Stone", supplier="Unlisted Quarry",
-                tonnage=Decimal("24.500"), job_location="Site A",
+                tonnage=Decimal("24.500") + Decimal(i) / 1000, job_location="Site A",
                 status="needs_review", tonnage_confirmed=False, flags=[],
             ))
         db.commit()
