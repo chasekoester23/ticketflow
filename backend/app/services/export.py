@@ -19,8 +19,8 @@ CENTS = Decimal("0.01")
 
 
 def ticket_cost(t: Ticket, unit_price: Decimal | None) -> Decimal | None:
-    """Exact decimal math. Cost is only produced when tonnage is confirmed and a rate exists."""
-    if unit_price is None or t.tonnage is None or not t.tonnage_confirmed:
+    """Exact decimal math, available only for currently verified tickets."""
+    if t.status != "verified" or unit_price is None or t.tonnage is None or not t.tonnage_confirmed:
         return None
     return (t.tonnage * unit_price).quantize(CENTS)
 
@@ -72,7 +72,10 @@ def build_workbook(tickets: list[Ticket], unit_prices: dict[int, Decimal] | None
 def _summary_sheet(wb: Workbook, rows) -> None:
     ws = wb.create_sheet("Summary")
     bold = Font(bold=True)
-    total_tons = sum((t.tonnage for t, _, _ in rows if t.tonnage is not None), Decimal(0))
+    total_tons = sum((t.tonnage for t, _, _ in rows if t.status == "verified"
+                      and t.tonnage_confirmed and t.tonnage is not None), Decimal(0))
+    pending_tons = sum((t.tonnage for t, _, _ in rows if t.status != "verified"
+                        and t.tonnage is not None), Decimal(0))
     total_cost = sum((c for _, _, c in rows if c is not None), Decimal(0))
     unpriced = sum(1 for _, _, c in rows if c is None)
     needs_review = sum(1 for t, _, _ in rows if t.status != "verified")
@@ -81,14 +84,17 @@ def _summary_sheet(wb: Workbook, rows) -> None:
     ws.append([])
     for label, value, fmt in [
         ("Total tickets", len(rows), "0"),
-        ("Total tons", float(total_tons), "#,##0.00"),
+        ("Verified tons", float(total_tons), "#,##0.00"),
         ("Total calculated material cost", float(total_cost), '"$"#,##0.00'),
         ("Records requiring review", needs_review, "0"),
         ("Records without a calculated cost", unpriced, "0"),
     ]:
         ws.append([label, value]); ws.cell(ws.max_row, 2).number_format = fmt; ws.cell(ws.max_row, 1).font = bold
+    ws.append(["Unverified tons (excluded from actuals)", float(pending_tons)])
+    ws.cell(ws.max_row, 2).number_format = "#,##0.00"
+    ws.cell(ws.max_row, 1).font = bold
     ws.append([])
-    ws.append(["Note: calculated cost covers material only (tons x unit price). Delivery charges, taxes and other invoice items are not included."])
+    ws.append(["Note: calculated cost covers verified material only (tons x unit price). Delivery charges, taxes and other invoice items are not included."])
     ws.cell(ws.max_row, 1).font = Font(italic=True, color="6B7280")
 
     for title, key in [("Totals by supplier", lambda t: t.supplier or "(unknown)"),
@@ -98,7 +104,8 @@ def _summary_sheet(wb: Workbook, rows) -> None:
         for t, _, c in rows:
             g = groups[key(t)]
             g[0] += 1
-            g[1] += t.tonnage or Decimal(0)
+            if t.status == "verified" and t.tonnage_confirmed:
+                g[1] += t.tonnage or Decimal(0)
             g[2] += c or Decimal(0)
         ws.append([])
         ws.append([title]); ws.cell(ws.max_row, 1).font = Font(bold=True, size=12)

@@ -72,9 +72,11 @@ def test_dashboard_totals_with_pricing(client):
 
     d = client.get("/api/dashboard").json()
     assert d["tickets"] == 4 and d["verified"] == 1 and d["needs_review"] == 3
-    assert Decimal(str(d["total_tons"])) == Decimal("86.65")  # 24.5 + 22.1 + 19.75 + 20.3
+    assert Decimal(str(d["total_tons"])) == Decimal("24.5")  # verified, not all extracted tons
+    assert Decimal(str(d["pending_tons"])) == Decimal("62.15")
     assert Decimal(str(d["total_cost"])) == Decimal("735.00")
-    assert d["unpriced_tickets"] == 3
+    assert d["unpriced_tickets"] == 0
+    assert d["pending_cost_tickets"] == 3
     assert {r["name"] for r in d["by_supplier"]} == {"Example Aggregates", "Sample Materials"}
     assert d["recent_batches"][0]["project"] == "Highway 31"
     assert client.get("/api/dashboard?project_id=999").json()["tickets"] == 0

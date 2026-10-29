@@ -64,10 +64,10 @@ export default function DashboardPage() {
             <Card label="Tickets" value={data.tickets} />
             <Card label="Need review" value={data.needs_review} />
             <Card label="Verified" value={data.verified} />
-            <Card label="Total tons" value={tons(data.total_tons)} />
-            <Card label="Material cost" value={money(data.total_cost)} sub={data.unpriced_tickets ? `${data.unpriced_tickets} tickets not yet costed` : "all tickets costed"} />
+            <Card label="Verified tons" value={tons(data.total_tons)} sub={`${tons(data.pending_tons)} unverified tons excluded`} />
+            <Card label="Verified material cost" value={money(data.total_cost)} sub={data.unpriced_tickets ? `${data.unpriced_tickets} verified tickets lack a rate` : "Cost shown only for verified, priced tickets"} />
           </div>
-          <p className="text-xs text-slate-500">Cost counts only verified tickets with a price, and covers material only (no delivery charges or taxes).</p>
+          <p className="text-xs text-slate-500">Totals include only verified quantities. {data.pending_cost_tickets} tickets still need verification; material cost excludes delivery charges and taxes. The supplier and material tables count all tickets, but tons and costs include verified records only.</p>
           <div className="grid gap-6 md:grid-cols-2">
             <Table title="By supplier" rows={data.by_supplier} />
             <Table title="By material" rows={data.by_material} />

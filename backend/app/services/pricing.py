@@ -33,8 +33,8 @@ def unit_price_for(t: Ticket, table: dict[tuple[str, str], Decimal]) -> tuple[De
 
 
 def cost_for(t: Ticket, price: Decimal | None) -> Decimal | None:
-    """Cost only once tonnage is human-confirmed and a price exists."""
-    if price is None or t.tonnage is None or not t.tonnage_confirmed:
+    """Cost only for a currently verified ticket with confirmed tonnage and a rate."""
+    if t.status != "verified" or price is None or t.tonnage is None or not t.tonnage_confirmed:
         return None
     return (t.tonnage * price).quantize(CENTS)
 

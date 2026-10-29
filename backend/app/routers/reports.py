@@ -77,8 +77,14 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db)):
                               date_from=None, date_to=None, include_skipped=True)
     ts = [t for t in all_ts if t.status != "skipped"]
 
-    total_tons = sum((t.tonnage for t in ts if t.tonnage is not None), Decimal(0))
-    costs = [pricing_svc.cost_for(t, pricing_svc.unit_price_for(t, table)[0]) for t in ts]
+    # Only approved quantities belong in actuals. Unverified extractions are
+    # estimates and must not silently inflate project totals.
+    verified = [t for t in ts if t.status == "verified" and t.tonnage_confirmed]
+    pending = [t for t in ts if t.status != "verified" or not t.tonnage_confirmed]
+    total_tons = sum((t.tonnage for t in verified if t.tonnage is not None), Decimal(0))
+    pending_tons = sum((t.tonnage for t in pending if t.tonnage is not None), Decimal(0))
+    prices = [pricing_svc.unit_price_for(t, table)[0] for t in ts]
+    costs = [pricing_svc.cost_for(t, p) for t, p in zip(ts, prices)]
     total_cost = sum((c for c in costs if c is not None), Decimal(0))
 
     def group(keyfn):
@@ -86,7 +92,8 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db)):
         for t, c in zip(ts, costs):
             row = g[keyfn(t) or "(unknown)"]
             row[0] += 1
-            row[1] += t.tonnage or Decimal(0)
+            if t.status == "verified" and t.tonnage_confirmed:
+                row[1] += t.tonnage or Decimal(0)
             row[2] += c or Decimal(0)
         return [{"name": k, "tickets": v[0], "tons": v[1], "cost": v[2]} for k, v in sorted(g.items())]
 
@@ -99,8 +106,11 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db)):
         "needs_review": sum(1 for t in ts if t.status in ("needs_review", "failed")),
         "verified": sum(1 for t in ts if t.status == "verified"),
         "total_tons": total_tons,
+        "pending_tons": pending_tons,
         "total_cost": total_cost,
-        "unpriced_tickets": sum(1 for c in costs if c is None),
+        "unpriced_tickets": sum(1 for t, p in zip(ts, prices)
+                                if t.status == "verified" and t.tonnage_confirmed and p is None),
+        "pending_cost_tickets": len(pending),
         "by_supplier": group(lambda t: t.supplier),
         "by_material": group(lambda t: t.material_type),
         "recent_batches": [

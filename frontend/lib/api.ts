@@ -135,7 +135,8 @@ export const recordsExportUrl = (f: Filters) => `${API}/api/records/export.xlsx$
 export type Group = { name: string; tickets: number; tons: string | number; cost: string | number };
 export type Dashboard = {
   tickets: number; needs_review: number; verified: number; total_tons: string | number; total_cost: string | number;
-  unpriced_tickets: number; by_supplier: Group[]; by_material: Group[];
+  pending_tons: string | number; unpriced_tickets: number; pending_cost_tickets: number;
+  by_supplier: Group[]; by_material: Group[];
   recent_batches: { id: number; status: string; created_at: string; files: number; project: string | null }[];
 };
 export async function getDashboard(projectId?: string): Promise<Dashboard> {

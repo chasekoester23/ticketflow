@@ -94,8 +94,8 @@ def test_parse_model_json_handles_fence_and_rejects_garbage():
 
 
 def test_cost_uses_exact_decimal_and_requires_confirmation():
-    t = SimpleNamespace(tonnage=Decimal("24.500"), tonnage_confirmed=True)
+    t = SimpleNamespace(tonnage=Decimal("24.500"), tonnage_confirmed=True, status="verified")
     assert ticket_cost(t, Decimal("30")) == Decimal("735.00")
-    assert ticket_cost(SimpleNamespace(tonnage=Decimal("0.1"), tonnage_confirmed=True), Decimal("0.3")) == Decimal("0.03")
-    assert ticket_cost(SimpleNamespace(tonnage=Decimal("24.5"), tonnage_confirmed=False), Decimal("30")) is None
+    assert ticket_cost(SimpleNamespace(tonnage=Decimal("0.1"), tonnage_confirmed=True, status="verified"), Decimal("0.3")) == Decimal("0.03")
+    assert ticket_cost(SimpleNamespace(tonnage=Decimal("24.5"), tonnage_confirmed=False, status="verified"), Decimal("30")) is None
     assert ticket_cost(t, None) is None
