@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import Base, engine
-from .routers import api, auth as auth_router, pricing, projects, reports
+from .routers import api, auth as auth_router, invoices, pricing, projects, reports
 from .auth import current_user
 
 
