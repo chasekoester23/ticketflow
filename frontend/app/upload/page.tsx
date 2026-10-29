@@ -458,7 +458,7 @@ function ReviewForm({
   const flaggedFor = (words: string[]) => ticket.flags.some((fl) => words.some((w) => fl.startsWith(w)));
 
   return (
-    <aside className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:sticky xl:top-4 xl:self-start">
+    <aside className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
         <div>
           <h3 className="font-semibold text-slate-950">Extracted ticket information</h3>
@@ -528,7 +528,7 @@ function ReviewForm({
         <strong className="text-slate-800">Your acceptance is required.</strong> Confirm that the ticket number, date, material, tons, supplier and job match the original. Only accepted tickets count toward verified totals.
       </p>
       {dirty && <p className="text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
-      <div className="flex flex-wrap gap-2">
+      <div className="sticky bottom-0 z-10 -mx-5 flex flex-wrap gap-2 border-t border-slate-200 bg-white px-5 py-3">
         <button
           onClick={() =>
             run(async () => {
