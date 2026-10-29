@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { getAuthMe, logOut } from "../lib/api";
 
 type Owner = { id: number; username: string };
@@ -8,10 +9,11 @@ type Owner = { id: number; username: string };
 export default function AuthShell({ children }: { children: ReactNode }) {
   const [owner, setOwner] = useState<Owner | null>(null);
   const [checking, setChecking] = useState(true);
-  const isLogin = typeof window !== "undefined" && window.location.pathname === "/login";
+  const pathname = usePathname();
+  const isLogin = pathname === "/login";
 
   useEffect(() => {
-    if (window.location.pathname === "/login") {
+    if (isLogin) {
       setChecking(false);
       return;
     }
@@ -25,7 +27,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
       if (!cancelled) window.location.replace("/login");
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [isLogin]);
 
   if (isLogin) return <main className="mx-auto max-w-7xl px-6 py-6">{children}</main>;
   if (checking || !owner) {
