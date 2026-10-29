@@ -158,6 +158,27 @@ export default function Home() {
     setRotation(0);
   }
 
+  // Navigation shortcuts are opt-in (Alt + arrow), never steal typing
+  // from editable controls, and reuse the same unsaved-change guard as clicks.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || !tickets.length) return;
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      const element = event.target as HTMLElement | null;
+      if (element?.isContentEditable || element?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
+      event.preventDefault();
+      const next = selected + (event.key === "ArrowRight" ? 1 : -1);
+      if (next < 0 || next >= tickets.length) return;
+      if (formDirty && !window.confirm("Discard unsaved changes to this ticket? Select Save changes to keep your corrections.")) return;
+      setSelected(next);
+      setFormDirty(false);
+      setZoom(1);
+      setRotation(0);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, tickets.length, formDirty]);
+
   // Complete the pending queue first, then automatically revisit flagged tickets.
   // A ticket is never auto-accepted; only the explicit Accept action verifies.
   function advance() {
@@ -365,6 +386,27 @@ export default function Home() {
             </div>
           </div>
 
+          <div className="tf-panel">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e7eaee] px-4 py-3">
+              <h3 className="text-[12px] font-bold text-[#3c4b5b]">Ticket numbers · quick navigation</h3>
+              <span className="text-[11px] text-[#7a8794]">Alt + ← / → to move between tickets</span>
+            </div>
+            <div className="flex gap-2 overflow-x-auto px-4 py-3" role="group" aria-label="Ticket number quick navigation">
+              {tickets.map((ticket, index) => (
+                <button type="button" key={ticket.id}
+                  aria-label={`Open ticket ${index + 1}: ${ticket.ticket_number || "number not entered"}`}
+                  aria-current={selected === index ? "true" : undefined}
+                  onClick={() => selectTicket(index)}
+                  className={`shrink-0 rounded border px-3 py-2 text-left text-[11px] font-semibold tabular-nums ${selected === index ? "border-[#d66a34] bg-[#fff4ec] text-[#99501e]" : "border-[#dce1e6] bg-white text-[#455464] hover:border-[#aab5c0]"}`}>
+                  <span className="block">{ticket.ticket_number || `Ticket ${index + 1}`}</span>
+                  <span className={`mt-1 block text-[9px] uppercase tracking-wide ${ticket.status === "verified" ? "text-[#24854a]" : ticket.status === "flagged" ? "text-[#b26a22]" : "text-[#83909e]"}`}>
+                    {STATUS_LABEL[ticket.status] || ticket.status}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
             <section className="tf-panel">
               <div className="tf-panel-heading">
@@ -397,7 +439,7 @@ export default function Home() {
                   style={{ width: zoom * 100 + "%", maxWidth: "none", transform: "rotate(" + rotation + "deg)" }} />
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3">
-                <p className="text-xs text-slate-500">Zoom or open the original to inspect handwriting.</p>
+                <p className="text-xs text-slate-500">Inspect handwriting closely. Alt + left/right arrow changes tickets.</p>
                 <div className="flex items-center gap-2">
                   <button type="button" disabled={selected === 0} onClick={() => selectTicket(selected - 1)}
                     className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-40">Previous</button>
@@ -497,6 +539,7 @@ function ReviewForm({
     Object.fromEntries(FIELDS.map((f) => [f.key, (ticket[f.key] as string | null) ?? ""])),
   );
   const [saving, setSaving] = useState(false);
+  const acceptButton = useRef<HTMLButtonElement>(null);
   const [override, setOverride] = useState(ticket.unit_price_override ?? "");
   const overrideDirty = override !== (ticket.unit_price_override ?? "");
 
@@ -530,6 +573,19 @@ function ReviewForm({
   }
 
   const flaggedFor = (words: string[]) => ticket.flags.some((fl) => words.some((w) => fl.startsWith(w)));
+
+  // Cmd/Ctrl+Enter is a deliberate approval shortcut. It invokes the same
+  // guarded button used by mouse clicks, never bypassing server verification.
+  useEffect(() => {
+    function onApproveShortcut(event: KeyboardEvent) {
+      if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey) || event.repeat || event.isComposing) return;
+      if (event.target instanceof HTMLElement && event.target.closest("[role=dialog]")) return;
+      event.preventDefault();
+      acceptButton.current?.click();
+    }
+    window.addEventListener("keydown", onApproveShortcut);
+    return () => window.removeEventListener("keydown", onApproveShortcut);
+  }, []);
 
   return (
     <aside className="space-y-4 rounded-md border border-[#dce1e6] bg-white p-5 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto">
@@ -604,6 +660,8 @@ function ReviewForm({
       {dirty && <p className="text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
       <div className="sticky bottom-0 z-10 -mx-5 flex flex-wrap gap-2 border-t border-slate-200 bg-white px-5 py-3">
         <button
+          ref={acceptButton}
+          title="Review and accept ticket (Cmd/Ctrl + Enter)"
           onClick={() =>
             run(async () => {
               const saved = await save();
