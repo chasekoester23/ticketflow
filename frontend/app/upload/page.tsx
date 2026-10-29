@@ -280,7 +280,7 @@ export default function Home() {
             </div>
             <button type="button" disabled={!files.length || !projectId || busy} onClick={onUpload}
               className="w-full rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40">
-              {busy ? "Uploading..." : "Upload & process"}
+              {busy ? "Uploading..." : "Upload & queue"}
             </button>
           </div>
         </div>
@@ -304,6 +304,13 @@ export default function Home() {
                 href={exportUrl(batch.id)}>Export Excel</a>
             </div>
           </div>
+          {batch.status === "uploaded" && (
+            <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700" role="status">
+              Your files are saved in the processing queue. A separate TicketFlow worker must be running
+              to extract them. From the backend folder, run <code>python scripts/run_worker.py</code>.
+              The upload remains queued even if you close this page.
+            </p>
+          )}
           {batch.status === "failed" && (
             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               Some files failed to process. Any successfully extracted tickets are still available for review.
