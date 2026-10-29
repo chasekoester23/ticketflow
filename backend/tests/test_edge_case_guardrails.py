@@ -76,6 +76,29 @@ def test_ambiguous_ocr_tonnage_requires_manual_correction(client, monkeypatch):
     assert approved.status_code == 200
 
 
+@pytest.mark.parametrize("field,unrepresentable", [
+    ("tonnage", "9" * 100),
+    ("tonnage", "999999999.9999"),
+    ("unit_price_override", "100000000"),
+    ("unit_price_override", "9" * 100),
+])
+def test_invalid_manual_numeric_patch_is_422_and_never_modifies_audit_or_totals(
+    client, field, unrepresentable,
+):
+    bid = _upload(client)
+    tid = client.get(f"/api/batches/{bid}/tickets").json()[0]["id"]
+    before = client.get(f"/api/batches/{bid}/tickets").json()[0]
+    audit_before = client.get(f"/api/tickets/{tid}/audit").json()
+
+    result = client.patch(f"/api/tickets/{tid}", json={field: unrepresentable})
+    assert result.status_code == 422, result.text
+    after = client.get(f"/api/batches/{bid}/tickets").json()[0]
+    assert after[field] == before[field]
+    assert after["status"] == before["status"]
+    assert client.get(f"/api/tickets/{tid}/audit").json() == audit_before
+    assert Decimal(str(client.get("/api/dashboard").json()["total_cost"])) == 0
+
+
 @pytest.mark.parametrize("mode,layout", [
     ("manual", "single"),
     ("manual", "grid_2x2"),
