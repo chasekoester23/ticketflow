@@ -54,7 +54,7 @@ test("mobile navigation opens, navigates, and preserves the signed-in workspace"
   await page.getByRole("button", { name: "Close navigation" }).click();
   await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("link", { name: "Delivery records", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Delivery records" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Delivery records", exact: true })).toBeVisible();
 });
 
 test("review-desk status shortcuts retain filter in the records workspace", async ({ page }) => {
