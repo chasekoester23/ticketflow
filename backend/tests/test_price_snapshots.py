@@ -146,3 +146,44 @@ def test_migration_can_initialize_new_database(tmp_path):
     with sqlite3.connect(database) as con:
         assert con.execute("SELECT name FROM sqlite_master WHERE name='tickets'").fetchone()
         assert con.execute("SELECT name FROM sqlite_master WHERE name='projects'").fetchone()
+
+
+def test_legacy_verified_ticket_requires_documented_rate_before_relocking(client):
+    from app.db import get_db
+    from app.main import app
+    from app.models import Ticket
+
+    _rate(client, "30")
+    bid, tickets = _tickets(client)
+    tid = tickets[0]["id"]
+    assert client.post(f"/api/tickets/{tid}/verify").json()["price_snapshot_state"] == "priced"
+
+    # Simulate a pre-migration verified record, with no rate snapshot.
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        record = db.get(Ticket, tid)
+        record.applied_unit_price = None
+        record.applied_price_source = None
+        record.price_snapshot_state = None
+        db.commit()
+    finally:
+        generator.close()
+
+    old = client.get(f"/api/batches/{bid}/tickets").json()[0]
+    assert old["status"] == "verified"
+    assert old["price_snapshot_state"] is None
+    assert old["unit_price"] is None
+    assert old["cost"] is None
+    assert "historical rate is unknown" in old["pricing_notes"][0].lower()
+
+    rejected = client.post(f"/api/tickets/{tid}/verify")
+    assert rejected.status_code == 409
+
+    changed = client.patch(f"/api/tickets/{tid}", json={"unit_price_override": "29"}).json()
+    assert changed["status"] == "needs_review"
+    assert changed["price_snapshot_state"] == "pending"
+    relocked = client.post(f"/api/tickets/{tid}/verify").json()
+    assert relocked["price_snapshot_state"] == "priced"
+    assert relocked["price_source"] == "override"
+    assert Decimal(relocked["cost"]) == Decimal("710.50")
