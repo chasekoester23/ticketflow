@@ -1,7 +1,6 @@
 """SQLAlchemy models (Phase 1 subset of the full design).
 
-Phase 2 adds Supplier / Material / SupplierRate; Phase 4 adds Organization for multi-tenancy.
-Every table already has an integer PK so a tenant column can be added later.
+The single-workspace owner protects access; multi-company isolation is NOT built.
 """
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -14,6 +13,21 @@ from .db import Base
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class LoginSession(Base):
+    __tablename__ = "login_sessions"
+    token_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), index=True, nullable=False)
 
 
 class Supplier(Base):
