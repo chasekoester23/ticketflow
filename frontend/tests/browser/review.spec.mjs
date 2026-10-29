@@ -16,7 +16,8 @@ async function launch(page, deepLink = 101) {
   const tickets = [fixture(101, "10482"), fixture(102, "10483")];
   const log = { verified: [], flagged: [], patched: [] };
   const cors = {
-    "access-control-allow-origin": "*",
+    "access-control-allow-origin": "http://127.0.0.1:3000",
+    "access-control-allow-credentials": "true",
     "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
     "access-control-allow-headers": "content-type",
   };
@@ -29,6 +30,7 @@ async function launch(page, deepLink = 101) {
     const path = url.pathname;
     const method = request.method();
     if (method === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (path === "/api/auth/me") return json(route, { id: 1, username: "test-owner" });
     if (path === "/api/status") return json(route, { extraction_configured: true, model: "test-only" });
     if (path === "/api/projects") return json(route, [{
       id: 1, code: "P-100", name: "Project A", job_location: "Site", description: null, status: "active",
@@ -164,7 +166,10 @@ test("a rejected verification never advances or counts unapproved tonnage", asyn
   await page.route("**/api/tickets/101/verify", (route) =>
     route.fulfill({
       status: 422, contentType: "application/json",
-      headers: { "access-control-allow-origin": "*" },
+      headers: {
+        "access-control-allow-origin": "http://127.0.0.1:3000",
+        "access-control-allow-credentials": "true",
+      },
       body: JSON.stringify({ detail: "Resolve ticket issues before verification: Tonnage missing" }),
     }),
   );
