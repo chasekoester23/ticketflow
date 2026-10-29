@@ -92,7 +92,9 @@ def execute_claimed(
         if batch is None:
             raise RuntimeError("Queued batch no longer exists")
         try:
-            extractor = extractor_factory()
+            # Explicit manual batches intentionally never touch the vision API
+            # (or its key), even when the worker is configured for AI jobs.
+            extractor = None if batch.intake_mode == "manual" else extractor_factory()
         except ExtractionError as exc:
             # The model is not configured or is unavailable. No invented OCR.
             _mark_unfinished_files_failed(batch, str(exc))
