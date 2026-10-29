@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
@@ -17,7 +17,7 @@ from ..models import AuditEvent, Batch, Project, Ticket, UploadedFile
 from ..schemas import BatchOut, TicketOut, TicketPatch
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
-from ..services import pipeline
+from ..services import pipeline, jobqueue
 from ..services import pricing as pricing_svc
 from ..services.extraction import ExtractionError, get_extractor
 from ..services.validation import compute_flags
@@ -38,38 +38,27 @@ def _sniff_ok(data: bytes, ext: str) -> bool:
     return False
 
 
-def _run_batch(batch_id: int, only_failed: bool = False) -> None:
-    """Process in a separate DB session; failures remain visible and retryable."""
-    db = SessionLocal()
-    try:
-        try:
-            extractor = get_extractor()
-        except ExtractionError as exc:
-            batch = db.get(Batch, batch_id)
-            if batch is None:
-                return
-            for file in batch.files:
-                if not only_failed or file.status in ("failed", "uploaded", "processing"):
-                    file.status, file.error = "failed", str(exc)
-            batch.status = "failed"
-            db.commit()
+def _notify_worker(_background: BackgroundTasks, _job_id: int) -> None:
+    """The dedicated CLI worker polls the persisted queue independently.
+
+    Deliberately NO FastAPI BackgroundTasks extraction here: the web request
+    must not execute expensive AI work or depend on the server staying alive.
+    """
+
+
+def _drain_job_for_tests() -> None:
+    """Test-only adapter used by the integration fixture.
+
+    Synthetic tests retain synchronous TestClient behavior without enabling
+    in-process extraction in any production request handler.
+    """
+    with SessionLocal() as db:
+        claimed = jobqueue.claim_next(db)
+        if claimed is None:
             return
-        pipeline.process_batch(db, batch_id, extractor, only_failed=only_failed)
-    except Exception:
-        logger.exception("Unexpected error while processing batch %s", batch_id)
-        db.rollback()
-        # An unexpected exception must never leave a batch stuck in processing
-        # forever with no actionable retry path.
-        batch = db.get(Batch, batch_id)
-        if batch is not None:
-            for file in batch.files:
-                if file.status in ("uploaded", "processing"):
-                    file.status = "failed"
-                    file.error = "Processing interrupted unexpectedly. Please retry."
-            batch.status = "failed"
-            db.commit()
-    finally:
-        db.close()
+        job_id, token = claimed
+        jobqueue.execute_claimed(db, job_id, token, extractor_factory=get_extractor)
+
 
 @router.post("/batches", response_model=BatchOut)
 async def create_batch(
@@ -133,6 +122,7 @@ async def create_batch(
                 batch_id=batch.id, original_name=original_name,
                 storage_path=str(internal), sha256=checksum,
             ))
+        job = jobqueue.enqueue(db, batch.id)
         db.commit()
     except Exception:
         db.rollback()
@@ -140,7 +130,7 @@ async def create_batch(
             shutil.rmtree(upload_dir, ignore_errors=True)
         raise
 
-    background.add_task(_run_batch, batch.id)
+    _notify_worker(background, job.id)
     db.refresh(batch)
     return batch
 
@@ -172,10 +162,20 @@ def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depend
         raise HTTPException(409, "Only failed batches can be retried; wait until processing finishes")
     if not any(f.status in ("failed", "uploaded", "processing") for f in batch.files):
         raise HTTPException(409, "No failed or interrupted files to retry")
-    # Lock out repeated retry clicks before the background task is scheduled.
-    batch.status = "processing"
+    # Atomically reserve this retry before enqueuing. Two simultaneous retry
+    # requests must not create duplicate worker attempts for the same batch.
+    claimed = db.execute(
+        update(Batch).where(
+            Batch.id == batch_id, Batch.organization_id == organization_id,
+            Batch.status == "failed",
+        ).values(status="processing")
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, "A retry is already in progress")
+    job = jobqueue.enqueue(db, batch_id, only_failed=True)
     db.commit()
-    background.add_task(_run_batch, batch_id, True)
+    _notify_worker(background, job.id)
     db.refresh(batch)
     return batch
 
