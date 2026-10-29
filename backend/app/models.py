@@ -97,6 +97,16 @@ class Ticket(Base):
     # Set only by a user who explicitly overrides the supplier/material rate for this ticket.
     unit_price_override: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
 
+    # Financial snapshot taken at verification. Never recalculate verified tickets
+    # against the current supplier rate table.
+    # NULL state represents a ticket verified before this migration, for which
+    # the original price cannot be reliably recovered.
+    price_snapshot_state: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, default="pending"
+    )  # pending | priced | unpriced | NULL (legacy)
+    applied_unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    applied_price_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     raw_extraction: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # untouched model output
     flags: Mapped[list] = mapped_column(JSON, default=list)  # deterministic review flags
     status: Mapped[str] = mapped_column(String(20), default="needs_review")  # needs_review|verified|skipped|failed

@@ -32,6 +32,19 @@ def unit_price_for(t: Ticket, table: dict[tuple[str, str], Decimal]) -> tuple[De
     return (price, "rate") if price is not None else (None, None)
 
 
+def effective_price_for(t: Ticket, table: dict[tuple[str, str], Decimal]) -> tuple[Decimal | None, str | None]:
+    """Return the stored rate for verified tickets, a live preview otherwise.
+
+    A verified ticket with an unpriced/legacy snapshot must never silently
+    inherit today's supplier rate. The user must explicitly edit and re-verify.
+    """
+    if t.status == "verified":
+        if t.price_snapshot_state == "priced":
+            return t.applied_unit_price, t.applied_price_source
+        return None, None
+    return unit_price_for(t, table)
+
+
 def cost_for(t: Ticket, price: Decimal | None) -> Decimal | None:
     """Cost only for a currently verified ticket with confirmed tonnage and a rate."""
     if t.status != "verified" or price is None or t.tonnage is None or not t.tonnage_confirmed:

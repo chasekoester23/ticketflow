@@ -131,12 +131,20 @@ def list_tickets(batch_id: int, db: Session = Depends(get_db)):
 def _out(db: Session, t: Ticket, table=None) -> TicketOut:
     """Ticket plus computed price, cost, duplicate and pricing notes."""
     table = table if table is not None else pricing_svc.rate_table(db)
-    price, source = pricing_svc.unit_price_for(t, table)
+    price, source = pricing_svc.effective_price_for(t, table)
+    if t.status == "verified" and t.price_snapshot_state is None:
+        notes = ["Legacy verified ticket: its historical rate is unknown. Enter the documented rate as an override, then re-verify to lock its cost."]
+    elif t.status == "verified" and t.price_snapshot_state == "unpriced":
+        notes = ["No rate was available at verification. Enter the documented rate as an override and re-verify this ticket."]
+    elif price is None:
+        notes = pricing_svc.unresolved_names(db, t) or ["No rate configured for this supplier and material"]
+    else:
+        notes = []
     out = TicketOut.model_validate(t)
     return out.model_copy(update=dict(
         unit_price=price, price_source=source, cost=pricing_svc.cost_for(t, price),
         duplicates=dup_svc.find_duplicates(db, t),
-        pricing_notes=[] if price is not None else (pricing_svc.unresolved_names(db, t) or ["No rate configured for this supplier and material"]),
+        pricing_notes=notes,
     ))
 
 
@@ -180,6 +188,12 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
             t.tonnage_confirmed = False
     if t.status == "failed" and changed:
         t.status, t.error = "needs_review", None  # manual entry recovers a failed extraction
+    if changed:
+        # Any edit invalidates a previously applied historical price; the
+        # updated rate must be explicitly captured during re-verification.
+        t.price_snapshot_state = "pending"
+        t.applied_unit_price = None
+        t.applied_price_source = None
     _refresh_flags(t)
     db.commit()
     return _out(db, t)
@@ -195,8 +209,21 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db)):
     blocking = [f for f in t.flags if not f.startswith("Tonnage unusually large")]
     if blocking:
         raise HTTPException(422, "Resolve ticket issues before verification: " + "; ".join(blocking))
-    if t.status != "verified":
-        db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="verified"))
+    if t.status == "verified":
+        if t.price_snapshot_state is None:
+            raise HTTPException(409, "Historical unit price is unknown. Enter the documented rate as a ticket override and verify again.")
+        if t.price_snapshot_state in ("priced", "unpriced"):
+            return _out(db, t)  # repeated verify must not reprice an approved ticket
+
+    price, source = pricing_svc.unit_price_for(t, pricing_svc.rate_table(db))
+    db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="verified"))
+    db.add(AuditEvent(
+        ticket_id=t.id, field="verified_unit_price",
+        old_value=None, new_value=None if price is None else str(price),
+    ))
+    t.applied_unit_price = price
+    t.applied_price_source = source
+    t.price_snapshot_state = "priced" if price is not None else "unpriced"
     t.status, t.tonnage_confirmed = "verified", True
     db.commit()
     return _out(db, t)
@@ -208,6 +235,9 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db)):
     db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="skipped"))
     t.status = "skipped"
     t.tonnage_confirmed = False
+    t.price_snapshot_state = "pending"
+    t.applied_unit_price = None
+    t.applied_price_source = None
     db.commit()
     return _out(db, t)
 
@@ -231,7 +261,7 @@ def export_batch(batch_id: int, db: Session = Depends(get_db)):
     tickets = db.scalars(
         select(Ticket).where(Ticket.batch_id == batch_id).order_by(Ticket.file_id, Ticket.source_page, Ticket.position)).all()
     table = pricing_svc.rate_table(db)
-    prices = {t.id: p for t in tickets if (p := pricing_svc.unit_price_for(t, table)[0]) is not None}
+    prices = {t.id: p for t in tickets if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
     data = export_svc.build_workbook(list(tickets), prices)
     return Response(
         data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

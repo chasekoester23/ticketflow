@@ -19,6 +19,7 @@ export type Ticket = {
   tonnage_confirmed: boolean;
   error: string | null;
   unit_price_override: string | null;
+  price_snapshot_state: "pending" | "priced" | "unpriced" | null;
   unit_price: string | null;
   price_source: "rate" | "override" | null;
   cost: string | null;

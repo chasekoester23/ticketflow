@@ -63,7 +63,7 @@ def export_records(
     table = pricing_svc.rate_table(db)
     ts = filtered_tickets(db, project_id=project_id, supplier=supplier, material=material,
                           status=status, date_from=date_from, date_to=date_to)
-    prices = {t.id: p for t in ts if (p := pricing_svc.unit_price_for(t, table)[0]) is not None}
+    prices = {t.id: p for t in ts if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
     return Response(
         export_svc.build_workbook(ts, prices),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -83,7 +83,7 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db)):
     pending = [t for t in ts if t.status != "verified" or not t.tonnage_confirmed]
     total_tons = sum((t.tonnage for t in verified if t.tonnage is not None), Decimal(0))
     pending_tons = sum((t.tonnage for t in pending if t.tonnage is not None), Decimal(0))
-    prices = [pricing_svc.unit_price_for(t, table)[0] for t in ts]
+    prices = [pricing_svc.effective_price_for(t, table)[0] for t in ts]
     costs = [pricing_svc.cost_for(t, p) for t, p in zip(ts, prices)]
     total_cost = sum((c for c in costs if c is not None), Decimal(0))
 
