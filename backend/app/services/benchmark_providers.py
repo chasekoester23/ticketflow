@@ -113,7 +113,7 @@ class GeminiBenchmarkExtractor:
             )
         except Exception as exc:
             raise ExtractionError(
-                f"Gemini benchmark request failed: {type(exc).__name__}"
+                f"Gemini extraction request failed: {type(exc).__name__}"
             ) from exc
         return _validated_json(response.text)
 
