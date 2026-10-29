@@ -1,5 +1,4 @@
-# Optional dependencies for permissioned handwriting evaluation only.
-# Not required for normal TicketFlow or manual entry.
+# Optional: compare against OpenAI on independently labeled, permissioned tickets.
+# Gemini is already installed with normal TicketFlow requirements.
 -r requirements-dev.txt
 openai>=2,<4
-google-genai>=1,<4
