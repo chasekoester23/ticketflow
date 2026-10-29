@@ -291,7 +291,8 @@ def test_invoice_migration_is_additive_and_keeps_old_tickets(tmp_path):
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{dbpath}")
     command.upgrade(cfg, "20261029_05")
     with sqlite3.connect(dbpath) as conn:
-        conn.execute("INSERT INTO organizations(id,name) VALUES(1,'Existing contractor')")
+        # The organization migration already creates the original owner.
+        assert conn.execute("SELECT COUNT(*) FROM organizations").fetchone()[0] >= 1
         conn.execute(
             "INSERT INTO projects(id,organization_id,code,name,status) "
             "VALUES(1,1,'ABC','Existing project','active')"
