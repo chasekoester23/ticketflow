@@ -3,6 +3,7 @@
 Each file is processed independently, so one bad PDF never fails the whole batch.
 """
 import hashlib
+import logging
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -12,6 +13,8 @@ from ..models import Batch, Ticket, UploadedFile
 from . import splitter
 from .extraction import ExtractionError, Extractor
 from .validation import compute_flags, parse_date, parse_tonnage
+
+logger = logging.getLogger(__name__)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -111,8 +114,20 @@ def process_batch(db: Session, batch_id: int, extractor: Extractor, only_failed:
     batch.status = "processing"
     db.commit()
     for file in batch.files:
-        if only_failed and file.status != "failed":
+        if only_failed and file.status not in ("failed", "uploaded", "processing"):
             continue
-        process_file(db, file, batch.layout, extractor)
+        file_id = file.id
+        try:
+            process_file(db, file, batch.layout, extractor)
+        except Exception:
+            logger.exception("Unexpected failure processing stored file id %s", file_id)
+            db.rollback()
+            # An unexpected crop, storage or API error should not prevent
+            # processing the other files or erase already reviewed tickets.
+            recovered = db.get(UploadedFile, file_id)
+            recovered.status = "failed"
+            recovered.error = "Unexpected file-processing error. Please retry."
+            db.commit()
+    batch = db.get(Batch, batch_id)
     batch.status = "failed" if any(f.status == "failed" for f in batch.files) else "ready_for_review"
     db.commit()

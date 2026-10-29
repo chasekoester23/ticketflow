@@ -1,4 +1,6 @@
 import uuid
+import logging
+import shutil
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -20,6 +22,7 @@ from ..services.extraction import ExtractionError, get_extractor
 from ..services.validation import compute_flags
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
 
 ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
 MAGIC = {b"%PDF": ".pdf", b"\xff\xd8\xff": ".jpg", b"\x89PNG": ".png"}
@@ -35,22 +38,37 @@ def _sniff_ok(data: bytes, ext: str) -> bool:
 
 
 def _run_batch(batch_id: int, only_failed: bool = False) -> None:
-    """Background job: own DB session; extractor errors are recorded per ticket, config errors per file."""
+    """Process in a separate DB session; failures remain visible and retryable."""
     db = SessionLocal()
     try:
         try:
             extractor = get_extractor()
         except ExtractionError as exc:
             batch = db.get(Batch, batch_id)
-            for f in batch.files:
-                f.status, f.error = "failed", str(exc)
+            if batch is None:
+                return
+            for file in batch.files:
+                if not only_failed or file.status in ("failed", "uploaded", "processing"):
+                    file.status, file.error = "failed", str(exc)
             batch.status = "failed"
             db.commit()
             return
         pipeline.process_batch(db, batch_id, extractor, only_failed=only_failed)
+    except Exception:
+        logger.exception("Unexpected error while processing batch %s", batch_id)
+        db.rollback()
+        # An unexpected exception must never leave a batch stuck in processing
+        # forever with no actionable retry path.
+        batch = db.get(Batch, batch_id)
+        if batch is not None:
+            for file in batch.files:
+                if file.status in ("uploaded", "processing"):
+                    file.status = "failed"
+                    file.error = "Processing interrupted unexpectedly. Please retry."
+            batch.status = "failed"
+            db.commit()
     finally:
         db.close()
-
 
 @router.post("/batches", response_model=BatchOut)
 async def create_batch(
@@ -68,36 +86,58 @@ async def create_batch(
             raise HTTPException(404, "Project not found")
         if project.status != "active":
             raise HTTPException(409, "Project is archived; unarchive it to upload more tickets")
-    batch = Batch(layout=layout, status="uploaded", project_id=project_id)
-    db.add(batch)
-    db.flush()
-    upload_dir = settings.storage_dir / "uploads" / str(batch.id)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    rejected = []
+    # Validate the entire selection BEFORE creating a batch or storing any
+    # files. Silently dropping an invalid file is dangerous: a contractor could
+    # believe every delivery ticket in the scan was recorded.
+    validated: list[tuple[UploadFile, str, str, str]] = []
+    rejected: list[str] = []
     for up in files:
-        ext = Path(up.filename or "").suffix.lower()
+        original_name = Path(up.filename or "").name or "(unnamed file)"
+        ext = Path(original_name).suffix.lower()
         data = await up.read(settings.max_upload_bytes + 1)
         if ext not in ALLOWED_EXT:
-            rejected.append(f"{up.filename}: unsupported file type")
+            rejected.append(f"{original_name}: unsupported file type (PDF, JPG, PNG only)")
         elif not data:
-            rejected.append(f"{up.filename}: empty file")
+            rejected.append(f"{original_name}: file is empty")
         elif len(data) > settings.max_upload_bytes:
-            rejected.append(f"{up.filename}: file too large")
+            rejected.append(f"{original_name}: exceeds the {settings.max_upload_bytes // (1024 * 1024)} MB file limit")
         elif not _sniff_ok(data, ext):
-            rejected.append(f"{up.filename}: content does not match its extension")
+            rejected.append(f"{original_name}: content does not match its file extension")
         else:
-            internal = upload_dir / f"{uuid.uuid4().hex}{ext}"  # never use the user's filename on disk
-            internal.write_bytes(data)
-            batch.files.append(UploadedFile(
-                original_name=Path(up.filename).name, storage_path=str(internal), sha256=pipeline.sha256_bytes(data)))
-    if not batch.files:
+            validated.append((up, original_name, ext, pipeline.sha256_bytes(data)))
+        await up.seek(0)
+
+    if rejected:
+        raise HTTPException(400, "Upload rejected; no files were processed. Remove or replace: " + "; ".join(rejected))
+    if not validated:
+        raise HTTPException(400, "No valid files were provided")
+
+    batch = Batch(layout=layout, status="uploaded", project_id=project_id)
+    upload_dir = None
+    try:
+        db.add(batch)
+        db.flush()
+        upload_dir = settings.storage_dir / "uploads" / str(batch.id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        for up, original_name, ext, checksum in validated:
+            internal = upload_dir / f"{uuid.uuid4().hex}{ext}"
+            # Read each validated file individually so large multi-file
+            # selections aren't retained in application memory simultaneously.
+            internal.write_bytes(await up.read())
+            db.add(UploadedFile(
+                batch_id=batch.id, original_name=original_name,
+                storage_path=str(internal), sha256=checksum,
+            ))
+        db.commit()
+    except Exception:
         db.rollback()
-        raise HTTPException(400, "No valid files uploaded: " + "; ".join(rejected))
-    db.commit()
+        if upload_dir is not None:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
+
     background.add_task(_run_batch, batch.id)
     db.refresh(batch)
     return batch
-
 
 @router.get("/batches", response_model=list[BatchOut])
 def list_batches(db: Session = Depends(get_db)):
@@ -117,7 +157,15 @@ def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depend
     batch = db.get(Batch, batch_id)
     if not batch:
         raise HTTPException(404, "Batch not found")
+    if batch.status != "failed":
+        raise HTTPException(409, "Only failed batches can be retried; wait until processing finishes")
+    if not any(f.status in ("failed", "uploaded", "processing") for f in batch.files):
+        raise HTTPException(409, "No failed or interrupted files to retry")
+    # Lock out repeated retry clicks before the background task is scheduled.
+    batch.status = "processing"
+    db.commit()
     background.add_task(_run_batch, batch_id, True)
+    db.refresh(batch)
     return batch
 
 
