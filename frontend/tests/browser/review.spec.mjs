@@ -104,7 +104,7 @@ test("AI data needs explicit human acceptance; accepting advances to the next ti
 test("dirty edits are not silently dropped during ticket navigation", async ({ page }) => {
   const { log } = await launch(page);
   await page.getByLabel("Tonnage (tons)").fill("25.250");
-  await expect(page.getByText(/Unsaved changes/)).toBeVisible();
+  await expect(page.getByRole("status").getByText(/Unsaved changes/)).toBeVisible();
   page.once("dialog", (dialog) => dialog.dismiss());
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
