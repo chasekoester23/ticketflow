@@ -293,7 +293,7 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id
         if t.price_snapshot_state in ("priced", "unpriced"):
             return _out(db, t, organization_id)  # repeated verify must not reprice an approved ticket
 
-    price, source = pricing_svc.unit_price_for(t, pricing_svc.rate_table(db))
+    price, source = pricing_svc.unit_price_for(t, pricing_svc.rate_table(db, organization_id))
     db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="verified"))
     db.add(AuditEvent(
         ticket_id=t.id, field="verified_unit_price",
@@ -356,7 +356,7 @@ def export_batch(batch_id: int, db: Session = Depends(get_db), organization_id: 
         raise HTTPException(404, "Batch not found")
     tickets = db.scalars(
         select(Ticket).where(Ticket.batch_id == batch_id).order_by(Ticket.file_id, Ticket.source_page, Ticket.position)).all()
-    table = pricing_svc.rate_table(db)
+    table = pricing_svc.rate_table(db, organization_id)
     prices = {t.id: p for t in tickets if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
     data = export_svc.build_workbook(list(tickets), prices)
     return Response(
