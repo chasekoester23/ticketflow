@@ -201,6 +201,7 @@ export type InvoiceLineComparison = InvoiceLineInput & {
   subtotal_difference: string | null;
   verified_count: number;
   pending_count: number;
+  unclassified_count: number;
   unpriced_count: number;
   rate_mismatch_count: number;
   status: "matches" | "discrepancy" | "incomplete" | "no_verified_tickets";
