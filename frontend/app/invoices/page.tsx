@@ -271,7 +271,7 @@ export default function InvoiceComparisonPage() {
           <p>Verified material subtotal: <strong>{money(chosen.verified_subtotal)}</strong></p>
           <p>Billed minus verified tons: <strong>{signed(chosen.quantity_difference)}</strong></p>
           <p>Billed minus verified material cost: <strong>{money(chosen.subtotal_difference)}</strong></p>
-          <p>{chosen.verified_count} verified · {chosen.pending_count} pending · {chosen.unpriced_count} unpriced</p>
+          <p>{chosen.verified_count} verified · {chosen.pending_count} pending · {chosen.unclassified_count} not yet classified · {chosen.unpriced_count} unpriced</p>
         </div>
       </div>
       {chosen.warnings.length > 0 && <div className="border-y border-[#f0d8ad] bg-[#fff9ed] px-5 py-3 text-[12px] text-[#754e20]">
