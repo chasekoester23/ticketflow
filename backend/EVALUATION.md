@@ -99,7 +99,8 @@ python scripts/check_api_key.py
 python scripts/evaluate_extraction.py run --manifest evaluation_data/labels.json
 ```
 
-This makes **one paid extraction call per labeled ticket**. Start with a
+This invokes the live extractor **once per labeled ticket**; the provider
+SDK may retry transient failures, and real API charges depend on usage. Start with a
 small, consented sample and monitor your API usage/billing separately. By
 default the result is written to `evaluation_data/accuracy-report.json`;
 the script refuses to overwrite a previous report. Use
