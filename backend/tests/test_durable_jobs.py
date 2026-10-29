@@ -201,3 +201,37 @@ def test_local_lock_rejects_a_second_worker_without_reclaiming_jobs(client, monk
     with _db() as db:
         job = db.scalar(select(ProcessingJob).where(ProcessingJob.batch_id == bid))
         assert job.status == "pending" and job.attempts == 0
+
+
+def test_migration_enqueues_preexisting_interrupted_batches_without_touching_approved_data(tmp_path):
+    from pathlib import Path
+    import sqlite3
+    from alembic import command
+    from alembic.config import Config
+
+    target = tmp_path / "old-workerless-installation.db"
+    cfg = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{target}")
+    command.upgrade(cfg, "20261029_03")
+    with sqlite3.connect(target) as db:
+        db.execute(
+            "INSERT INTO batches(id,organization_id,layout,status,created_at) "
+            "VALUES (11,1,'grid_2x2','processing',CURRENT_TIMESTAMP)"
+        )
+        db.execute(
+            "INSERT INTO batches(id,organization_id,layout,status,created_at) "
+            "VALUES (12,1,'single','ready_for_review',CURRENT_TIMESTAMP)"
+        )
+        db.commit()
+    command.upgrade(cfg, "head")
+    with sqlite3.connect(target) as db:
+        jobs = db.execute(
+            "SELECT batch_id,status,only_failed FROM processing_jobs ORDER BY id"
+        ).fetchall()
+        assert jobs == [(11, "pending", 1)]
+        states = db.execute("SELECT id,status FROM batches ORDER BY id").fetchall()
+        assert states == [(11, "processing"), (12, "ready_for_review")]
+    # Migration re-run must never enqueue a second job.
+    command.upgrade(cfg, "head")
+    with sqlite3.connect(target) as db:
+        assert db.execute("SELECT COUNT(*) FROM processing_jobs").fetchone()[0] == 1
