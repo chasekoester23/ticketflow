@@ -35,10 +35,11 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
         db.commit()
         return
 
-    # Retry support: drop tickets from a previous attempt of this file.
-    for old in list(file.tickets):
-        db.delete(old)
-    db.flush()
+    # Keep successfully extracted, manually corrected, verified and skipped tickets.
+    # Only a failed crop is eligible for re-extraction. In particular, deleting all
+    # tickets on retry would also delete a user's edits and verification history.
+    existing = {(t.source_page, t.position): t for t in file.tickets}
+    visited: set[tuple[int, int]] = set()
 
     crops_dir = settings.storage_dir / "crops" / str(file.batch_id)
     crops_dir.mkdir(parents=True, exist_ok=True)
@@ -48,19 +49,34 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
         for crop in splitter.split_page(page_img, layout):
             if layout != "single" and splitter.is_blank(crop.image):
                 continue  # empty quadrant (fewer than 4 tickets on the scan)
+            key = (page_no, crop.position)
+            visited.add(key)
+            ticket = existing.get(key)
+            if ticket is not None and ticket.status != "failed":
+                continue  # never overwrite review work on an existing ticket
+
             path = crops_dir / f"f{file.id}_p{page_no}_c{crop.position}.png"
             crop.image.save(path, format="PNG")
-            ticket = Ticket(
-                batch_id=file.batch_id, file_id=file.id, source_page=page_no, position=crop.position,
-                crop_box=list(crop.box), crop_path=str(path), crop_sha256=sha256_bytes(path.read_bytes()),
-            )
+            if ticket is None:
+                ticket = Ticket(
+                    batch_id=file.batch_id, file_id=file.id,
+                    source_page=page_no, position=crop.position,
+                )
+            ticket.crop_box = list(crop.box)
+            ticket.crop_path = str(path)
+            ticket.crop_sha256 = sha256_bytes(path.read_bytes())
+            ticket.error = None
+
             try:
                 extracted, raw = extractor.extract(crop.image)
             except ExtractionError as exc:
-                ticket.status, ticket.error, ticket.flags = "failed", str(exc), ["Extraction failed - enter manually or retry"]
+                ticket.status = "failed"
+                ticket.error = str(exc)
+                ticket.flags = ["Extraction failed - enter manually or retry"]
                 any_failure = True
                 db.add(ticket)
                 continue
+
             ticket.raw_extraction = raw
             ticket.ticket_number = extracted.ticket_number
             ticket.delivery_date = parse_date(extracted.delivery_date)
@@ -71,14 +87,20 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
             ticket.flags = compute_flags(
                 ticket_number=ticket.ticket_number, delivery_date=ticket.delivery_date,
                 material_type=ticket.material_type, tonnage=ticket.tonnage, supplier=ticket.supplier,
-                job_location=ticket.job_location, raw_date=extracted.delivery_date, raw_tonnage=extracted.tonnage,
+                job_location=ticket.job_location, raw_date=extracted.delivery_date,
+                raw_tonnage=extracted.tonnage,
             )
-            ticket.status = "needs_review"  # always: tonnage must be human-confirmed in the MVP
+            ticket.status = "needs_review"  # tonnage must be human-confirmed
+            ticket.tonnage_confirmed = False
             db.add(ticket)
 
+    # A failed crop that was not encountered again must not silently disappear.
+    any_failure = any_failure or any(
+        t.status == "failed" and key not in visited
+        for key, t in existing.items()
+    )
     file.status = "failed" if any_failure else "ready_for_review"
-    if any_failure:
-        file.error = "Some tickets could not be extracted"
+    file.error = "Some tickets could not be extracted" if any_failure else None
     db.commit()
 
 
