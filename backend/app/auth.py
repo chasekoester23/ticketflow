@@ -93,7 +93,7 @@ def digest_token(token: str) -> str:
 
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     token = request.cookies.get(COOKIE_NAME)
-    if not token or len(token) > 256:
+    if not token or len(token) > 256 or not token.isascii():
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in to access TicketFlow")
     session = db.get(LoginSession, digest_token(token))
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -135,7 +135,7 @@ def login(request: Request, response: Response, body: Credentials, db: Session) 
 
 def logout(request: Request, response: Response, db: Session) -> dict:
     token = request.cookies.get(COOKIE_NAME)
-    if token:
+    if token and len(token) <= 256 and token.isascii():
         active = db.get(LoginSession, digest_token(token))
         if active:
             db.delete(active)
