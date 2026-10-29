@@ -133,3 +133,44 @@ test("records can deep-link to a specific ticket in a batch", async ({ page }) =
   await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
   await expect(page.getByLabel("Ticket number")).toHaveValue("10483");
 });
+
+
+test("search narrows a large review queue without changing stored tickets", async ({ page }) => {
+  const { log } = await launch(page);
+  await page.getByRole("searchbox", { name: "Search tickets in queue" }).fill("10483");
+  await expect(page.getByText("1 matching ticket(s)")).toBeVisible();
+  await expect(page.getByRole("button", { name: /#1 · 10482/ })).toHaveCount(0);
+  await page.getByRole("button", { name: /#2 · 10483/ }).click();
+  await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
+  expect(log.verified).toEqual([]);
+});
+
+test("after all pending tickets are accepted the flagged queue opens automatically", async ({ page }) => {
+  const { log } = await launch(page);
+  await page.getByRole("button", { name: "Flag for later" }).click();
+  await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
+  await page.getByRole("button", { name: "Accept & next" }).click();
+  await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
+  await expect(page.getByRole("button", { name: /#1 · 10482/ })).toBeVisible();
+  expect(log.verified).toEqual([102]);
+  await expect(page.getByText("1 flagged for later")).toBeVisible();
+  await page.getByRole("button", { name: "Accept & next" }).click();
+  await expect(page.getByText("2 / 2 resolved")).toBeVisible();
+  expect(log.verified).toEqual([102, 101]);
+});
+
+test("a rejected verification never advances or counts unapproved tonnage", async ({ page }) => {
+  const { log } = await launch(page);
+  await page.route("**/api/tickets/101/verify", (route) =>
+    route.fulfill({
+      status: 422, contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify({ detail: "Resolve ticket issues before verification: Tonnage missing" }),
+    }),
+  );
+  await page.getByRole("button", { name: "Accept & next" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Tonnage missing" })).toContainText("Tonnage missing");
+  await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
+  await expect(page.getByText("0 / 2 resolved")).toBeVisible();
+  expect(log.verified).toEqual([]);
+});

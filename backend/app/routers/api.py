@@ -173,11 +173,20 @@ def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depend
 def list_tickets(batch_id: int, db: Session = Depends(get_db)):
     q = select(Ticket).where(Ticket.batch_id == batch_id).order_by(Ticket.file_id, Ticket.source_page, Ticket.position)
     table = pricing_svc.rate_table(db)
-    return [_out(db, t, table) for t in db.scalars(q).all()]
+    index = dup_svc.load_index(db)
+    names = pricing_svc.catalog_names(db)
+    return [
+        _out(db, ticket, table, duplicate_index=index, catalog=names)
+        for ticket in db.scalars(q).all()
+    ]
 
 
-def _out(db: Session, t: Ticket, table=None) -> TicketOut:
-    """Ticket plus computed price, cost, duplicate and pricing notes."""
+def _out(
+    db: Session, t: Ticket, table=None, *,
+    duplicate_index: dup_svc.DuplicateIndex | None = None,
+    catalog: tuple[set[str], set[str]] | None = None,
+) -> TicketOut:
+    """Ticket plus pricing and duplicates, reusing per-list data when supplied."""
     table = table if table is not None else pricing_svc.rate_table(db)
     price, source = pricing_svc.effective_price_for(t, table)
     if t.status == "verified" and t.price_snapshot_state is None:
@@ -185,13 +194,14 @@ def _out(db: Session, t: Ticket, table=None) -> TicketOut:
     elif t.status == "verified" and t.price_snapshot_state == "unpriced":
         notes = ["No rate was available at verification. Enter the documented rate as an override and re-verify this ticket."]
     elif price is None:
-        notes = pricing_svc.unresolved_names(db, t) or ["No rate configured for this supplier and material"]
+        notes = pricing_svc.unresolved_names(db, t, catalog) or ["No rate configured for this supplier and material"]
     else:
         notes = []
     out = TicketOut.model_validate(t)
     return out.model_copy(update=dict(
         unit_price=price, price_source=source, cost=pricing_svc.cost_for(t, price),
-        duplicates=dup_svc.find_duplicates(db, t),
+        duplicates=(duplicate_index.find(t) if duplicate_index is not None
+                    else dup_svc.find_duplicates(db, t)),
         pricing_notes=notes,
     ))
 

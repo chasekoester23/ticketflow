@@ -46,6 +46,7 @@ export default function Home() {
   const [selected, setSelected] = useState(0);
   const [formDirty, setFormDirty] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<"pending" | "flagged" | "all">("pending");
+  const [queueSearch, setQueueSearch] = useState("");
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +105,7 @@ export default function Home() {
       setSelected(0);
       setFormDirty(false);
       setReviewFilter("pending");
+      setQueueSearch("");
       setBatch(b);
       await refresh(b.id);
     } catch (e) {
@@ -137,9 +139,14 @@ export default function Home() {
   };
   const done = counts.verified + counts.skipped;
   const progress = tickets.length ? (done / tickets.length) * 100 : 0;
-  const queue = tickets.map((t, index) => ({ t, index })).filter(({ t }) =>
-    reviewFilter === "all" || (reviewFilter === "flagged" ? t.status === "flagged" : pending(t))
-  );
+  const queue = tickets.map((t, index) => ({ t, index })).filter(({ t }) => {
+    if (reviewFilter === "pending" && !pending(t)) return false;
+    if (reviewFilter === "flagged" && t.status !== "flagged") return false;
+    const search = queueSearch.trim().toLowerCase();
+    if (!search) return true;
+    return [t.ticket_number, t.material_type, t.supplier, t.job_location]
+      .some((field) => (field ?? "").toLowerCase().includes(search));
+  });
 
   function selectTicket(index: number) {
     if (index === selected) return;
@@ -150,14 +157,23 @@ export default function Home() {
     setRotation(0);
   }
 
-  // After a successful server-side action, work through unreviewed tickets first.
-  // Flagged items stay in their own queue to be revisited deliberately.
+  // Complete the pending queue first, then automatically revisit flagged tickets.
+  // A ticket is never auto-accepted; only the explicit Accept action verifies.
   function advance() {
     setFormDirty(false);
-    const later = tickets.findIndex((t, i) => i > selected && pending(t));
-    const earlier = later === -1 ? tickets.findIndex((t, i) => i < selected && pending(t)) : -1;
-    if (later >= 0 || earlier >= 0) {
-      setSelected(later >= 0 ? later : earlier);
+    const findNext = (predicate: (ticket: Ticket) => boolean): number => {
+      const later = tickets.findIndex((t, i) => i > selected && predicate(t));
+      return later >= 0 ? later : tickets.findIndex((t, i) => i < selected && predicate(t));
+    };
+    let next = findNext(pending);
+    if (next < 0) {
+      next = findNext((t) => t.status === "flagged");
+      if (next >= 0) setReviewFilter("flagged");
+    } else {
+      setReviewFilter("pending");
+    }
+    if (next >= 0) {
+      setSelected(next);
       setZoom(1);
       setRotation(0);
     }
@@ -394,8 +410,21 @@ export default function Home() {
                 ))}
               </div>
             </div>
+            <div className="border-b border-slate-100 px-5 py-3">
+              <label htmlFor="queue-search" className="sr-only">Search tickets in queue</label>
+              <input id="queue-search" type="search" value={queueSearch}
+                onChange={(e) => setQueueSearch(e.target.value)}
+                placeholder="Find ticket number, supplier, material, or job..."
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-600"
+              />
+              <p className="mt-1.5 text-xs text-slate-500">{queue.length} matching ticket(s) · {tickets.length} total</p>
+            </div>
             {queue.length === 0 ? (
-              <p className="p-6 text-sm text-slate-600">No tickets in this view. Select <strong>All</strong> to revisit accepted tickets.</p>
+              <div className="p-6 text-sm text-slate-600">
+                No tickets match the current view.
+                {queueSearch && <button type="button" className="ml-2 font-semibold underline" onClick={() => setQueueSearch("")}>Clear search</button>}
+                <button type="button" className="ml-2 font-semibold underline" onClick={() => setReviewFilter("all")}>Show all</button>
+              </div>
             ) : (
               <div className="max-h-80 overflow-auto divide-y divide-slate-100">
                 {queue.map(({ t, index }) => (
