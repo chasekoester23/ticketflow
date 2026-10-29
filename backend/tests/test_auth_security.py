@@ -71,7 +71,10 @@ def test_protected_routes_session_rotation_logout_and_expiry(client):
         assert token
         assert client.get("/api/auth/me").json()["username"] == "owner"
         assert client.get("/api/projects").status_code == 200
-        assert client.get("/api/records/export.xlsx").status_code == 200
+        export = client.get("/api/records/export.xlsx")
+        assert export.status_code == 200
+        assert export.headers["cache-control"] == "private, no-store"
+        assert export.headers["x-content-type-options"] == "nosniff"
 
         # HTML form / foreign-site POSTs must not be able to use the cookie.
         assert client.post("/api/auth/logout", headers={"X-TicketFlow-Request": ""}).status_code == 403
@@ -100,6 +103,9 @@ def test_protected_routes_session_rotation_logout_and_expiry(client):
         finally:
             gen.close()
         assert client.get("/api/auth/me").status_code == 401
+        client.cookies.set(COOKIE_NAME, "garbage-session-value")
+        assert client.get("/api/dashboard").status_code == 401
+        assert client.post("/api/auth/logout").status_code == 200
     finally:
         app.dependency_overrides[current_user] = override
 
