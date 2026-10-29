@@ -154,3 +154,50 @@ def test_worker_exception_marks_batch_failed_without_losing_completed_files(clie
         assert "retry" in job.error.lower()
     assert client.get(f"/api/batches/{batch_id}").json()["status"] == "failed"
     assert client.post(f"/api/batches/{batch_id}/retry").status_code == 200
+
+
+def test_local_worker_cli_drains_queued_batch_and_exit(client, monkeypatch):
+    from scripts import run_worker
+
+    bid = _pending_upload(client, monkeypatch)
+    monkeypatch.setattr(run_worker, "SessionLocal", api_module.SessionLocal)
+    monkeypatch.setattr(run_worker, "get_extractor", FixtureExtractor)
+    assert run_worker.run(once=True, poll_seconds=0.25) == 0
+    assert client.get(f"/api/batches/{bid}").json()["status"] == "ready_for_review"
+    assert len(client.get(f"/api/batches/{bid}/tickets").json()) == 4
+
+
+def test_worker_reacquires_orphaned_running_job_after_restart(client, monkeypatch):
+    from scripts import run_worker
+
+    bid = _pending_upload(client, monkeypatch)
+    with _db() as db:
+        old = jobqueue.claim_next(db)
+        assert old is not None
+    monkeypatch.setattr(run_worker, "SessionLocal", api_module.SessionLocal)
+    monkeypatch.setattr(run_worker, "get_extractor", FixtureExtractor)
+    assert run_worker.run(once=True, poll_seconds=0.25) == 0
+    assert client.get(f"/api/batches/{bid}").json()["status"] == "ready_for_review"
+    with _db() as db:
+        job = db.get(ProcessingJob, old[0])
+        assert job.status == "finished" and job.attempts == 2
+
+
+def test_local_lock_rejects_a_second_worker_without_reclaiming_jobs(client, monkeypatch):
+    import fcntl
+    from scripts import run_worker
+
+    bid = _pending_upload(client, monkeypatch)
+    monkeypatch.setattr(run_worker, "SessionLocal", api_module.SessionLocal)
+    monkeypatch.setattr(run_worker, "get_extractor", FixtureExtractor)
+    lock_path = settings.storage_dir / "worker.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            assert run_worker.run(once=True, poll_seconds=0.25) == 2
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    with _db() as db:
+        job = db.scalar(select(ProcessingJob).where(ProcessingJob.batch_id == bid))
+        assert job.status == "pending" and job.attempts == 0
