@@ -18,7 +18,7 @@ backend/   FastAPI + SQLAlchemy (SQLite) + PyMuPDF/Pillow + openpyxl
 frontend/  Next.js 15 + Tailwind: upload, status polling, side-by-side review, export
 ```
 
-Key decisions: one FastAPI process (background tasks, no queue yet); SQLite with models that port to Postgres;
+Key decisions: separate, local SQLite-backed processing worker (no in-process extraction); SQLite models intended to port to Postgres;
 tonnage is always human-confirmed; no confidence scores, only deterministic flags; stored files get random internal names.
 
 ## Run it
@@ -33,6 +33,10 @@ alembic upgrade head          # safe additive schema migration, required before 
 python scripts/create_owner.py --username owner  # prompted securely for a 12+ character password
 uvicorn app.main:app --reload --port 8000
 
+# Worker (third terminal; use the same Python environment)
+cd backend
+python scripts/run_worker.py
+
 # Frontend (second terminal)
 cd frontend
 npm install
@@ -43,6 +47,48 @@ Create a project first (Projects page), then try `backend/sample_4_tickets.pdf` 
 
 Privacy note: with a key set, cropped ticket images are sent to the Anthropic API for extraction. Disclose this to
 any customer before using their documents.
+
+## Durable processing worker (Batch #10)
+
+TicketFlow now saves a processing job **in the same database transaction**
+as an accepted file upload. FastAPI no longer performs AI extraction inside
+its own request worker. A separate worker must be running to process queued
+uploads and retries. Uploaded documents are not lost when the website restarts.
+
+**Upgrade your existing Mac installation safely:**
+
+1. Stop the frontend and backend with **Control+C** in their Terminal windows.
+2. After merging PR #10, run `git pull origin main`.
+3. From the main TicketFlow directory, back up your database before upgrading:
+   `cp backend/ticketflow.db backend/ticketflow-before-worker.db`.
+   Do not delete or reset the SQLite database.
+4. From `backend/` with the Python virtual environment activated, run
+   `python -m alembic upgrade head`. The migration adds only a
+   `processing_jobs` table and queues any previously interrupted
+   `uploaded` or `processing` batches without changing confirmed tickets.
+5. Run the backend as before (port 8000). In a **third Terminal**, with
+   the same virtual environment activated, run:
+   `cd backend && python scripts/run_worker.py`.
+   In another Terminal run the frontend (port 3000).
+6. If a processing worker is killed, restart **the worker**. It acquires
+   an exclusive local OS lock, recovers unfinished jobs, and resumes only
+   unfinished files/crops. Existing edits, approved tons, audit logs, and
+   locked historical prices remain preserved. Use `--once` to drain at
+   most one job for a local test.
+
+**When no worker is running**, accepted uploads remain visibly queued; they
+do not process automatically. **When ANTHROPIC_API_KEY is missing**, the
+worker marks an extraction attempt as failed rather than fabricating results.
+You can leave the API key unconfigured while developing other features.
+
+This is a **single-machine Mac/Linux worker**, not a distributed production
+queue. Do not run the worker on multiple hosts sharing the same database or
+file storage. Processing is *at least once*: a crash between a paid AI call
+and a database commit can trigger another model call after restart. The
+local lock prevents two workers on the same machine from processing
+simultaneously; it is not a distributed coordination mechanism. Production
+requires a managed queue, durable worker execution, idempotency safeguards,
+observability, backups, and platform-specific locking.
 
 ## Single-owner authentication (Batch #8)
 

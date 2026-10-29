@@ -91,6 +91,20 @@ class Batch(Base):
     files: Mapped[list["UploadedFile"]] = relationship(back_populates="batch", cascade="all, delete-orphan")
 
 
+class ProcessingJob(Base):
+    """Durable extraction work item. Claimed by the local single-instance worker."""
+
+    __tablename__ = "processing_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), index=True, default="pending")
+    only_failed: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class UploadedFile(Base):
     __tablename__ = "uploaded_files"
     id: Mapped[int] = mapped_column(primary_key=True)

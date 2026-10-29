@@ -41,6 +41,12 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "storage_dir", tmp_path)
     monkeypatch.setattr(api_module, "SessionLocal", Session)
     monkeypatch.setattr(api_module, "get_extractor", lambda: FixtureExtractor())
+    # Dedicated workers are used in production. TestClient runs the same
+    # persisted queue inline as a fixture-controlled post-response hook.
+    monkeypatch.setattr(
+        api_module, "_notify_worker",
+        lambda background, job_id: background.add_task(api_module._drain_job_for_tests),
+    )
 
     def override():
         s = Session()
