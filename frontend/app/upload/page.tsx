@@ -458,6 +458,7 @@ export default function Home() {
             <ReviewForm
               key={current.id + "-" + current.status + "-" + current.tonnage + "-" + current.ticket_number + "-" + current.unit_price + "-" + current.cost}
               ticket={current}
+              manual={batch.intake_mode === "manual"}
               onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
               onAdvance={advance}
               onDirtyChange={setFormDirty}
@@ -530,12 +531,14 @@ const FIELDS: { key: keyof Ticket; label: string; type?: string; flagWords: stri
 
 function ReviewForm({
   ticket,
+  manual,
   onChange,
   onAdvance,
   onDirtyChange,
   onError,
 }: {
   ticket: Ticket;
+  manual: boolean;
   onChange: (t: Ticket) => void;
   onAdvance: () => void;
   onDirtyChange: (dirty: boolean) => void;
@@ -578,6 +581,7 @@ function ReviewForm({
     if (t && advance) onAdvance();
   }
 
+  const filled = FIELDS.filter((field) => values[field.key].trim() !== "").length;
   const flaggedFor = (words: string[]) => ticket.flags.some((fl) => words.some((w) => fl.startsWith(w)));
 
   // Cmd/Ctrl+Enter is a deliberate approval shortcut. It invokes the same
@@ -597,11 +601,17 @@ function ReviewForm({
     <aside className="space-y-4 rounded-md border border-[#dce1e6] bg-white p-5 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
         <div>
-          <h3 className="text-[14px] font-bold text-[#1d2b38]">Extracted ticket information</h3>
-          <p className="mt-1 text-xs text-slate-500">Compare every value with the scan, then accept.</p>
+          <h3 className="text-[14px] font-bold text-[#1d2b38]">{manual ? "Manual ticket entry" : "Extracted ticket information"}</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            {manual ? "Enter the six required fields from the original. No AI populated these values." : "Compare every value with the scan, then accept."}
+          </p>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
       </div>
+      {manual && <div className="flex items-center justify-between gap-2 rounded border border-[#e5e9ec] bg-[#f8f9fa] px-3 py-2.5">
+        <span className="text-xs font-semibold text-[#526273]">Required fields entered</span>
+        <span className="text-xs font-bold tabular-nums text-[#293948]">{filled} / 6</span>
+      </div>}
       {ticket.error && <p className="text-sm text-red-700">{ticket.error}</p>}
       {ticket.flags.length > 0 && (
         <ul className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
