@@ -1,0 +1,5 @@
+# Optional dependencies for permissioned handwriting evaluation only.
+# Not required for normal TicketFlow or manual entry.
+-r requirements-dev.txt
+openai>=2,<4
+google-genai>=1,<4
