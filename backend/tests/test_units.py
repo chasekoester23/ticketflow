@@ -68,7 +68,8 @@ def test_parse_tonnage():
 def test_parse_tonnage_never_salvages_ambiguous_ocr_digits():
     # OCR uncertainty should become a visible missing quantity for review.
     for text in ("1O.5", "12x3", "12/3", "1e2", "23,45", "9..5", "$24.5",
-                 "24.5 yd3", "NaN", "Infinity", "9" * 100):
+                 "24.5 yd3", "NaN", "Infinity", "9" * 100,
+                 "999999999.9999"):
         assert parse_tonnage(text) is None, text
     assert parse_tonnage("24.5 tons") == Decimal("24.500")
     assert parse_tonnage("24.5 NET TONS") == Decimal("24.500")
