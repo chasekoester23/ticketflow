@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy import inspect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
@@ -11,7 +12,14 @@ from .routers import api, pricing, projects, reports
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(engine)  # Phase 1 convenience; Alembic migrations arrive with Phase 2 models
+    Base.metadata.create_all(engine)  # new local installs only; never alters existing tables
+    columns = {c["name"] for c in inspect(engine).get_columns("tickets")}
+    required = {"price_snapshot_state", "applied_unit_price", "applied_price_source"}
+    if not required.issubset(columns):
+        raise RuntimeError(
+            "TicketFlow database migration required. Back up backend/ticketflow.db, "
+            "then run 'cd backend && alembic upgrade head'. Do not delete your database."
+        )
     yield
 
 
