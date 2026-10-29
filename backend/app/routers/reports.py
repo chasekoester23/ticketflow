@@ -79,7 +79,8 @@ def export_records(
 
 
 @router.get("/dashboard")
-def dashboard(project_id: int | None = None, db: Session = Depends(get_db)):
+def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
+              organization_id: int = Depends(current_organization_id)):
     table = pricing_svc.rate_table(db, organization_id)
     all_ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=None, material=None, status=None,
                               date_from=None, date_to=None, include_skipped=True)
