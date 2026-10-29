@@ -171,6 +171,34 @@ def test_unverified_matching_tickets_block_complete_match(client):
     assert any("still need review" in warning for warning in result["warnings"])
 
 
+def test_missing_date_supplier_or_material_never_produces_false_invoice_match(client):
+    from .sample_data import TICKETS
+
+    project = _project(client)
+    _rate(client)
+    response = client.post(
+        "/api/batches",
+        data={"layout": "grid_2x2", "intake_mode": "manual", "project_id": str(project)},
+        files=[("files", ("synthetic.pdf", make_scan_pdf(), "application/pdf"))],
+    )
+    assert response.status_code == 200, response.text
+    bid = response.json()["id"]
+    items = client.get(f"/api/batches/{bid}/tickets").json()
+    assert len(items) == 4
+    first = client.patch(f"/api/tickets/{items[0]['id']}", json=TICKETS[0])
+    assert first.status_code == 200
+    assert client.post(f"/api/tickets/{items[0]['id']}/verify").status_code == 200
+
+    compared = _post(client, _line(project))
+    assert compared.status_code == 201
+    result = compared.json()
+    assert result["verified_count"] == 1
+    assert result["pending_count"] == 0  # exact matching pending tickets
+    assert result["unclassified_count"] == 3  # could still belong to invoice
+    assert result["status"] == "incomplete"
+    assert any("classification is required" in w for w in result["warnings"])
+
+
 def test_rejects_overlapping_invoice_scopes_and_preserves_original(client):
     project = _project(client)
     first = _post(client, _line(project))
