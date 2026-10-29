@@ -169,7 +169,7 @@ test("a rejected verification never advances or counts unapproved tonnage", asyn
     }),
   );
   await page.getByRole("button", { name: "Accept & next" }).click();
-  await expect(page.getByRole("alert")).toContainText("Tonnage missing");
+  await expect(page.getByRole("alert").filter({ hasText: "Tonnage missing" })).toContainText("Tonnage missing");
   await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
   await expect(page.getByText("0 / 2 resolved")).toBeVisible();
   expect(log.verified).toEqual([]);
