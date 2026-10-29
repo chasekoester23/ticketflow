@@ -149,3 +149,65 @@ def test_extraction_prompt_does_not_guess_unit_conversions():
     assert "return null for tonnage" in PROMPT
     assert "Never convert units" in PROMPT
     assert "gross weight" in PROMPT.lower()
+
+
+def test_malformed_model_value_is_not_scored_as_correct_null():
+    assert _field_verdict("tonnage", None, "definitely not tons") == "unexpected"
+    assert _field_verdict("delivery_date", None, "sometime Tuesday") == "unexpected"
+    assert _field_verdict("tonnage", "24.500", "bad value") == "mismatch"
+
+
+def test_readable_accuracy_is_separate_from_correct_missing_values(tmp_path):
+    manifest = _labeled_manifest(tmp_path)
+    data = json.loads(manifest.read_text())
+    data["tickets"][0]["expected"]["supplier"] = None
+    manifest.write_text(json.dumps(data))
+    results = evaluate(load_manifest(manifest), KnownAnswers())
+    assert results["fields"]["supplier"]["labeled_non_null"] == 3
+    assert results["fields"]["supplier"]["correct_non_null"] == 3
+    assert results["fields"]["supplier"]["non_null_accuracy"] == 1.0
+    assert results["fields"]["supplier"]["unexpected"] == 1
+
+
+def test_cli_prepare_check_run_and_refuse_overwriting_report(tmp_path, monkeypatch, capsys):
+    from scripts import evaluate_extraction as cli
+
+    (tmp_path / "scan.pdf").write_bytes(make_scan_pdf())
+    monkeypatch.setattr("sys.argv", [
+        "evaluate_extraction.py", "prepare", "--scans", str(tmp_path),
+        "--layout", "grid_2x2",
+    ])
+    assert cli.main() == 0
+    manifest = tmp_path / "labels.json"
+    assert manifest.exists()
+    with pytest.raises(DatasetError):
+        load_manifest(manifest)
+    assert cli.main() == 1  # Existing labels cannot be overwritten.
+
+    raw = json.loads(manifest.read_text())
+    for idx, item in enumerate(raw["tickets"]):
+        item["expected"] = dict(TICKETS[idx])
+    manifest.write_text(json.dumps(raw))
+    fake = KnownAnswers(wrong=True)
+    monkeypatch.setattr(cli, "get_extractor", lambda: fake)
+    monkeypatch.setattr("sys.argv", [
+        "evaluate_extraction.py", "check", "--manifest", str(manifest),
+    ])
+    assert cli.main() == 0
+    assert fake.calls == 0
+
+    monkeypatch.setattr("sys.argv", [
+        "evaluate_extraction.py", "run", "--manifest", str(manifest),
+    ])
+    assert cli.main() == 0
+    assert fake.calls == 4
+    report = json.loads((tmp_path / "accuracy-report.json").read_text())
+    assert report["ticket_exact_accuracy"] == .75
+    assert report["fields"]["tonnage"]["non_null_accuracy"] == .75
+    assert report["cases"][1]["fields"]["tonnage"] == "mismatch"
+
+    # Refuse to charge for duplicate runs when output would be overwritten.
+    assert cli.main() == 1
+    assert fake.calls == 4
+    printed = capsys.readouterr()
+    assert "cannot" in printed.err.lower() or "already exists" in printed.err.lower()
