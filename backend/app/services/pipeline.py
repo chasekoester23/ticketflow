@@ -27,7 +27,7 @@ def _pages_for(file: UploadedFile, data: bytes):
     return [splitter.load_image(data)]
 
 
-def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extractor) -> None:
+def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extractor | None, *, manual: bool = False) -> None:
     file.status, file.error = "processing", None
     db.commit()
     try:
@@ -70,6 +70,29 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
             ticket.crop_sha256 = sha256_bytes(path.read_bytes())
             ticket.error = None
 
+            if manual:
+                # Manual intake creates real, unapproved records with actual
+                # stored image crops. No model call and no invented values.
+                # Never replace an existing reviewed/approved ticket.
+                ticket.ticket_number = None
+                ticket.delivery_date = None
+                ticket.material_type = None
+                ticket.tonnage = None
+                ticket.supplier = None
+                ticket.job_location = None
+                ticket.raw_extraction = None
+                ticket.tonnage_confirmed = False
+                ticket.price_snapshot_state = "pending"
+                ticket.flags = compute_flags(
+                    ticket_number=None, delivery_date=None, material_type=None,
+                    tonnage=None, supplier=None, job_location=None,
+                )
+                ticket.status = "needs_review"
+                db.add(ticket)
+                continue
+
+            if extractor is None:
+                raise RuntimeError("AI extraction requires a configured extractor")
             try:
                 extracted, raw = extractor.extract(crop.image)
             except ExtractionError as exc:
@@ -107,7 +130,7 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
     db.commit()
 
 
-def process_batch(db: Session, batch_id: int, extractor: Extractor, only_failed: bool = False) -> None:
+def process_batch(db: Session, batch_id: int, extractor: Extractor | None, only_failed: bool = False) -> None:
     batch = db.get(Batch, batch_id)
     if batch is None:
         return
@@ -118,7 +141,10 @@ def process_batch(db: Session, batch_id: int, extractor: Extractor, only_failed:
             continue
         file_id = file.id
         try:
-            process_file(db, file, batch.layout, extractor)
+            if batch.intake_mode == "manual":
+                process_file(db, file, batch.layout, None, manual=True)
+            else:
+                process_file(db, file, batch.layout, extractor)
         except Exception:
             logger.exception("Unexpected failure processing stored file id %s", file_id)
             db.rollback()
