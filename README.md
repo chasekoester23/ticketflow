@@ -50,6 +50,41 @@ are sent to the Google Gemini API for extraction. If you explicitly select Anthr
 images go to Anthropic instead. **Get document-owner authorization before sending
 real contractor scans to ANY external provider.** Paid/free data-handling policies differ.
 
+## Invoice comparison (Batch #16)
+
+The **Invoice comparison** page lets a project engineer manually enter one
+supplier **material** invoice line at a time: invoice number, project, supplier,
+material, inclusive delivery dates, billed tons, billed unit price and material
+subtotal (exclude tax, freight and unrelated charges). It then compares those
+amounts against the **current verified tickets** in the same company/project,
+supplier/material and date range.
+
+- Comparison is **not** invoice approval or authorization to pay.
+- The output shows billed-minus-verified tons, billed-minus-verified material
+  cost, arithmetic errors, unit-rate mismatches, unverified tickets, and
+  unpriced approved tickets. Unpriced or pending tickets cannot produce a
+  "figures match" result. A match is an arithmetic result, not proof of every
+  delivery, invoice authenticity, or authorization to pay.
+- A matching ticket keeps its locked historical unit price, not the current
+  rate. Removing verification updates comparisons immediately; invoice
+  quantities do not enter delivery actuals or dashboards.
+- Comparisons are saved in a company-scoped database table and corrections
+  are audited. Different material lines from the same invoice can be added,
+  but **overlapping date windows for the same project/supplier/material are
+  rejected** because allocation across partial or overlapping invoices is
+  not implemented. Check billing periods before entry.
+- First version is **manual invoice entry only**. It does not extract invoice
+  PDFs, allocate partial loads, match by ticket number, reconcile tax/freight,
+  post entries to accounting, or use Gemini. No external cost or credentials.
+
+**For an existing local Mac installation:** after the PR is reviewed and
+merged, stop the backend/worker, pull \`main\` in the **inner** TicketFlow clone,
+back up \`backend/ticketflow.db\` before migrating, and run
+\`cd backend && source .venv/bin/activate && python -m alembic upgrade head\`.
+This applies additive revision \`20261029_06\`. No files, user accounts, or
+existing ticket/price rows are reset. Restart backend and frontend to load the
+new navigation item. Keep the original \`.env\`.
+
 ## Gemini primary handwriting reader (Batch #14 candidate)
 
 **Gemini 3.1 Pro Preview is the selected primary reader.** We chose the
