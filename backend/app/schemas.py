@@ -40,6 +40,7 @@ class TicketOut(BaseModel):
     tonnage_confirmed: bool
     error: str | None
     unit_price_override: Decimal | None = None
+    price_snapshot_state: str | None = None  # pending | priced | unpriced | None (legacy)
     # Computed at read time (not stored), so they always reflect current rates and tickets.
     unit_price: Decimal | None = None
     price_source: str | None = None  # "rate" | "override" | None
