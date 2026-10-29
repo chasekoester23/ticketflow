@@ -322,8 +322,8 @@ def test_invoice_migration_is_additive_and_keeps_old_tickets(tmp_path):
         # The organization migration already creates the original owner.
         assert conn.execute("SELECT COUNT(*) FROM organizations").fetchone()[0] >= 1
         conn.execute(
-            "INSERT INTO projects(id,organization_id,code,name,status) "
-            "VALUES(1,1,'ABC','Existing project','active')"
+            "INSERT INTO projects(id,organization_id,code,name,status,created_at) "
+            "VALUES(1,1,'ABC','Existing project','active',CURRENT_TIMESTAMP)"
         )
         conn.commit()
     command.upgrade(cfg, "head")
