@@ -32,8 +32,10 @@ def test_manual_intake_works_without_model_key_and_never_fabricates_data(client,
     assert result.status_code == 200, result.text
     batch = result.json()
     assert batch["intake_mode"] == "manual"
-    assert batch["status"] == "ready_for_review"
-    assert batch["files"][0]["status"] == "ready_for_review"
+    # The API response is constructed before TestClient's queued fixture
+    # worker completes; fetch persisted status in a separate request.
+    assert client.get(f"/api/batches/{batch['id']}").json()["status"] == "ready_for_review"
+    assert client.get(f"/api/batches/{batch['id']}").json()["files"][0]["status"] == "ready_for_review"
 
     tickets = client.get(f"/api/batches/{batch['id']}/tickets").json()
     assert len(tickets) == 4
@@ -87,7 +89,7 @@ def test_manual_ticket_needs_six_real_values_before_approval(client):
     assert approved.json()["status"] == "verified"
     assert approved.json()["tonnage_confirmed"] is True
     assert approved.json()["tonnage"] == "24.500"
-    assert client.get("/api/dashboard").json()["total_tons"] == "24.500"
+    assert Decimal(str(client.get("/api/dashboard").json()["total_tons"])) == Decimal("24.500")
     assert client.get(f"/api/tickets/{tid}/audit").json()
     assert client.get(f"/api/batches/{bid}/export.xlsx").status_code == 200
 
@@ -149,6 +151,9 @@ def test_manual_intake_schema_migration_preserves_original_batch_state(tmp_path)
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{dbpath}")
     command.upgrade(cfg, "20261029_04")
     with sqlite3.connect(dbpath) as db:
+        # Earlier migrations may create a fresh table via *current*
+        # metadata. Drop the future column to model a genuine older install.
+        db.execute("ALTER TABLE batches DROP COLUMN intake_mode")
         db.execute(
             "INSERT INTO batches(id,organization_id,layout,status,created_at) "
             "VALUES (12,1,'single','ready_for_review',CURRENT_TIMESTAMP)"
