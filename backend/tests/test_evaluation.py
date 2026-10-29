@@ -133,9 +133,9 @@ def test_manifest_guards_bad_annotations(tmp_path, modifier, error):
 
 def test_blank_crop_not_scored_as_real_ticket(tmp_path):
     from PIL import Image
+    manifest = _labeled_manifest(tmp_path)
     blank = tmp_path / "blank.png"
     Image.new("RGB", (500, 400), "white").save(blank)
-    manifest = _labeled_manifest(tmp_path)
     data = json.loads(manifest.read_text())
     data["tickets"][0]["source"] = "blank.png"
     data["tickets"][0]["layout"] = "single"
