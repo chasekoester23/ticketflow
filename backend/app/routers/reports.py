@@ -17,7 +17,7 @@ from .api import _out
 
 router = APIRouter(prefix="/api")
 
-VALID_STATUS = {"needs_review", "verified", "skipped", "failed"}
+VALID_STATUS = {"needs_review", "verified", "skipped", "failed", "flagged"}
 
 
 def filtered_tickets(
@@ -103,7 +103,8 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db)):
     projects = {p.id: p.name for p in db.scalars(select(Project))}
     return {
         "tickets": len(ts),
-        "needs_review": sum(1 for t in ts if t.status in ("needs_review", "failed")),
+        "needs_review": sum(1 for t in ts if t.status in ("needs_review", "failed", "flagged")),
+        "flagged": sum(1 for t in ts if t.status == "flagged"),
         "verified": sum(1 for t in ts if t.status == "verified"),
         "total_tons": total_tons,
         "pending_tons": pending_tons,
