@@ -68,13 +68,20 @@ export default function Home() {
     const [b, t] = await Promise.all([getBatch(id), getTickets(id)]);
     setBatch(b);
     setTickets(t);
-    return b;
+    return { batch: b, tickets: t };
   }, []);
 
-  // Reopen a previous batch via /upload?batch=ID (linked from the dashboard).
+  // Deep-link directly to one record in a batch, when supplied by Records.
   useEffect(() => {
-    const id = Number(new URLSearchParams(window.location.search).get("batch"));
-    if (id) refresh(id).catch((e) => setError(e.message));
+    const params = new URLSearchParams(window.location.search);
+    const id = Number(params.get("batch"));
+    const ticketId = Number(params.get("ticket"));
+    if (id) {
+      refresh(id).then(({ tickets: loaded }) => {
+        const index = loaded.findIndex((t) => t.id === ticketId);
+        if (index >= 0) setSelected(index);
+      }).catch((e) => setError(e.message));
+    }
   }, [refresh]);
 
   // Poll the real backend status until processing actually finishes.
@@ -201,6 +208,7 @@ export default function Home() {
               <span className="text-sm font-semibold text-slate-800">Drop scanned tickets here, or browse files</span>
               <span className="mt-1 text-xs text-slate-500">Single tickets or four tickets per page</span>
               <input ref={inputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+                onClick={(e) => e.stopPropagation()}
                 onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
             </div>
             {files.length > 0 && (
@@ -476,8 +484,9 @@ function ReviewForm({
       )}
       {FIELDS.map((f) => (
         <div key={f.key}>
-          <label className="mb-1 block text-xs font-medium text-slate-600">{f.label}</label>
+          <label htmlFor={"review-" + f.key} className="mb-1 block text-xs font-medium text-slate-600">{f.label}</label>
           <input
+            id={"review-" + f.key}
             type={f.type === "number" ? "text" : f.type ?? "text"}
             inputMode={f.type === "number" ? "decimal" : undefined}
             value={values[f.key]}
@@ -506,8 +515,9 @@ function ReviewForm({
         ) : (
           <p className="text-amber-800">{ticket.pricing_notes.join(". ")}. Add it under Suppliers &amp; Pricing, or enter an override below.</p>
         )}
-        <label className="mt-2 block text-xs font-medium text-slate-600">Override rate for this ticket ($/ton, optional)</label>
+        <label htmlFor="review-rate-override" className="mt-2 block text-xs font-medium text-slate-600">Override rate for this ticket ($/ton, optional)</label>
         <input
+          id="review-rate-override"
           inputMode="decimal"
           value={override}
           onChange={(e) => setOverride(e.target.value)}
