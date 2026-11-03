@@ -118,11 +118,22 @@ class GeminiBenchmarkExtractor:
         return _validated_json(response.text)
 
 
-def make_benchmark_extractor(provider: str, *, model: str | None = None):
-    """Explicit provider selection only for the private evaluation CLI."""
+def resolve_model(provider: str, model: str | None = None) -> str:
+    """An explicit --model wins; Gemini otherwise uses the SAME model the app
+    is configured with (GEMINI_MODEL), so the benchmark measures what the
+    worker actually runs. Other providers keep their documented defaults."""
     if provider not in DEFAULT_MODELS:
         raise ValueError(f"Unknown benchmark provider: {provider}")
-    name = model or DEFAULT_MODELS[provider]
+    if model:
+        return model
+    if provider == "gemini" and settings.gemini_model:
+        return settings.gemini_model
+    return DEFAULT_MODELS[provider]
+
+
+def make_benchmark_extractor(provider: str, *, model: str | None = None):
+    """Explicit provider selection only for the private evaluation CLI."""
+    name = resolve_model(provider, model)
     if provider == "anthropic":
         return AnthropicExtractor(model=name)
     if provider == "openai":

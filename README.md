@@ -425,6 +425,12 @@ call, then run a consented sample through the configured provider and generate
 a field-by-field report. Real documents and labels belong under
 `backend/evaluation_data/` (Git-ignored), never in this repository.
 
+**No real tickets yet?** `python scripts/make_practice_tickets.py` prints blank,
+clearly synthetic practice tickets (4 per page) and an answer key so people
+can hand-write a practice set. See "Practice tickets you write yourself" in
+EVALUATION.md. Results are a best case and are labeled as synthetic in the
+report; they are not evidence of accuracy on real supplier tickets.
+
 **Important:** this tool is a benchmark, not an alternate upload process.
 The contractor must still click **Accept & next** on every ticket in TicketFlow.
 Supplier invoices and financial decisions must rely on human-verified records.
@@ -434,7 +440,12 @@ Supplier invoices and financial decisions must rely on human-verified records.
 ```bash
 cd backend && python scripts/check_api_key.py
 ```
-Prints OK or a specific failure (missing key, rejected key, unknown model). The UI also shows a banner if no key is set.
+Prints OK, or the provider's reason with a specific fix: rejected key, model
+not on your plan (for example a paid-only model on the free tier), quota or
+rate limit, unknown model name, or a temporary provider outage. A malformed
+`GEMINI_MODEL` line is caught before any request. The key is never printed.
+`python scripts/check_api_key.py --list-models` shows the models your key can
+see without using quota. The UI also shows a banner if no key is set.
 
 ## Test
 

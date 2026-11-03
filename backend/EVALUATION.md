@@ -26,6 +26,58 @@ provider on an independently hand-labeled sample.
   multi-page PDFs, and known difficult tickets. Start with 25–50; expand after
   seeing the error types. The sample is not automatically representative.
 
+## Practice tickets you write yourself (synthetic, no permission needed)
+
+Before real tickets are available, you can measure the pipeline on blank
+practice tickets that people fill in by hand. **Results are a best case**:
+few writers, clean paper and our own layouts. They are labeled
+`synthetic_practice_self_written` in the report and must never be quoted as
+accuracy on real supplier tickets.
+
+1. **Print.** From `backend/`:
+   ```bash
+   python scripts/make_practice_tickets.py --sheets 5
+   ```
+   This writes `evaluation_data/practice/practice-tickets.pdf` (4 tickets per
+   page, three different layouts) and a pre-numbered
+   `evaluation_data/practice/answer-key.csv`. Print at **100% scale** (not
+   "fit to page").
+2. **Fill them in like a real driver would.** Use several different people
+   if you can, write quickly, mix pens and pencil, vary formats (`10/3/26`,
+   `2026-10-03`; `24.5`, `24.50`), fill the gross/tare pound fields too, and
+   include look-alike digits (1/7, 0/6, 5/S) and a crossed-out correction.
+   Fold, smudge or photocopy a few. The **net weight is in tons**.
+3. **Scan the sheets in order** (sheet 1 first) into one PDF in
+   `evaluation_data/practice/`, e.g. `scanned-practice.pdf`.
+4. **Fill the answer key** in Excel or Numbers and save as CSV. For each
+   ticket, type what is **actually legible** on the paper. Write
+   `UNREADABLE` for a field even a person cannot read. Dates may be
+   `YYYY-MM-DD` or `M/D/YYYY`; net tons is a plain number (no units). Leave a
+   row completely empty for a ticket nobody filled in; it is skipped. Do not
+   change the `practice_id`, `sheet` or `slot` columns.
+5. **Convert and check** (no API calls):
+   ```bash
+   python scripts/practice_key_to_labels.py \
+     --key evaluation_data/practice/answer-key.csv \
+     --scan evaluation_data/practice/scanned-practice.pdf
+   python scripts/evaluate_extraction.py check --manifest evaluation_data/practice/labels.json
+   ```
+   Then confirm with the scan preview (below) that each crop shows the
+   practice ID you expect; a sheet scanned out of order would mislabel it.
+6. **Run the model** (uses API quota; see Step 3 below):
+   ```bash
+   python scripts/evaluate_extraction.py run --manifest evaluation_data/practice/labels.json --pause-seconds 6
+   ```
+   The benchmark uses `GEMINI_MODEL` from `backend/.env` unless `--model` is
+   given. On the free tier, `--pause-seconds` keeps per-minute limits from
+   being counted as extraction failures, and the free tier's daily limit may
+   require splitting a large run across days. Results from a free-tier
+   "Flash" model do not predict a paid "Pro" model's accuracy.
+
+If `check_api_key.py` fails, it now prints the provider's reason and a
+specific fix (key removed from the output). `python scripts/check_api_key.py
+--list-models` shows which models your key can see without using quota.
+
 ## No-cost preflight: inspect every physical crop before evaluating handwriting
 
 When you receive authorized paper tickets, first run the local **scan preview**
