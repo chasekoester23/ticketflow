@@ -1,5 +1,7 @@
 # TicketFlow (Phase 1 vertical slice)
 
+**Security status:** Local development/pilot only — not production hardened. See [SECURITY_PRELAUNCH.md](SECURITY_PRELAUNCH.md) for implemented guardrails and launch blockers. Do not host unredacted customer documents publicly yet.
+
 Upload scanned delivery tickets to a project -> split into individual tickets -> extract six fields with a vision model -> review/correct/verify -> price -> dashboard, filterable records, Excel export.
 
 Pages: Dashboard, Projects, Upload & Review, Records (filters + filtered export), Suppliers & Pricing.

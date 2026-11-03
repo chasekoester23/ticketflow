@@ -18,6 +18,20 @@ HEADER_FILL = PatternFill("solid", fgColor="1F2937")
 CENTS = Decimal("0.01")
 
 
+def _safe_excel_text(value: str | None) -> str | None:
+    """Prevent supplier-controlled text becoming a spreadsheet formula.
+
+    openpyxl treats leading '=' as a formula. Prefix any spreadsheet formula
+    trigger (including leading whitespace) with a literal apostrophe. Numeric
+    tonnage/prices remain numbers and are never passed through this function.
+    """
+    if value is None:
+        return None
+    if value.lstrip().startswith(("=", "+", "-", "@")) or value.startswith(("\t", "\r", "\n")):
+        return "'" + value
+    return value
+
+
 def ticket_cost(t: Ticket, unit_price: Decimal | None) -> Decimal | None:
     """Exact decimal math, available only for currently verified tickets."""
     if t.status != "verified" or unit_price is None or t.tonnage is None or not t.tonnage_confirmed:
@@ -46,12 +60,12 @@ def build_workbook(tickets: list[Ticket], unit_prices: dict[int, Decimal] | None
         cost = ticket_cost(t, price)
         rows.append((t, price, cost))
         ws.append([
-            t.ticket_number, t.delivery_date, t.material_type,
+            _safe_excel_text(t.ticket_number), t.delivery_date, _safe_excel_text(t.material_type),
             float(t.tonnage) if t.tonnage is not None else None,
-            t.supplier, t.job_location,
+            _safe_excel_text(t.supplier), _safe_excel_text(t.job_location),
             float(price) if price is not None else None,
             float(cost) if cost is not None else None,
-            STATUS_LABEL.get(t.status, t.status), _source_ref(t),
+            STATUS_LABEL.get(t.status, t.status), _safe_excel_text(_source_ref(t)),
         ])
     for r in range(2, ws.max_row + 1):
         ws.cell(r, 2).number_format = "yyyy-mm-dd"
@@ -114,7 +128,7 @@ def _summary_sheet(wb: Workbook, rows) -> None:
             c.font, c.fill = Font(bold=True, color="FFFFFF"), HEADER_FILL
         for name in sorted(groups):
             n, tons, cost = groups[name]
-            ws.append([name, n, float(tons), float(cost)])
+            ws.append([_safe_excel_text(name), n, float(tons), float(cost)])
             ws.cell(ws.max_row, 3).number_format = "#,##0.00"
             ws.cell(ws.max_row, 4).number_format = '"$"#,##0.00'
     ws.column_dimensions["A"].width = 38
