@@ -225,7 +225,7 @@ def _field_verdict(field: str, expected: Any, actual: Any) -> str:
 
 def evaluate(
     cases: list[dict[str, Any]], extractor: Extractor | None = None, *,
-    check_only: bool = False,
+    check_only: bool = False, pause_seconds: float = 0.0, sleep=time.sleep,
 ) -> dict[str, Any]:
     """Benchmark every labeled crop; no real OCR runs in check-only mode.
 
@@ -244,6 +244,10 @@ def evaluate(
             continue
         if extractor is None:
             raise DatasetError("A real extractor must be provided to evaluate")
+        if pause_seconds and outcomes:
+            # Spacing calls keeps free-tier per-minute limits from turning
+            # into "extraction failures" that say nothing about accuracy.
+            sleep(pause_seconds)
         started = time.perf_counter()
         try:
             result, _raw = extractor.extract(image)

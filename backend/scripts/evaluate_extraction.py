@@ -27,7 +27,7 @@ from app.services.evaluation import (  # noqa: E402
 )
 from app.services.extraction import ExtractionError  # noqa: E402
 from app.services.benchmark_providers import (  # noqa: E402
-    DEFAULT_MODELS, make_benchmark_extractor,
+    DEFAULT_MODELS, make_benchmark_extractor, resolve_model,
 )
 
 
@@ -51,7 +51,11 @@ def main() -> int:
         help="Explicit paid benchmark provider (default: gemini)",
     )
     run.add_argument(
-        "--model", help="Optional API model ID; defaults to the current documented candidate",
+        "--model", help="Optional API model ID; Gemini defaults to GEMINI_MODEL from backend/.env",
+    )
+    run.add_argument(
+        "--pause-seconds", type=float, default=0.0,
+        help="Wait between model calls (e.g. 6 for free-tier per-minute limits); 0-120",
     )
 
     args = parser.parse_args()
@@ -70,6 +74,8 @@ def main() -> int:
             print("Remove entries for empty quadrants. Then run 'check' before paid 'run'.")
             return 0
 
+        if args.action == "run" and not 0 <= args.pause_seconds <= 120:
+            raise DatasetError("--pause-seconds must be between 0 and 120")
         cases = load_manifest(args.manifest)
         if args.action == "check":
             results = evaluate(cases, check_only=True)
@@ -87,9 +93,12 @@ def main() -> int:
             raise DatasetError("Accuracy report already exists; choose a new output filename")
         evaluate(cases, check_only=True)
         extractor = make_benchmark_extractor(args.provider, model=args.model)
-        report = evaluate(cases, extractor)
+        report = evaluate(cases, extractor, pause_seconds=args.pause_seconds)
         report["provider"] = args.provider
-        report["model"] = args.model or DEFAULT_MODELS[args.provider]
+        report["model"] = resolve_model(args.provider, args.model)
+        if json.loads(args.manifest.resolve().read_text(encoding="utf-8")).get("synthetic_practice"):
+            # Keep self-written practice results from being mistaken for real-ticket accuracy.
+            report["dataset_kind"] = "synthetic_practice_self_written"
         # A digest permits comparison of reports only when every original
         # human label is unchanged, without copying any sensitive label values.
         report["dataset_sha256"] = hashlib.sha256(
@@ -98,6 +107,9 @@ def main() -> int:
         output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(f"Benchmark: {report['provider']} / {report['model']}, "
               f"{report['tickets']} independently labeled tickets.")
+        if report.get("dataset_kind"):
+            print("NOTE: synthetic, self-written practice tickets. This is a best case, "
+                  "not accuracy on real supplier tickets.")
         print(f"All six fields correct: {report['tickets_all_six_correct']} / {report['tickets']} ({report['ticket_exact_accuracy']:.1%})")
         for field, stats in report["fields"].items():
             print(f"  {field}: {stats['correct']}/{stats['total']} ({stats['exact_accuracy']:.1%}), "
