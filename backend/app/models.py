@@ -5,6 +5,7 @@ Company-owned parent rows and fail-closed read/write scoping enforce tenant isol
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
+from sqlalchemy import false as sa_false
 from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,6 +16,14 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def as_utc(value: datetime | None) -> datetime | None:
+    """SQLite returns stored UTC timestamps without tzinfo; mark them as UTC so
+    browsers do not reinterpret them as local time."""
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
+
+
 class Organization(Base):
     __tablename__ = "organizations"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -22,19 +31,46 @@ class Organization(Base):
 
 
 class User(Base):
+    """One individual person. Shared logins defeat the audit trail."""
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # owner | manager | clerk | viewer -- see app/permissions.py.
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="owner", server_default="owner")
+    display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Set for owner-issued temporary passwords; blocks the API until changed.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_false(),
+    )
+    # NULL for accounts created before this was recorded; never backfilled.
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=utcnow)
 
 
 class LoginSession(Base):
     __tablename__ = "login_sessions"
     token_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), index=True, nullable=False)
+
+
+class AccountEvent(Base):
+    """Immutable record of team/account administration within one company.
+
+    actor_user_id is NULL only for actions taken from a trusted terminal
+    script (e.g. owner password recovery), never for browser actions.
+    """
+    __tablename__ = "account_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    target_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
 class Supplier(Base):
@@ -89,6 +125,8 @@ class Batch(Base):
     intake_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="extract")  # extract | manual
     status: Mapped[str] = mapped_column(String(20), default="uploaded")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # NULL for uploads made before individual accounts existed.
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     files: Mapped[list["UploadedFile"]] = relationship(back_populates="batch", cascade="all, delete-orphan")
 
 
@@ -155,6 +193,11 @@ class Ticket(Base):
     flags: Mapped[list] = mapped_column(JSON, default=list)  # deterministic review flags
     status: Mapped[str] = mapped_column(String(20), default="needs_review")  # needs_review|verified|flagged|skipped|failed
     tonnage_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Who approved the CURRENT verification. Cleared when approval is
+    # withdrawn; the full history stays in audit_events. NULL on a verified
+    # ticket means it was approved before individual accounts existed.
+    verified_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -165,6 +208,8 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    # NULL only for history recorded before individual accounts existed.
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     field: Mapped[str] = mapped_column(String(50))
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -195,6 +240,7 @@ class InvoiceComparison(Base):
     billed_unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
     billed_subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
 
 class InvoiceComparisonEvent(Base):
@@ -204,6 +250,7 @@ class InvoiceComparisonEvent(Base):
     comparison_id: Mapped[int] = mapped_column(
         ForeignKey("invoice_comparisons.id"), nullable=False, index=True
     )
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     field: Mapped[str] = mapped_column(String(60), nullable=False)
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import Base, engine
-from .routers import api, auth as auth_router, invoices, pricing, projects, reports
+from .routers import api, auth as auth_router, invoices, pricing, projects, reports, team
 from .auth import current_user
 
 
@@ -48,6 +48,20 @@ async def lifespan(app: FastAPI):
             "Manual ticket intake migration required: back up backend/ticketflow.db, "
             "then run 'cd backend && python -m alembic upgrade head'."
         )
+    # Individual accounts: roles and actor attribution must exist before any
+    # request is served, otherwise permission checks could not be enforced.
+    inspector = inspect(engine)
+    user_columns = {c["name"] for c in inspector.get_columns("users")}
+    audit_columns = {c["name"] for c in inspector.get_columns("audit_events")}
+    if (
+        not {"role", "must_change_password"}.issubset(user_columns)
+        or "actor_user_id" not in audit_columns
+        or not inspector.has_table("account_events")
+    ):
+        raise RuntimeError(
+            "Team accounts migration required: back up backend/ticketflow.db, "
+            "then run 'cd backend && python -m alembic upgrade head'."
+        )
     yield
 
 
@@ -83,6 +97,7 @@ app.include_router(pricing.router, dependencies=[Depends(current_user)])
 app.include_router(invoices.router, dependencies=[Depends(current_user)])
 app.include_router(projects.router, dependencies=[Depends(current_user)])
 app.include_router(reports.router, dependencies=[Depends(current_user)])
+app.include_router(team.router, dependencies=[Depends(current_user)])
 
 
 @app.get("/health")
