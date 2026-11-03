@@ -4,11 +4,14 @@ One manually entered line per project/supplier/material/date window. Values
 come from the supplier's invoice, NOT guessed by an AI model. Recompute against
 currently approved Ticket rows on every read, using each ticket's locked rate.
 """
+import csv
 from datetime import date
+from io import StringIO
 from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -49,6 +52,8 @@ class TicketMatch(BaseModel):
     ticket_number: str | None
     tons: Decimal | None
     confirmed_price: Decimal | None
+    review_status: str
+    scope_match: Literal["exact", "unclassified"]
 
 
 class InvoiceLineOut(BaseModel):
@@ -246,6 +251,8 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
             TicketMatch(
                 ticket_id=t.id, batch_id=t.batch_id,
                 ticket_number=t.ticket_number, tons=t.tonnage,
+                review_status=t.status,
+                scope_match="exact" if t.id in scoped_ids else "unclassified",
                 confirmed_price=(
                     t.applied_unit_price if t.status == "verified"
                     and t.price_snapshot_state == "priced" else None
@@ -324,3 +331,72 @@ def comparison_history(line_id: int, db: Session = Depends(get_db),
         {"field": e.field, "old": e.old_value, "new": e.new_value, "at": e.created_at}
         for e in events
     ]
+
+
+def _csv_text(value: str | None) -> str:
+    """Make untrusted document text inert when a CSV is opened in Excel.
+
+    CSV quoting alone does not stop spreadsheet formula injection. Preserve the
+    visible source text while preventing formula interpretation by spreadsheet apps.
+    """
+    value = value or ""
+    if value.lstrip().startswith(("=", "+", "-", "@")) or value.startswith(("\t", "\r", "\n")):
+        return "'" + value
+    return value
+
+
+@router.get("/{line_id}/report.csv")
+def export_comparison_report(line_id: int, db: Session = Depends(get_db),
+                             organization_id: int = Depends(current_organization_id)):
+    """Download a human-reviewable snapshot, never a payment authorization."""
+    item = _owned_or_404(db, organization_id, line_id)
+    result = _line_out(db, item, organization_id)
+    output = StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["TicketFlow invoice comparison — NOT approval for payment"])
+    writer.writerow(["Invoice number", _csv_text(result.invoice_number)])
+    writer.writerow(["Project ID", result.project_id])
+    writer.writerow(["Supplier", _csv_text(result.supplier_name)])
+    writer.writerow(["Material", _csv_text(result.material_name)])
+    writer.writerow(["Delivery from", result.date_from.isoformat()])
+    writer.writerow(["Delivery through", result.date_to.isoformat()])
+    writer.writerow(["Comparison status", result.status])
+    writer.writerow(["Invoice tons", str(result.billed_tons)])
+    writer.writerow(["Invoice rate per ton", str(result.billed_unit_price)])
+    writer.writerow(["Invoice material subtotal", str(result.billed_subtotal)])
+    writer.writerow(["Billed tons times rate", str(result.billed_extension)])
+    writer.writerow(["Invoice arithmetic difference", str(result.invoice_arithmetic_difference)])
+    writer.writerow(["Verified tons", str(result.verified_tons)])
+    writer.writerow(["Verified material subtotal",
+                     str(result.verified_subtotal) if result.verified_subtotal is not None else "UNRESOLVED"])
+    writer.writerow(["Billed minus verified tons", str(result.quantity_difference)])
+    writer.writerow(["Billed minus verified subtotal",
+                     str(result.subtotal_difference) if result.subtotal_difference is not None else "UNRESOLVED"])
+    writer.writerow(["Verified ticket count", result.verified_count])
+    writer.writerow(["Pending ticket count", result.pending_count])
+    writer.writerow(["Unclassified ticket count", result.unclassified_count])
+    writer.writerow(["Unpriced ticket count", result.unpriced_count])
+    writer.writerow(["Rate mismatch count", result.rate_mismatch_count])
+    writer.writerow([])
+    writer.writerow(["Review warnings"])
+    for warning in result.warnings:
+        writer.writerow([warning])
+    if not result.warnings:
+        writer.writerow(["No arithmetic discrepancies detected; verify source completeness independently."])
+    writer.writerow([])
+    writer.writerow(["Tickets — potential matches must be classified before relying on totals"])
+    writer.writerow(["Ticket ID", "Batch ID", "Ticket number", "Scope classification",
+                     "Review status", "Ticket tons (not necessarily verified)", "Locked rate (if verified)"])
+    for ticket in result.tickets:
+        writer.writerow([
+            ticket.ticket_id, ticket.batch_id, _csv_text(ticket.ticket_number),
+            ticket.scope_match, ticket.review_status,
+            str(ticket.tons) if ticket.tons is not None else "UNRESOLVED",
+            str(ticket.confirmed_price) if ticket.confirmed_price is not None else "UNRESOLVED",
+        ])
+    return Response(
+        output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="ticketflow-invoice-{line_id}.csv"',
+                 "Cache-Control": "no-store"},
+    )
