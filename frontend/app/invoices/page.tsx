@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  getInvoiceComparisons, getInvoiceHistory, InvoiceLineComparison,
+  downloadInvoiceComparisonReport, getInvoiceComparisons, getInvoiceHistory, InvoiceLineComparison,
   InvoiceLineInput, listMaterials, listProjects, listSuppliers, Material,
   Project, saveInvoiceComparison, Supplier,
 } from "../../lib/api";
@@ -48,6 +48,7 @@ export default function InvoiceComparisonPage() {
   const [selected, setSelected] = useState<number | null>(null);
   const [history, setHistory] = useState<string[] | null>(null);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -119,6 +120,19 @@ export default function InvoiceComparisonPage() {
       setSelected(id);
     } catch (exc) {
       setError((exc as Error).message);
+    }
+  }
+
+  async function downloadReport(id: number) {
+    if (exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      await downloadInvoiceComparisonReport(id);
+    } catch (exc) {
+      setError((exc as Error).message);
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -254,7 +268,15 @@ export default function InvoiceComparisonPage() {
           <h2 className="tf-panel-title">Invoice {chosen.invoice_number} · {chosen.material_name}</h2>
           <p className="tf-panel-description">Current comparison, not an invoice approval or payment recommendation.</p>
         </div>
-        <button type="button" className="tf-secondary-button" onClick={() => void showHistory(chosen.id)}>Correction history</button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="tf-secondary-button" disabled={exporting}
+            onClick={() => void downloadReport(chosen.id)}>
+            {exporting ? "Preparing report…" : "Download CSV report"}
+          </button>
+          <button type="button" className="tf-secondary-button" onClick={() => void showHistory(chosen.id)}>
+            Correction history
+          </button>
+        </div>
       </div>
       <div className="grid gap-5 p-5 md:grid-cols-2">
         <div className="space-y-2 text-[13px]">
@@ -283,9 +305,11 @@ export default function InvoiceComparisonPage() {
       <div className="p-5">
         <p className="mb-3 text-[12px] font-bold text-[#344352]">Tickets in this supplier, material and date range</p>
         {chosen.tickets.length ? <div className="tf-table-wrap"><table className="tf-table">
-          <thead><tr><th>Ticket</th><th>Tons</th><th>Locked rate</th><th>Record</th></tr></thead>
+          <thead><tr><th>Ticket</th><th>Review status</th><th>Scope</th><th>Tons</th><th>Locked rate</th><th>Record</th></tr></thead>
           <tbody>{chosen.tickets.map((ticket) => <tr key={ticket.ticket_id}>
             <td>{ticket.ticket_number ?? "Unnumbered"}</td>
+            <td>{ticket.review_status === "verified" ? "Verified" : "Needs review (" + ticket.review_status.replaceAll("_", " ") + ")"}</td>
+            <td>{ticket.scope_match === "exact" ? "In scope" : "Potential match — classification needed"}</td>
             <td>{ticket.tons ?? "—"}</td>
             <td>{money(ticket.confirmed_price)}</td>
             <td><a href={"/upload?batch=" + ticket.batch_id + "&ticket=" + ticket.ticket_id}>Review ticket →</a></td>
