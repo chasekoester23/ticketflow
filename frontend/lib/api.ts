@@ -190,6 +190,7 @@ export type InvoiceLineInput = {
 export type InvoiceTicketMatch = {
   ticket_id: number; batch_id: number; ticket_number: string | null;
   tons: string | null; confirmed_price: string | null;
+  review_status: string; scope_match: "exact" | "unclassified";
 };
 export type InvoiceLineComparison = InvoiceLineInput & {
   id: number;
@@ -225,4 +226,24 @@ export async function getInvoiceHistory(id: number): Promise<{
   field: string; old: string | null; new: string | null; at: string;
 }[]> {
   return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/audit"))).json();
+}
+
+
+/** Download a tenant-scoped, non-payable invoice reconciliation snapshot. */
+export async function downloadInvoiceComparisonReport(id: number): Promise<void> {
+  const response = await check(await apiFetch(
+    API + "/api/invoice-comparisons/" + id + "/report.csv",
+  ));
+  const url = URL.createObjectURL(await response.blob());
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "ticketflow-invoice-" + id + ".csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    // Allow the browser to finish initiating the download before releasing it.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
