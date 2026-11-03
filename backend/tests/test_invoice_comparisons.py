@@ -14,6 +14,7 @@ from app.auth import current_user
 from app.main import app
 from app.models import Organization, Project, User
 from app.routers import api as api_module
+from .migration_helpers import head_revision
 from .sample_data import make_scan_pdf
 
 
@@ -339,7 +340,7 @@ def test_project_and_company_isolation(client):
 
     app.dependency_overrides[current_user] = lambda: User(
         id=2, organization_id=2, username="other-test-owner",
-        password_hash="fixture", active=True,
+        password_hash="fixture", active=True, role="owner",
     )
     assert client.get("/api/invoice-comparisons").json() == []
     for path in (
@@ -381,7 +382,7 @@ def test_invoice_migration_is_additive_and_keeps_old_tickets(tmp_path):
         conn.commit()
     command.upgrade(cfg, "head")
     with sqlite3.connect(dbpath) as conn:
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261029_06"
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == head_revision()
         assert conn.execute("SELECT name FROM projects WHERE id=1").fetchone()[0] == "Existing project"
         assert conn.execute("SELECT COUNT(*) FROM invoice_comparisons").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM invoice_comparison_events").fetchone()[0] == 0

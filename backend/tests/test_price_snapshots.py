@@ -8,6 +8,7 @@ from alembic import command
 from alembic.config import Config
 from openpyxl import load_workbook
 
+from .migration_helpers import head_revision
 from .sample_data import make_scan_pdf
 
 
@@ -130,7 +131,7 @@ def test_migration_preserves_legacy_verification_without_guessing_rate(tmp_path)
         assert con.execute("SELECT price_snapshot_state FROM tickets WHERE id=1").fetchone()[0] is None
         assert con.execute("SELECT applied_unit_price FROM tickets WHERE id=1").fetchone()[0] is None
         assert con.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == 2
-        assert con.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261029_06"
+        assert con.execute("SELECT version_num FROM alembic_version").fetchone()[0] == head_revision()
 
     # Running the migration twice should be safe/idempotent.
     command.upgrade(cfg, "head")

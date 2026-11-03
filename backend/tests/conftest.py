@@ -1,3 +1,10 @@
+import os
+
+# Tests must NEVER open the developer's real backend/ticketflow.db. Point the
+# global engine at an in-memory database before any app module is imported
+# (an explicit environment variable overrides backend/.env).
+os.environ["DATABASE_URL"] = "sqlite://"
+
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -6,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import db as db_module
+from app import main as main_module
 from app.auth import current_user
 from app.models import Organization, User
 from app.config import settings
@@ -37,7 +45,13 @@ def client(tmp_path, monkeypatch):
     db_module.Base.metadata.create_all(engine)
     with Session() as session:
         session.add(Organization(id=1, name="Test Company"))
+        # A real stored owner, so audit actor IDs refer to an actual account.
+        session.add(User(id=1, organization_id=1, username="test-owner",
+                         display_name="Test Owner", password_hash="fixture",
+                         active=True, role="owner"))
         session.commit()
+    # The app's startup schema checks (and create_all) run on this engine.
+    monkeypatch.setattr(main_module, "engine", engine)
     monkeypatch.setattr(settings, "storage_dir", tmp_path)
     monkeypatch.setattr(api_module, "SessionLocal", Session)
     monkeypatch.setattr(api_module, "get_extractor", lambda: FixtureExtractor())
@@ -59,8 +73,8 @@ def client(tmp_path, monkeypatch):
     # Existing app tests exercise business behavior with a known signed-in
     # single owner. Separate security tests exercise real cookie authorization.
     app.dependency_overrides[current_user] = lambda: User(
-        id=1, organization_id=1, username="test-owner",
-        password_hash="fixture", active=True,
+        id=1, organization_id=1, username="test-owner", display_name="Test Owner",
+        password_hash="fixture", active=True, role="owner", must_change_password=False,
     )
     with TestClient(app) as c:
         c.headers.update({"X-TicketFlow-Request": "1"})
