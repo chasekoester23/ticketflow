@@ -3,7 +3,9 @@
 Every field here comes from fake/manual entries; no real invoices or paid OCR.
 The endpoint compares amounts but NEVER approves an invoice for payment.
 """
+import csv
 from decimal import Decimal
+from io import StringIO
 
 import pytest
 
@@ -266,6 +268,56 @@ def test_rejects_invalid_invoice_inputs_without_writing(client, change):
     assert client.get("/api/invoice-comparisons").json() == []
 
 
+def test_report_csv_includes_review_state_and_sanitizes_spreadsheet_text(client):
+    project = _project(client)
+    _rate(client)
+    bid, tickets = _tickets(client, project)
+    assert client.post(f"/api/tickets/{tickets[0]['id']}/verify").status_code == 200
+
+    # Exact pending matches must be recognizable as unverified in the report.
+    pending_id = tickets[1]["id"]
+    assert client.patch(f"/api/tickets/{pending_id}", json={
+        "material_type": "No. 53 Crushed Stone",
+    }).status_code == 200
+    entry = _post(client, _line(project, invoice_number="=1+1"))
+    assert entry.status_code == 201, entry.text
+    invoice_id = entry.json()["id"]
+    response = client.get(f"/api/invoice-comparisons/{invoice_id}/report.csv")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/csv")
+    assert f"ticketflow-invoice-{invoice_id}.csv" in response.headers["content-disposition"]
+    assert response.headers["cache-control"] == "no-store"
+    rows = list(csv.reader(StringIO(response.text)))
+    assert ["Invoice number", "'=1+1"] in rows
+    assert ["Comparison status", "incomplete"] in rows
+    assert ["Pending ticket count", "1"] in rows
+    assert ["Review warnings"] in rows
+    assert any("still need review" in cell for row in rows for cell in row)
+    assert ["Ticket ID", "Batch ID", "Ticket number", "Scope classification",
+            "Review status", "Ticket tons (not necessarily verified)", "Locked rate (if verified)"] in rows
+    assert any(row[:2] == [str(tickets[0]["id"]), str(bid)] and row[3:5] == ["exact", "verified"]
+               for row in rows)
+    assert any(row[:2] == [str(pending_id), str(bid)] and row[3:5] == ["exact", "needs_review"]
+               for row in rows)
+
+
+def test_report_csv_cannot_hide_unclassified_ticket(client):
+    project = _project(client)
+    _rate(client)
+    response = client.post(
+        "/api/batches",
+        data={"layout": "grid_2x2", "intake_mode": "manual", "project_id": str(project)},
+        files=[("files", ("synthetic.pdf", make_scan_pdf(), "application/pdf"))],
+    )
+    assert response.status_code == 200
+    entry = _post(client, _line(project))
+    assert entry.status_code == 201
+    response = client.get(f"/api/invoice-comparisons/{entry.json()['id']}/report.csv")
+    rows = list(csv.reader(StringIO(response.text)))
+    assert ["Unclassified ticket count", "4"] in rows
+    assert any(row[3:5] == ["unclassified", "needs_review"] for row in rows if len(row) >= 5)
+
+
 def test_project_and_company_isolation(client):
     project = _project(client)
     row = _post(client, _line(project))
@@ -293,6 +345,7 @@ def test_project_and_company_isolation(client):
     for path in (
         f"/api/invoice-comparisons/{foreign_id}",
         f"/api/invoice-comparisons/{foreign_id}/audit",
+        f"/api/invoice-comparisons/{foreign_id}/report.csv",
     ):
         assert client.get(path).status_code == 404
     assert client.put(f"/api/invoice-comparisons/{foreign_id}", json=_line(
