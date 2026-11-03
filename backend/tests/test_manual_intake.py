@@ -162,7 +162,7 @@ def test_manual_intake_schema_migration_preserves_original_batch_state(tmp_path)
     command.upgrade(cfg, "head")
     with sqlite3.connect(dbpath) as db:
         assert db.execute("SELECT intake_mode, status FROM batches WHERE id=12").fetchone() == ("extract", "ready_for_review")
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261029_05"
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261029_06"
 
 
 def test_fictional_demo_generator_is_watermarked_and_wont_overwrite(tmp_path):

@@ -169,3 +169,42 @@ class AuditEvent(Base):
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class InvoiceComparison(Base):
+    """One manually entered supplier invoice MATERIAL line (not a payable).
+
+    Each entry has one project, supplier, material and delivery date range.
+    No AI reads invoices, and comparison never approves payment. Matching is
+    recalculated against the CURRENT verified tickets, not cached balances.
+    """
+    __tablename__ = "invoice_comparisons"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    invoice_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    supplier_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    supplier_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    material_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    material_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    date_from: Mapped[date] = mapped_column(Date, nullable=False)
+    date_to: Mapped[date] = mapped_column(Date, nullable=False)
+    billed_tons: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    billed_unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    billed_subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class InvoiceComparisonEvent(Base):
+    """Immutable edit history; corrections do not silently replace invoice data."""
+    __tablename__ = "invoice_comparison_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    comparison_id: Mapped[int] = mapped_column(
+        ForeignKey("invoice_comparisons.id"), nullable=False, index=True
+    )
+    field: Mapped[str] = mapped_column(String(60), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
