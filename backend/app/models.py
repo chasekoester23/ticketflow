@@ -103,6 +103,27 @@ class SupplierRate(Base):
     material: Mapped[Material] = relationship()
 
 
+class PricingEvent(Base):
+    """Immutable history of supplier, material and unit-rate changes.
+
+    Rates decide the price locked into each ticket at approval, so every
+    change records who made it. Names are snapshotted so history stays
+    readable after a supplier or material is removed.
+    """
+    __tablename__ = "pricing_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # supplier_added | supplier_removed | material_added | material_removed |
+    # rate_set | rate_changed | rate_removed
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    supplier_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    material_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    old_value: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class Project(Base):
     __tablename__ = "projects"
     __table_args__ = (UniqueConstraint("organization_id", "code", name="uq_project_org_code"),)

@@ -39,8 +39,9 @@ uvicorn app.main:app --reload --port 8000
 cd backend
 python scripts/run_worker.py
 
-# Frontend (second terminal) — use Node.js 22 LTS (the CI version).
-# Node 23 currently fails `next build` with "Unexpected end of JSON input".
+# Frontend (second terminal) — use Node.js 22 LTS (the CI version; see frontend/.nvmrc).
+# Node 23 fails `next build` with "Unexpected end of JSON input"; npm warns on other versions.
+# On this Mac Node 22 is at /usr/local/bin:  export PATH=/usr/local/bin:$PATH
 cd frontend
 npm install
 npm run dev                   # http://localhost:3000
@@ -52,6 +53,27 @@ Privacy note: with `EXTRACTION_PROVIDER=gemini` and a valid Gemini key, cropped 
 are sent to the Google Gemini API for extraction. If you explicitly select Anthropic,
 images go to Anthropic instead. **Get document-owner authorization before sending
 real contractor scans to ANY external provider.** Paid/free data-handling policies differ.
+
+## Pilot hardening: pricing history, approvers in exports, page headers
+
+- **Price change history.** Adding or removing a supplier or material, and
+  setting, changing or removing a unit rate, is recorded with the person and
+  time (old and new rate). See **Suppliers & rates → Price change history**.
+  Every role can read it; only managers and owners can change prices.
+  Changes made before this release were not recorded and are not guessed.
+- **Excel exports name the approver.** Two columns are appended at the end
+  (existing columns do not move): *Approved By* and *Approved At (UTC)*.
+  Tickets approved before individual accounts say *Not recorded*; unapproved
+  tickets leave both blank.
+- **Frontend security headers** forbid embedding TicketFlow pages in other
+  sites (clickjacking) and set conservative browser policies.
+
+**Upgrade an existing local installation** (additive migration `20261103_08`,
+which only creates the `pricing_events` table): stop the backend, worker and
+frontend; after the PR is merged run `git checkout main && git pull origin main`;
+back up with `cp backend/ticketflow.db backend/ticketflow-before-pricing-history.db`;
+then `cd backend && source .venv/bin/activate && python -m alembic upgrade head`
+and restart all three.
 
 ## Team accounts, roles and attributable approvals
 

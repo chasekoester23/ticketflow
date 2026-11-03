@@ -2,16 +2,34 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Material, Rate, Supplier, createMaterial, createSupplier, deleteItem,
-  listMaterials, listRates, listSuppliers, saveRate,
+  Material, PricingEventRow, Rate, Supplier, createMaterial, createSupplier, deleteItem,
+  getPricingHistory, listMaterials, listRates, listSuppliers, saveRate,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
+
+const ACTION_LABEL: Record<PricingEventRow["action"], string> = {
+  supplier_added: "Supplier added",
+  supplier_removed: "Supplier removed",
+  material_added: "Material added",
+  material_removed: "Material removed",
+  rate_set: "Rate set",
+  rate_changed: "Rate changed",
+  rate_removed: "Rate removed",
+};
+// Display only: keep the server's decimal string, trimmed to cents where exact.
+const money = (value: string | null) => {
+  if (value === null) return "—";
+  const [whole, frac = ""] = value.split(".");
+  const trimmed = frac.replace(/0+$/, "");
+  return `$${whole}.${trimmed.padEnd(2, "0")}`;
+};
 
 export default function PricingPage() {
   const canManage = useAccount().can("pricing.manage");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [rates, setRates] = useState<Rate[]>([]);
+  const [history, setHistory] = useState<PricingEventRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [newSupplier, setNewSupplier] = useState("");
   const [newMaterial, setNewMaterial] = useState("");
@@ -20,8 +38,8 @@ export default function PricingPage() {
 
   const load = useCallback(async () => {
     try {
-      const [s, m, r] = await Promise.all([listSuppliers(), listMaterials(), listRates()]);
-      setSuppliers(s); setMaterials(m); setRates(r);
+      const [s, m, r, h] = await Promise.all([listSuppliers(), listMaterials(), listRates(), getPricingHistory()]);
+      setSuppliers(s); setMaterials(m); setRates(r); setHistory(h);
       setError(null);
     } catch (e) { setError((e as Error).message); }
   }, []);
@@ -136,6 +154,23 @@ export default function PricingPage() {
         </tr>)}</tbody>
       </table></div>
       {!rates.length && <p className="tf-empty">No unit prices configured. Add a supplier and material above, then save a rate.</p>}
+    </section>
+    <section className="tf-panel">
+      <div className="tf-panel-heading">
+        <div><h2 className="tf-panel-title">Price change history</h2>
+          <p className="tf-panel-description">Who changed the catalog, and when. Changes made before this history existed were not recorded.</p></div>
+      </div>
+      {history.length === 0 ? <p className="tf-empty">No price changes recorded yet.</p> : <div className="tf-table-wrap"><table className="tf-table">
+        <thead><tr><th>When</th><th>Change</th><th className="text-right">Old rate</th><th className="text-right">New rate</th><th>Changed by</th></tr></thead>
+        <tbody>{history.slice(0, 50).map((e) => <tr key={e.id}>
+          <td className="whitespace-nowrap text-[#5d6b7b]">{new Date(e.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</td>
+          <td><span className="font-semibold text-[#263646]">{ACTION_LABEL[e.action] ?? e.action}</span>
+            <span className="ml-2 text-[#5d6b7b]">{[e.supplier, e.material].filter(Boolean).join(" · ")}</span></td>
+          <td className="text-right tabular-nums">{money(e.old)}</td>
+          <td className="text-right font-semibold tabular-nums">{money(e.new)}</td>
+          <td>{e.actor ?? "—"}</td>
+        </tr>)}</tbody>
+      </table></div>}
     </section>
     <p className="text-[11px] leading-5 text-[#768391]">Supplier/material matching ignores case and punctuation. Calculated material costs are verified tons multiplied by the rate locked at acceptance; taxes and delivery charges are excluded.</p>
   </div>;

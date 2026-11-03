@@ -12,7 +12,10 @@ from ..models import Ticket
 HEADERS = [
     "Ticket Number", "Delivery Date", "Material Type", "Tonnage", "Supplier", "Job Location",
     "Unit Price", "Calculated Cost", "Verification Status", "Source File Reference",
+    # Appended (not inserted) so existing column positions never move.
+    "Approved By", "Approved At (UTC)",
 ]
+LEGACY_APPROVER = "Not recorded (approved before individual accounts)"
 STATUS_LABEL = {"verified": "Verified", "needs_review": "Needs review", "failed": "Extraction failed", "skipped": "Skipped", "flagged": "Flagged for review"}
 HEADER_FILL = PatternFill("solid", fgColor="1F2937")
 CENTS = Decimal("0.01")
@@ -43,8 +46,26 @@ def _source_ref(t: Ticket) -> str:
     return f"{t.file.original_name} (page {t.source_page}, ticket {t.position + 1})"
 
 
-def build_workbook(tickets: list[Ticket], unit_prices: dict[int, Decimal] | None = None) -> bytes:
+def _approval(t: Ticket, approvers: dict[int, str]) -> tuple[str | None, object]:
+    """Who approved the CURRENT verification, and when (naive UTC for Excel).
+
+    Blank for unapproved tickets. A verified ticket without a recorded
+    approver predates individual accounts and says so; it is never guessed.
+    """
+    if t.status != "verified":
+        return None, None
+    if t.verified_by_user_id is None:
+        return LEGACY_APPROVER, None
+    name = approvers.get(t.verified_by_user_id, "Unknown account")
+    at = t.verified_at.replace(tzinfo=None) if t.verified_at is not None else None
+    return _safe_excel_text(name), at
+
+
+def build_workbook(tickets: list[Ticket], unit_prices: dict[int, Decimal] | None = None,
+                   approvers: dict[int, str] | None = None) -> bytes:
+    """``approvers`` maps user id -> display name for the exporting company."""
     unit_prices = unit_prices or {}
+    approvers = approvers or {}
     tickets = [t for t in tickets if t.status != "skipped"]
     wb = Workbook()
     ws = wb.active
@@ -59,6 +80,7 @@ def build_workbook(tickets: list[Ticket], unit_prices: dict[int, Decimal] | None
         price = unit_prices.get(t.id)
         cost = ticket_cost(t, price)
         rows.append((t, price, cost))
+        approved_by, approved_at = _approval(t, approvers)
         ws.append([
             _safe_excel_text(t.ticket_number), t.delivery_date, _safe_excel_text(t.material_type),
             float(t.tonnage) if t.tonnage is not None else None,
@@ -66,13 +88,15 @@ def build_workbook(tickets: list[Ticket], unit_prices: dict[int, Decimal] | None
             float(price) if price is not None else None,
             float(cost) if cost is not None else None,
             STATUS_LABEL.get(t.status, t.status), _safe_excel_text(_source_ref(t)),
+            approved_by, approved_at,
         ])
     for r in range(2, ws.max_row + 1):
         ws.cell(r, 2).number_format = "yyyy-mm-dd"
         ws.cell(r, 4).number_format = "#,##0.00"
         ws.cell(r, 7).number_format = '"$"#,##0.00'
         ws.cell(r, 8).number_format = '"$"#,##0.00'
-    for i, w in enumerate([16, 14, 28, 12, 24, 24, 12, 16, 20, 44], start=1):
+        ws.cell(r, 12).number_format = "yyyy-mm-dd hh:mm"
+    for i, w in enumerate([16, 14, 28, 12, 24, 24, 12, 16, 20, 44, 26, 18], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(HEADERS))}{max(ws.max_row, 2)}"
