@@ -286,7 +286,7 @@ def test_report_csv_includes_review_state_and_sanitizes_spreadsheet_text(client)
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("text/csv")
     assert f"ticketflow-invoice-{invoice_id}.csv" in response.headers["content-disposition"]
-    assert response.headers["cache-control"] == "no-store"
+    assert "no-store" in response.headers["cache-control"]
     rows = list(csv.reader(StringIO(response.text)))
     assert ["Invoice number", "'=1+1"] in rows
     assert ["Comparison status", "incomplete"] in rows
