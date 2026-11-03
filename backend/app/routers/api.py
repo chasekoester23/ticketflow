@@ -1,5 +1,6 @@
 import uuid
 import logging
+import os
 import shutil
 from datetime import date
 from decimal import Decimal
@@ -82,16 +83,26 @@ async def create_batch(
             raise HTTPException(404, "Project not found")
         if project.status != "active":
             raise HTTPException(409, "Project is archived; unarchive it to upload more tickets")
+    if len(files) > settings.max_batch_files:
+        raise HTTPException(
+            413,
+            f"Too many files in one batch (limit: {settings.max_batch_files}). "
+            "Split the upload into smaller batches.",
+        )
     # Validate the entire selection BEFORE creating a batch or storing any
     # files. Silently dropping an invalid file is dangerous: a contractor could
     # believe every delivery ticket in the scan was recorded.
     validated: list[tuple[UploadFile, str, str, str]] = []
     rejected: list[str] = []
+    total_bytes = 0
     for up in files:
         original_name = Path(up.filename or "").name or "(unnamed file)"
         ext = Path(original_name).suffix.lower()
         data = await up.read(settings.max_upload_bytes + 1)
-        if ext not in ALLOWED_EXT:
+        total_bytes += len(data)
+        if len(original_name) > 255:
+            rejected.append("A file name exceeds 255 characters; rename the scan before uploading")
+        elif ext not in ALLOWED_EXT:
             rejected.append(f"{original_name}: unsupported file type (PDF, JPG, PNG only)")
         elif not data:
             rejected.append(f"{original_name}: file is empty")
@@ -103,6 +114,12 @@ async def create_batch(
             validated.append((up, original_name, ext, pipeline.sha256_bytes(data)))
         await up.seek(0)
 
+    if total_bytes > settings.max_batch_total_bytes:
+        raise HTTPException(
+            413,
+            f"Batch exceeds {settings.max_batch_total_bytes // (1024 * 1024)} MB total. "
+            "Split the upload into smaller batches; no files were processed.",
+        )
     if rejected:
         raise HTTPException(400, "Upload rejected; no files were processed. Remove or replace: " + "; ".join(rejected))
     if not validated:
@@ -115,12 +132,14 @@ async def create_batch(
         db.add(batch)
         db.flush()
         upload_dir = settings.storage_dir / "uploads" / str(batch.id)
-        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         for up, original_name, ext, checksum in validated:
             internal = upload_dir / f"{uuid.uuid4().hex}{ext}"
-            # Read each validated file individually so large multi-file
-            # selections aren't retained in application memory simultaneously.
-            internal.write_bytes(await up.read())
+            # Read each validated file individually. O_EXCL and mode 0600
+            # prevent overwrites and world-readable contractor scans.
+            fd = os.open(internal, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(await up.read())
             db.add(UploadedFile(
                 batch_id=batch.id, original_name=original_name,
                 storage_path=str(internal), sha256=checksum,

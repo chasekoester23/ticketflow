@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends, Request
 from sqlalchemy import inspect
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import settings
 from .db import Base, engine
@@ -13,6 +14,8 @@ from .auth import current_user
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not settings.trusted_hosts or any("*" in host for host in settings.trusted_hosts):
+        raise RuntimeError("TRUSTED_HOSTS must list explicit API hostnames, never wildcards.")
     if not settings.session_secure_cookie and any(
         not origin.startswith(("http://localhost:", "http://127.0.0.1:"))
         for origin in settings.cors_origins
@@ -56,6 +59,9 @@ app.add_middleware(
     CORSMiddleware, allow_origins=settings.cors_origins,
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
+app.add_middleware(
+    TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts, www_redirect=False,
+)
 
 
 @app.middleware("http")
@@ -70,6 +76,8 @@ async def csrf_header_gate(request: Request, call_next):
             return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
     if request.url.path.startswith("/api/"):
         # No browser/proxy cache may serve a previous owner's tickets, images,
         # financial summaries, or login responses.

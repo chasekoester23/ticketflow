@@ -4,6 +4,7 @@ Each file is processed independently, so one bad PDF never fails the whole batch
 """
 import hashlib
 import logging
+import os
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -23,8 +24,13 @@ def sha256_bytes(data: bytes) -> str:
 
 def _pages_for(file: UploadedFile, data: bytes):
     if file.original_name.lower().endswith(".pdf"):
-        return splitter.render_pdf_pages(data, dpi=settings.render_dpi)
-    return [splitter.load_image(data)]
+        return splitter.render_pdf_pages(
+            data, dpi=settings.render_dpi,
+            max_pages=settings.max_pdf_pages,
+            max_page_pixels=settings.max_rendered_page_pixels,
+            max_total_pixels=settings.max_total_pdf_pixels,
+        )
+    return [splitter.load_image(data, max_pixels=settings.max_image_pixels)]
 
 
 def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extractor | None, *, manual: bool = False) -> None:
@@ -45,7 +51,7 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
     visited: set[tuple[int, int]] = set()
 
     crops_dir = settings.storage_dir / "crops" / str(file.batch_id)
-    crops_dir.mkdir(parents=True, exist_ok=True)
+    crops_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     any_failure = False
     detected_crops = 0
 
@@ -61,7 +67,12 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
                 continue  # never overwrite review work on an existing ticket
 
             path = crops_dir / f"f{file.id}_p{page_no}_c{crop.position}.png"
-            crop.image.save(path, format="PNG")
+            # Crops contain private job documents; don't create world-readable
+            # images under a permissive process umask.
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as stream:
+                crop.image.save(stream, format="PNG")
+            path.chmod(0o600)
             if ticket is None:
                 ticket = Ticket(
                     batch_id=file.batch_id, file_id=file.id,
