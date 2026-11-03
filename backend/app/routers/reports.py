@@ -15,6 +15,7 @@ from ..schemas import TicketOut
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
 from ..services import pricing as pricing_svc
+from ..services.accounts import names_by_id
 from .api import _out
 
 router = APIRouter(prefix="/api")
@@ -73,7 +74,7 @@ def export_records(
                           status=status, date_from=date_from, date_to=date_to)
     prices = {t.id: p for t in ts if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
     return Response(
-        export_svc.build_workbook(ts, prices),
+        export_svc.build_workbook(ts, prices, names_by_id(db, organization_id)),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="delivery-records.xlsx"'})
 

@@ -458,7 +458,7 @@ def export_batch(batch_id: int, db: Session = Depends(get_db), organization_id: 
         select(Ticket).where(Ticket.batch_id == batch_id).order_by(Ticket.file_id, Ticket.source_page, Ticket.position)).all()
     table = pricing_svc.rate_table(db, organization_id)
     prices = {t.id: p for t in tickets if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
-    data = export_svc.build_workbook(list(tickets), prices)
+    data = export_svc.build_workbook(list(tickets), prices, names_by_id(db, organization_id))
     return Response(
         data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="delivery-records-batch-{batch_id}.xlsx"'})

@@ -4,7 +4,7 @@ Tests use fictional scans and never invoke real AI providers.
 """
 import io
 import stat
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -132,10 +132,15 @@ def test_excel_export_neutralizes_formulas_but_keeps_numeric_values():
         file=SimpleNamespace(original_name="=WEBSERVICE(\"https://example.test\").pdf"),
         source_page=1,
         position=0,
+        verified_by_user_id=9,
+        verified_at=datetime(2026, 10, 16, 15, 4),
     )
-    workbook = load_workbook(io.BytesIO(build_workbook([ticket], {123: Decimal("2.00")})))
+    # A person's display name is user-controlled text too.
+    workbook = load_workbook(io.BytesIO(build_workbook(
+        [ticket], {123: Decimal("2.00")}, {9: "=cmd|' /C calc'!A0"},
+    )))
     sheet = workbook["Delivery Records"]
-    for letter in ("A", "C", "E", "F", "J"):
+    for letter in ("A", "C", "E", "F", "J", "K"):
         cell = sheet[f"{letter}2"]
         assert cell.data_type != "f", (letter, cell.value)
         assert cell.value.startswith("'"), (letter, cell.value)

@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
-from ..models import Material, Supplier, SupplierRate, User
+from ..models import Material, PricingEvent, Supplier, SupplierRate, User, as_utc
+from ..services.accounts import names_by_id
 
 router = APIRouter(prefix="/api")
 
@@ -42,6 +43,28 @@ def _dump(o, *fields):
     return {f: getattr(o, f) for f in fields}
 
 
+PRICE_PLACES = Decimal("0.0001")
+
+
+def _price(value: Decimal | None) -> str | None:
+    return None if value is None else str(Decimal(value).quantize(PRICE_PLACES))
+
+
+def _event(db: Session, user: User, action: str, *, supplier: str | None = None,
+           material: str | None = None, old: Decimal | None = None, new: Decimal | None = None) -> None:
+    """Record a pricing change in the caller's transaction (rolled back with it)."""
+    db.add(PricingEvent(
+        organization_id=user.organization_id, actor_user_id=user.id, action=action,
+        supplier_name=supplier, material_name=material, old_value=_price(old), new_value=_price(new),
+    ))
+
+
+def _remove_rates(db: Session, user: User, rates) -> None:
+    for r in rates:
+        _event(db, user, "rate_removed", supplier=r.supplier.name, material=r.material.name, old=r.unit_price)
+        db.delete(r)
+
+
 @router.get("/suppliers")
 def list_suppliers(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     return [_dump(s, "id", "name", "contact") for s in db.scalars(select(Supplier).where(Supplier.organization_id == organization_id).order_by(Supplier.name))]
@@ -49,9 +72,9 @@ def list_suppliers(db: Session = Depends(get_db), organization_id: int = Depends
 
 @router.post("/suppliers", status_code=201)
 def create_supplier(body: SupplierIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
-    organization_id = user.organization_id
-    s = Supplier(organization_id=organization_id, name=body.name.strip(), contact=body.contact)
+    s = Supplier(organization_id=user.organization_id, name=body.name.strip(), contact=body.contact)
     db.add(s)
+    _event(db, user, "supplier_added", supplier=s.name)
     try:
         db.commit()
     except IntegrityError:
@@ -66,8 +89,9 @@ def delete_supplier(sid: int, db: Session = Depends(get_db), user: User = Depend
     s = db.scalar(select(Supplier).where(Supplier.id == sid, Supplier.organization_id == organization_id))
     if not s:
         raise HTTPException(404, "Supplier not found")
-    for r in db.scalars(select(SupplierRate).where(SupplierRate.supplier_id == sid, SupplierRate.organization_id == organization_id)):
-        db.delete(r)
+    _remove_rates(db, user, db.scalars(select(SupplierRate).where(
+        SupplierRate.supplier_id == sid, SupplierRate.organization_id == organization_id)))
+    _event(db, user, "supplier_removed", supplier=s.name)
     db.delete(s)
     db.commit()
 
@@ -79,9 +103,9 @@ def list_materials(db: Session = Depends(get_db), organization_id: int = Depends
 
 @router.post("/materials", status_code=201)
 def create_material(body: MaterialIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
-    organization_id = user.organization_id
-    m = Material(organization_id=organization_id, name=body.name.strip(), unit=body.unit)
+    m = Material(organization_id=user.organization_id, name=body.name.strip(), unit=body.unit)
     db.add(m)
+    _event(db, user, "material_added", material=m.name)
     try:
         db.commit()
     except IntegrityError:
@@ -96,8 +120,9 @@ def delete_material(mid: int, db: Session = Depends(get_db), user: User = Depend
     m = db.scalar(select(Material).where(Material.id == mid, Material.organization_id == organization_id))
     if not m:
         raise HTTPException(404, "Material not found")
-    for r in db.scalars(select(SupplierRate).where(SupplierRate.material_id == mid, SupplierRate.organization_id == organization_id)):
-        db.delete(r)
+    _remove_rates(db, user, db.scalars(select(SupplierRate).where(
+        SupplierRate.material_id == mid, SupplierRate.organization_id == organization_id)))
+    _event(db, user, "material_removed", material=m.name)
     db.delete(m)
     db.commit()
 
@@ -110,32 +135,56 @@ def list_rates(db: Session = Depends(get_db), organization_id: int = Depends(cur
 @router.put("/rates", response_model=RateOut)
 def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
     organization_id = user.organization_id
-    if not db.scalar(select(Supplier.id).where(
-        Supplier.id == body.supplier_id, Supplier.organization_id == organization_id
-    )) or not db.scalar(select(Material.id).where(
-        Material.id == body.material_id, Material.organization_id == organization_id
-    )):
+    supplier = db.scalar(select(Supplier).where(
+        Supplier.id == body.supplier_id, Supplier.organization_id == organization_id))
+    material = db.scalar(select(Material).where(
+        Material.id == body.material_id, Material.organization_id == organization_id))
+    if supplier is None or material is None:
         raise HTTPException(404, "Supplier or material not found")
     rate = db.scalar(select(SupplierRate).where(
         SupplierRate.supplier_id == body.supplier_id,
         SupplierRate.material_id == body.material_id,
         SupplierRate.organization_id == organization_id))
     if rate:
-        rate.unit_price = body.unit_price
+        if rate.unit_price != body.unit_price:
+            _event(db, user, "rate_changed", supplier=supplier.name, material=material.name,
+                   old=rate.unit_price, new=body.unit_price)
+            rate.unit_price = body.unit_price
     else:
         rate = SupplierRate(organization_id=organization_id, **body.model_dump())
         db.add(rate)
+        _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=body.unit_price)
     db.commit()
     return rate
 
 
 @router.delete("/rates/{rid}", status_code=204)
 def delete_rate(rid: int, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
-    organization_id = user.organization_id
     r = db.scalar(select(SupplierRate).where(
-        SupplierRate.id == rid, SupplierRate.organization_id == organization_id
+        SupplierRate.id == rid, SupplierRate.organization_id == user.organization_id
     ))
     if not r:
         raise HTTPException(404, "Rate not found")
-    db.delete(r)
+    _remove_rates(db, user, [r])
     db.commit()
+
+
+@router.get("/pricing/history")
+def pricing_history(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    """Newest 200 supplier/material/rate changes in this company.
+
+    Readable by every role: anyone relying on a ticket's cost can see when and
+    by whom the rate behind it changed. Changes before this history existed
+    were not recorded and are not reconstructed.
+    """
+    people = names_by_id(db, organization_id)
+    events = db.scalars(
+        select(PricingEvent).where(PricingEvent.organization_id == organization_id)
+        .order_by(PricingEvent.id.desc()).limit(200)
+    ).all()
+    return [
+        {"id": e.id, "action": e.action, "supplier": e.supplier_name, "material": e.material_name,
+         "old": e.old_value, "new": e.new_value, "at": as_utc(e.created_at),
+         "actor": people.get(e.actor_user_id) if e.actor_user_id else None}
+        for e in events
+    ]
