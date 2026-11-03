@@ -2,10 +2,10 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { getAuthMe, logOut } from "../lib/api";
+import { getAuthMe, logOut, type Account, type Permission } from "../lib/api";
+import { AccountContext } from "./account-context";
 
-type Owner = { id: number; username: string; organization_name?: string | null };
-type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers";
+type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "team" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers";
 
 function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
@@ -15,6 +15,7 @@ function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
     records: <><path d="M4 4h16v16H4zM4 10h16M9 10v10M12 6h5M12 14h5M12 17h4" /></>,
     rates: <><rect x="3" y="6" width="18" height="15" rx="1.5" /><path d="M7 6V3h10v3M3 12h18M7 16h4" /></>,
     invoices: <><path d="M5 3h14v18l-3-2-4 2-4-2-3 2zM8 8h8M8 12h8M8 16h5" /></>,
+    team: <><circle cx="9" cy="8" r="3.2" /><path d="M3.5 20c.6-3.4 2.8-5.3 5.5-5.3s4.9 1.9 5.5 5.3M15.5 5.2a3 3 0 0 1 0 5.6M17.5 14.9c1.6.6 2.7 2.3 3 5.1" /></>,
     menu: <path d="M4 7h16M4 12h16M4 17h16" />,
     close: <path d="M5 5l14 14M19 5L5 19" />,
     arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
@@ -25,23 +26,28 @@ function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
-const links: { href: string; label: string; icon: IconName; description?: string }[] = [
+const links: { href: string; label: string; icon: IconName; requires?: Permission }[] = [
   { href: "/", label: "Overview", icon: "overview" },
   { href: "/projects", label: "Projects", icon: "projects" },
   { href: "/upload", label: "Ticket intake", icon: "tickets" },
   { href: "/records", label: "Delivery records", icon: "records" },
   { href: "/invoices", label: "Invoice comparison", icon: "invoices" },
   { href: "/pricing", label: "Suppliers & rates", icon: "rates" },
+  { href: "/team", label: "Team", icon: "team", requires: "team.manage" },
 ];
+const pageTitles: Record<string, string> = { "/account": "Account settings" };
 
 export default function AuthShell({ children }: { children: ReactNode }) {
-  const [owner, setOwner] = useState<Owner | null>(null);
+  const [account, setAccount] = useState<Account | null>(null);
   const [checking, setChecking] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
   const isLogin = pathname === "/login";
   const current = links.find((l) => l.href === pathname);
-  const initial = (owner?.username?.[0] || "U").toUpperCase();
+  const visibleLinks = links.filter((l) => !l.requires || account?.permissions?.includes(l.requires));
+  const personName = account?.display_name || account?.username || "";
+  const initial = (personName[0] || "U").toUpperCase();
+  const mustChangePassword = Boolean(account?.must_change_password);
 
   useEffect(() => {
     if (isLogin) {
@@ -49,11 +55,15 @@ export default function AuthShell({ children }: { children: ReactNode }) {
       return;
     }
     let cancelled = false;
-    getAuthMe().then((account) => {
-      if (!cancelled) {
-        setOwner(account);
-        setChecking(false);
+    getAuthMe().then((me) => {
+      if (cancelled) return;
+      // A temporary password issued by an owner must be replaced first.
+      if (me.must_change_password && window.location.pathname !== "/account") {
+        window.location.replace("/account");
+        return;
       }
+      setAccount(me);
+      setChecking(false);
     }).catch(() => {
       if (!cancelled) window.location.replace("/login");
     });
@@ -63,7 +73,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   useEffect(() => { setMenuOpen(false); }, [pathname]);
 
   if (isLogin) return <main className="tf-login-layout">{children}</main>;
-  if (checking || !owner) {
+  if (checking || !account) {
     return <main className="flex min-h-screen items-center justify-center bg-[#f4f5f6] text-sm text-slate-600" role="status">
       Checking your TicketFlow session…
     </main>;
@@ -79,7 +89,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
       <div className="tf-sidebar-divider" />
       <p className="tf-sidebar-section">WORKSPACE</p>
       <nav aria-label="Main navigation" className="tf-nav">
-        {links.map(({ href, label, icon }) => {
+        {!mustChangePassword && visibleLinks.map(({ href, label, icon }) => {
           const active = pathname === href;
           return <a key={href} href={href} aria-current={active ? "page" : undefined}
             className={`tf-nav-link ${active ? "tf-nav-link-active" : ""}`}
@@ -103,22 +113,26 @@ export default function AuthShell({ children }: { children: ReactNode }) {
           <div className="tf-topbar-context">
             <span className="tf-topbar-parent">Workspace</span>
             <Icon name="chevron" size={14} />
-            <strong>{current?.label ?? "TicketFlow"}</strong>
+            <strong>{current?.label ?? pageTitles[pathname] ?? "TicketFlow"}</strong>
           </div>
         </div>
         <div className="tf-topbar-right">
-          <span className="tf-organization-name" title={owner.organization_name ?? "Workspace"}>
-            {owner.organization_name ?? "Workspace"}
+          <span className="tf-organization-name" title={account.organization_name ?? "Workspace"}>
+            {account.organization_name ?? "Workspace"}
           </span>
-          <span className="tf-account-avatar" aria-hidden="true">{initial}</span>
-          <span className="tf-account-name">{owner.username}</span>
+          <a href="/account" className="tf-account-link" title="Account settings">
+            <span className="tf-account-avatar" aria-hidden="true">{initial}</span>
+            <span className="tf-account-name">{personName}<small>{account.role_label}</small></span>
+          </a>
           <button type="button" className="tf-sign-out" aria-label="Sign out" title="Sign out"
             onClick={async () => {
               try { await logOut(); } finally { window.location.replace("/login"); }
             }}><Icon name="logout" size={18} /><span>Sign out</span></button>
         </div>
       </header>
-      <main id="main-content" className="tf-main">{children}</main>
+      <AccountContext.Provider value={account}>
+        <main id="main-content" className="tf-main">{children}</main>
+      </AccountContext.Provider>
     </div>
   </div>;
 }

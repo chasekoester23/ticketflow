@@ -11,13 +11,31 @@ async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> 
   return fetch(url, { ...init, headers, credentials: "include", cache: "no-store" });
 }
 
-export type Owner = { id: number; username: string; organization_name?: string | null };
+export type Role = "owner" | "manager" | "clerk" | "viewer";
+export type Permission =
+  | "records.read" | "tickets.upload" | "tickets.edit" | "tickets.flag" | "tickets.verify"
+  | "tickets.skip" | "tickets.price_override" | "projects.manage" | "pricing.manage"
+  | "invoices.manage" | "team.manage";
+export type Account = {
+  id: number;
+  username: string;
+  display_name: string | null;
+  role: Role;
+  role_label: string;
+  permissions: Permission[];
+  must_change_password: boolean;
+  organization_name: string | null;
+};
 
-export async function getAuthMe(): Promise<Owner> {
+export async function getAuthMe(): Promise<Account> {
   return (await check(await apiFetch(`${API}/api/auth/me`))).json();
 }
 
-export async function logIn(username: string, password: string): Promise<Owner> {
+export async function changePassword(current_password: string, new_password: string): Promise<Account> {
+  return (await check(await apiFetch(`${API}/api/auth/password`, json("POST", { current_password, new_password })))).json();
+}
+
+export async function logIn(username: string, password: string): Promise<Account> {
   return (await check(await apiFetch(`${API}/api/auth/login`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
@@ -53,7 +71,14 @@ export type Ticket = {
   cost: string | null;
   duplicates: string[];
   pricing_notes: string[];
+  verified_by: string | null; // null when unverified or approved before individual accounts
+  verified_at: string | null;
 };
+export type HistoryEntry = { field: string; old: string | null; new: string | null; at: string; actor: string | null };
+
+export async function getTicketHistory(id: number): Promise<HistoryEntry[]> {
+  return (await check(await apiFetch(`${API}/api/tickets/${id}/audit`))).json();
+}
 export type Supplier = { id: number; name: string; contact: string | null };
 export type Material = { id: number; name: string; unit: string };
 export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string };
@@ -63,7 +88,18 @@ async function check(res: Response) {
     let detail = res.statusText;
     try {
       const body = await res.json();
-      detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (body.detail && typeof body.detail.message === "string") {
+        detail = body.detail.message;
+        // A temporary password must be replaced before any other work.
+        if (body.detail.code === "password_change_required" && typeof window !== "undefined"
+          && window.location.pathname !== "/account") {
+          window.location.replace("/account");
+        }
+      } else {
+        detail = JSON.stringify(body.detail);
+      }
     } catch {}
     throw new Error(detail);
   }
@@ -222,9 +258,7 @@ export async function saveInvoiceComparison(
     json(id !== undefined ? "PUT" : "POST", body),
   ))).json();
 }
-export async function getInvoiceHistory(id: number): Promise<{
-  field: string; old: string | null; new: string | null; at: string;
-}[]> {
+export async function getInvoiceHistory(id: number): Promise<HistoryEntry[]> {
   return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/audit"))).json();
 }
 
@@ -246,4 +280,39 @@ export async function downloadInvoiceComparisonReport(id: number): Promise<void>
     // Allow the browser to finish initiating the download before releasing it.
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+}
+
+
+// ---- Team administration (owner only; enforced by the server) ----
+export type TeamMember = {
+  id: number;
+  username: string;
+  display_name: string | null;
+  role: Role;
+  role_label: string;
+  active: boolean;
+  must_change_password: boolean;
+  created_at: string | null;
+  is_you: boolean;
+};
+export type IssuedPassword = { member: TeamMember; temporary_password: string };
+export type AccountEventRow = {
+  id: number; action: string; old: string | null; new: string | null; at: string;
+  actor: string | null; actor_kind: "person" | "terminal"; target: string | null;
+};
+
+export async function listTeam(): Promise<TeamMember[]> {
+  return (await check(await apiFetch(`${API}/api/team/members`))).json();
+}
+export async function addTeamMember(body: { username: string; display_name?: string; role: Role }): Promise<IssuedPassword> {
+  return (await check(await apiFetch(`${API}/api/team/members`, json("POST", body)))).json();
+}
+export async function updateTeamMember(id: number, body: { role?: Role; active?: boolean; display_name?: string | null }): Promise<TeamMember> {
+  return (await check(await apiFetch(`${API}/api/team/members/${id}`, json("PATCH", body)))).json();
+}
+export async function resetTeamMemberPassword(id: number): Promise<IssuedPassword> {
+  return (await check(await apiFetch(`${API}/api/team/members/${id}/reset-password`, { method: "POST" }))).json();
+}
+export async function listAccountEvents(): Promise<AccountEventRow[]> {
+  return (await check(await apiFetch(`${API}/api/team/events`))).json();
 }

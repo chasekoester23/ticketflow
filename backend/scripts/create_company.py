@@ -53,7 +53,8 @@ def main() -> int:
             organization = Organization(name=name)
             db.add(organization)
             db.flush()
-            db.add(User(organization_id=organization.id, username=username, password_hash=encoded))
+            db.add(User(organization_id=organization.id, username=username,
+                         password_hash=encoded, role="owner"))
             db.commit()
         except IntegrityError:
             db.rollback()

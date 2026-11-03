@@ -2,7 +2,7 @@ import uuid
 import logging
 import os
 import shutil
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -14,12 +14,14 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..config import settings
 from ..db import SessionLocal, get_db
-from ..models import AuditEvent, Batch, Project, Ticket, UploadedFile
+from ..models import AuditEvent, Batch, Project, Ticket, UploadedFile, User, as_utc
+from ..permissions import has_permission, require
 from ..schemas import BatchOut, TicketOut, TicketPatch
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
 from ..services import pipeline, jobqueue
 from ..services import pricing as pricing_svc
+from ..services.accounts import names_by_id
 from ..services.extraction import ExtractionError, get_extractor
 from ..services.validation import compute_flags
 
@@ -68,9 +70,10 @@ async def create_batch(
     intake_mode: str = Form("extract"),
     project_id: int | None = Form(None),
     files: list[UploadFile] = File(...),
-    organization_id: int = Depends(current_organization_id),
+    user: User = Depends(require("tickets.upload")),
     db: Session = Depends(get_db),
 ):
+    organization_id = user.organization_id
     if layout not in ("single", "grid_2x2"):
         raise HTTPException(422, "layout must be 'single' or 'grid_2x2'")
     if intake_mode not in ("extract", "manual"):
@@ -126,7 +129,8 @@ async def create_batch(
         raise HTTPException(400, "No valid files were provided")
 
     batch = Batch(layout=layout, intake_mode=intake_mode, status="uploaded",
-                  project_id=project_id, organization_id=organization_id)
+                  project_id=project_id, organization_id=organization_id,
+                  created_by_user_id=user.id)
     upload_dir = None
     try:
         db.add(batch)
@@ -174,7 +178,9 @@ def get_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int
 
 
 @router.post("/batches/{batch_id}/retry", response_model=BatchOut)
-def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db),
+                user: User = Depends(require("tickets.upload"))):
+    organization_id = user.organization_id
     batch = db.scalar(select(Batch).where(
         Batch.id == batch_id, Batch.organization_id == organization_id
     ))
@@ -213,8 +219,9 @@ def list_tickets(batch_id: int, db: Session = Depends(get_db), organization_id: 
     table = pricing_svc.rate_table(db, organization_id)
     index = dup_svc.load_index(db, organization_id)
     names = pricing_svc.catalog_names(db, organization_id)
+    people = names_by_id(db, organization_id)
     return [
-        _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names)
+        _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names, people=people)
         for ticket in db.scalars(q).all()
     ]
 
@@ -223,6 +230,7 @@ def _out(
     db: Session, t: Ticket, organization_id: int, table=None, *,
     duplicate_index: dup_svc.DuplicateIndex | None = None,
     catalog: tuple[set[str], set[str]] | None = None,
+    people: dict[int, str] | None = None,
 ) -> TicketOut:
     """Ticket plus pricing and duplicates, reusing per-list data when supplied."""
     table = table if table is not None else pricing_svc.rate_table(db, organization_id)
@@ -241,6 +249,30 @@ def _out(
         duplicates=(duplicate_index.find(t) if duplicate_index is not None
                     else dup_svc.find_duplicates(db, t, organization_id)),
         pricing_notes=notes,
+        verified_by=_verified_by(db, t, organization_id, people),
+    ))
+
+
+def _verified_by(db: Session, t: Ticket, organization_id: int,
+                 people: dict[int, str] | None) -> str | None:
+    if t.status != "verified" or t.verified_by_user_id is None:
+        return None
+    if people is None:
+        people = names_by_id(db, organization_id)
+    return people.get(t.verified_by_user_id)
+
+
+def _withdraw_approval(t: Ticket) -> None:
+    """Clear the current approver; the audit trail keeps who approved before."""
+    t.verified_by_user_id = None
+    t.verified_at = None
+
+
+def _audit(db: Session, t: Ticket, user: User, field: str, old, new) -> None:
+    db.add(AuditEvent(
+        ticket_id=t.id, actor_user_id=user.id, field=field,
+        old_value=None if old is None else str(old),
+        new_value=None if new is None else str(new),
     ))
 
 
@@ -262,9 +294,18 @@ def _refresh_flags(t: Ticket) -> None:
 
 
 @router.patch("/tickets/{ticket_id}", response_model=TicketOut)
-def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_db),
+                 user: User = Depends(require("tickets.edit"))):
+    organization_id = user.organization_id
     t = _ticket_or_404(db, ticket_id, organization_id)
     changes = patch.model_dump(exclude_unset=True)
+    if (
+        "unit_price_override" in changes
+        and changes["unit_price_override"] != t.unit_price_override
+        and not has_permission(user, "tickets.price_override")
+    ):
+        # A price override changes locked project cost; it is a manager decision.
+        raise HTTPException(403, "Your role does not allow changing a ticket's unit price.")
     changed = False
     for field, new in changes.items():
         if isinstance(new, str):
@@ -277,8 +318,7 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
         if old == new:
             continue
         changed = True
-        db.add(AuditEvent(ticket_id=t.id, field=field, old_value=None if old is None else str(old),
-                          new_value=None if new is None else str(new)))
+        _audit(db, t, user, field, old, new)
         setattr(t, field, new)
         if field == "tonnage":  # a changed quantity must be re-confirmed
             t.tonnage_confirmed = False
@@ -286,6 +326,7 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
             # Any changed field (including price) invalidates the previous approval.
             t.status = "needs_review"
             t.tonnage_confirmed = False
+            _withdraw_approval(t)
     if t.status == "failed" and changed:
         t.status, t.error = "needs_review", None  # manual entry recovers a failed extraction
     if changed:
@@ -300,7 +341,9 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
 
 
 @router.post("/tickets/{ticket_id}/verify", response_model=TicketOut)
-def verify_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def verify_ticket(ticket_id: int, db: Session = Depends(get_db),
+                  user: User = Depends(require("tickets.verify"))):
+    organization_id = user.organization_id
     t = _ticket_or_404(db, ticket_id, organization_id)
     # Validate the current values rather than trusting stale extraction flags.
     _refresh_flags(t)
@@ -339,26 +382,28 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id
             return _out(db, t, organization_id)  # repeated verify must not reprice an approved ticket
 
     price, source = pricing_svc.unit_price_for(t, pricing_svc.rate_table(db, organization_id))
-    db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="verified"))
-    db.add(AuditEvent(
-        ticket_id=t.id, field="verified_unit_price",
-        old_value=None, new_value=None if price is None else str(price),
-    ))
+    _audit(db, t, user, "status", t.status, "verified")
+    _audit(db, t, user, "verified_unit_price", None, price)
     t.applied_unit_price = price
     t.applied_price_source = source
     t.price_snapshot_state = "priced" if price is not None else "unpriced"
     t.status, t.tonnage_confirmed = "verified", True
+    t.verified_by_user_id = user.id
+    t.verified_at = datetime.now(timezone.utc)
     db.commit()
     return _out(db, t, organization_id)
 
 
 @router.post("/tickets/{ticket_id}/flag", response_model=TicketOut)
-def flag_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def flag_ticket(ticket_id: int, db: Session = Depends(get_db),
+                user: User = Depends(require("tickets.flag"))):
     """Defer a questionable ticket without approving its quantity or cost."""
+    organization_id = user.organization_id
     t = _ticket_or_404(db, ticket_id, organization_id)
     if t.status != "flagged":
-        db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="flagged"))
+        _audit(db, t, user, "status", t.status, "flagged")
     t.status = "flagged"
+    _withdraw_approval(t)
     t.tonnage_confirmed = False
     t.price_snapshot_state = "pending"
     t.applied_unit_price = None
@@ -368,10 +413,13 @@ def flag_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: 
 
 
 @router.post("/tickets/{ticket_id}/skip", response_model=TicketOut)
-def skip_ticket(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def skip_ticket(ticket_id: int, db: Session = Depends(get_db),
+                user: User = Depends(require("tickets.skip"))):
+    organization_id = user.organization_id
     t = _ticket_or_404(db, ticket_id, organization_id)
-    db.add(AuditEvent(ticket_id=t.id, field="status", old_value=t.status, new_value="skipped"))
+    _audit(db, t, user, "status", t.status, "skipped")
     t.status = "skipped"
+    _withdraw_approval(t)
     t.tonnage_confirmed = False
     t.price_snapshot_state = "pending"
     t.applied_unit_price = None
@@ -390,7 +438,14 @@ def ticket_image(ticket_id: int, db: Session = Depends(get_db), organization_id:
 def ticket_audit(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     _ticket_or_404(db, ticket_id, organization_id)
     events = db.scalars(select(AuditEvent).where(AuditEvent.ticket_id == ticket_id).order_by(AuditEvent.id)).all()
-    return [{"field": e.field, "old": e.old_value, "new": e.new_value, "at": e.created_at} for e in events]
+    people = names_by_id(db, organization_id)
+    # actor None means the change predates individual accounts; it is never
+    # attributed after the fact to whoever owns the workspace today.
+    return [
+        {"field": e.field, "old": e.old_value, "new": e.new_value, "at": as_utc(e.created_at),
+         "actor": people.get(e.actor_user_id) if e.actor_user_id else None}
+        for e in events
+    ]
 
 
 @router.get("/batches/{batch_id}/export.xlsx")

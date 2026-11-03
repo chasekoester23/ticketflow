@@ -48,6 +48,15 @@ class TicketOut(BaseModel):
     cost: Decimal | None = None
     duplicates: list[str] = []
     pricing_notes: list[str] = []
+    # Current approver (None if unverified or approved before individual accounts).
+    verified_by: str | None = None
+    verified_at: datetime | None = None
+
+    @field_validator("verified_at")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        from .models import as_utc
+        return as_utc(value)
 
 
 class TicketPatch(BaseModel):

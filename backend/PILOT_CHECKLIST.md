@@ -83,6 +83,17 @@ python scripts/make_demo_tickets.py
 
 Do not import fictional tickets into a real customer project.
 
+## Accounts for the pilot team
+
+- Give **each person their own account** from the Team page. Approvals are
+  recorded under the signed-in person; a shared login makes the audit trail
+  meaningless in a billing dispute.
+- Typical setup: office staff who transcribe tickets as **Clerk**, the project
+  manager or office manager who approves quantities as **Manager**, accounting
+  as **Viewer**, and one or two **Owners**.
+- Hand over temporary passwords in person or by phone, never in a group chat.
+  Deactivate accounts the same day someone leaves the pilot.
+
 ## First real scans — local manual review
 
 - Use a **separate, permitted project** for real scans.

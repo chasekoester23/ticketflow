@@ -63,7 +63,11 @@ def test_protected_routes_session_rotation_logout_and_expiry(client):
             "username": "owner", "password": "correct-long-password",
         })
         assert login.status_code == 200
-        assert login.json() == {"id": 1, "username": "owner"}
+        profile = login.json()
+        assert profile["username"] == "owner" and profile["role"] == "owner"
+        assert profile["must_change_password"] is False
+        assert "team.manage" in profile["permissions"]
+        assert "password_hash" not in profile
         cookie = login.headers["set-cookie"]
         assert "HttpOnly" in cookie and "samesite=lax" in cookie.lower()
         assert "correct-long-password" not in cookie

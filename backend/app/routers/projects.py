@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
 from ..db import get_db
-from ..models import Project
+from ..permissions import require
+from ..models import Project, User
 
 router = APIRouter(prefix="/api/projects")
 
@@ -45,7 +46,8 @@ def list_projects(include_archived: bool = False, db: Session = Depends(get_db),
 
 
 @router.post("", response_model=ProjectOut, status_code=201)
-def create_project(body: ProjectIn, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def create_project(body: ProjectIn, db: Session = Depends(get_db), user: User = Depends(require("projects.manage"))):
+    organization_id = user.organization_id
     p = Project(organization_id=organization_id, code=body.code.strip(), name=body.name.strip(), job_location=body.job_location, description=body.description)
     db.add(p)
     try:
@@ -57,7 +59,8 @@ def create_project(body: ProjectIn, db: Session = Depends(get_db), organization_
 
 
 @router.patch("/{pid}", response_model=ProjectOut)
-def update_project(pid: int, body: ProjectPatch, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def update_project(pid: int, body: ProjectPatch, db: Session = Depends(get_db), user: User = Depends(require("projects.manage"))):
+    organization_id = user.organization_id
     p = db.scalar(select(Project).where(Project.id == pid, Project.organization_id == organization_id))
     if not p:
         raise HTTPException(404, "Project not found")

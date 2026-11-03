@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Project, createProject, listProjects, setProjectStatus } from "../../lib/api";
+import { useAccount } from "../account-context";
 
 export default function ProjectsPage() {
+  const canManage = useAccount().can("projects.manage");
   const [projects, setProjects] = useState<Project[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +46,8 @@ export default function ProjectsPage() {
 
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
 
-    <section className="tf-panel">
+    {!canManage && <p className="tf-notice" role="note">Projects are created and archived by managers and owners.</p>}
+    {canManage && <section className="tf-panel">
       <div className="tf-panel-heading">
         <div><h2 className="tf-panel-title">Create a project</h2><p className="tf-panel-description">Enter the job number and name used by your team</p></div>
         <span className="text-[10px] font-semibold uppercase tracking-[.08em] text-[#87929f]">PROJECT SETUP</span>
@@ -65,7 +68,7 @@ export default function ProjectsPage() {
         </label>
         <button type="submit" disabled={saving || !form.code.trim() || !form.name.trim()} className="tf-primary-button h-[38px]">{saving ? "Creating…" : "+ Create project"}</button>
       </form>
-    </section>
+    </section>}
 
     <section className="tf-panel">
       <div className="tf-panel-heading">
@@ -84,9 +87,9 @@ export default function ProjectsPage() {
           <td><span className={`tf-status ${p.status === "active" ? "tf-status-open" : ""}`}>{p.status === "active" ? "Active" : "Archived"}</span></td>
           <td><div className="flex justify-end gap-4 whitespace-nowrap">
             <a href={`/records?project_id=${p.id}`}>View records</a>
-            <button type="button" onClick={() => void changeStatus(p)} className="text-[12px] font-semibold text-[#637385] hover:underline">
+            {canManage && <button type="button" onClick={() => void changeStatus(p)} className="text-[12px] font-semibold text-[#637385] hover:underline">
               {p.status === "active" ? "Archive" : "Unarchive"}
-            </button>
+            </button>}
           </div></td>
         </tr>)}</tbody>
       </table></div> : <div className="tf-empty">

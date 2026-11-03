@@ -18,7 +18,9 @@ from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
 from ..db import get_db
-from ..models import Batch, InvoiceComparison, InvoiceComparisonEvent, Project, Ticket
+from ..permissions import require
+from ..models import Batch, InvoiceComparison, InvoiceComparisonEvent, Project, Ticket, User, as_utc
+from ..services.accounts import names_by_id
 from ..services.pricing import CENTS, cost_for, effective_price_for, norm
 
 router = APIRouter(prefix="/api/invoice-comparisons")
@@ -285,9 +287,10 @@ def list_comparisons(db: Session = Depends(get_db),
 
 @router.post("", response_model=InvoiceLineOut, status_code=201)
 def create_comparison(body: InvoiceLineIn, db: Session = Depends(get_db),
-                      organization_id: int = Depends(current_organization_id)):
+                      user: User = Depends(require("invoices.manage"))):
+    organization_id = user.organization_id
     _validate_scope(db, organization_id, body)
-    item = InvoiceComparison(organization_id=organization_id)
+    item = InvoiceComparison(organization_id=organization_id, created_by_user_id=user.id)
     _assign(item, body)
     db.add(item)
     db.commit()
@@ -302,7 +305,8 @@ def get_comparison(line_id: int, db: Session = Depends(get_db),
 
 @router.put("/{line_id}", response_model=InvoiceLineOut)
 def correct_comparison(line_id: int, body: InvoiceLineIn, db: Session = Depends(get_db),
-                       organization_id: int = Depends(current_organization_id)):
+                       user: User = Depends(require("invoices.manage"))):
+    organization_id = user.organization_id
     item = _owned_or_404(db, organization_id, line_id)
     _validate_scope(db, organization_id, body, exclude_id=line_id)
     changes = body.model_dump()
@@ -310,7 +314,7 @@ def correct_comparison(line_id: int, body: InvoiceLineIn, db: Session = Depends(
         old = getattr(item, field)
         if old != new:
             db.add(InvoiceComparisonEvent(
-                comparison_id=line_id, field=field,
+                comparison_id=line_id, actor_user_id=user.id, field=field,
                 old_value=str(old), new_value=str(new),
             ))
     _assign(item, body)
@@ -327,8 +331,10 @@ def comparison_history(line_id: int, db: Session = Depends(get_db),
         .where(InvoiceComparisonEvent.comparison_id == line_id)
         .order_by(InvoiceComparisonEvent.id)
     ).all()
+    people = names_by_id(db, organization_id)
     return [
-        {"field": e.field, "old": e.old_value, "new": e.new_value, "at": e.created_at}
+        {"field": e.field, "old": e.old_value, "new": e.new_value, "at": as_utc(e.created_at),
+         "actor": people.get(e.actor_user_id) if e.actor_user_id else None}
         for e in events
     ]
 

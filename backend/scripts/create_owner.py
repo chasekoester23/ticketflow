@@ -48,9 +48,10 @@ def main() -> int:
             return 1
         db.add(User(
             organization_id=original.id, username=username, password_hash=encoded,
+            role="owner",
         ))
         db.commit()
-    print("Single-workspace owner created. Start TicketFlow and visit /login.")
+    print("Owner created. Sign in at /login, then add each employee from the Team page.")
     return 0
 
 

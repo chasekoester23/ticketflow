@@ -9,13 +9,16 @@ import {
   getStatus,
   listProjects,
   Project,
+  getTicketHistory,
   getTickets,
   patchTicket,
+  type HistoryEntry,
   retryBatch,
   ticketAction,
   ticketImageUrl,
   uploadBatch,
 } from "../../lib/api";
+import { useAccount } from "../account-context";
 
 const STATUS_STYLE: Record<string, string> = {
   needs_review: "bg-amber-100 text-amber-800",
@@ -39,6 +42,8 @@ const BATCH_LABEL: Record<string, string> = {
 };
 
 export default function Home() {
+  const { can } = useAccount();
+  const canUpload = can("tickets.upload");
   const [layout, setLayout] = useState<"single" | "grid_2x2">("grid_2x2");
   const [intakeMode, setIntakeMode] = useState<"extract" | "manual">("manual");
   const [files, setFiles] = useState<File[]>([]);
@@ -240,7 +245,10 @@ export default function Home() {
         </div>
       )}
 
-      <section className="tf-panel">
+      {!canUpload && (
+        <p className="tf-notice" role="note">Your role is view-only. You can open batches and ticket images, but uploads and edits are disabled.</p>
+      )}
+      {canUpload && <section className="tf-panel">
         <div className="tf-panel-heading">
           <div>
             <h2 className="tf-panel-title">1. Upload delivery tickets</h2>
@@ -325,7 +333,7 @@ export default function Home() {
             </button>
           </div>
         </div>
-      </section>
+      </section>}
 
       {batch && (
         <section className="tf-panel p-5" aria-live="polite">
@@ -335,7 +343,7 @@ export default function Home() {
               <p className="mt-1 text-sm text-slate-600">{tickets.length} tickets · {counts.verified} accepted · {counts.flagged} flagged · {counts.review} awaiting review · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {batch.status === "failed" && (
+              {batch.status === "failed" && canUpload && (
                 <button type="button" onClick={onRetry} disabled={retrying}
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium disabled:opacity-40">
                   {retrying ? "Retrying…" : "Retry failed files"}
@@ -549,6 +557,12 @@ function ReviewForm({
   );
   const [saving, setSaving] = useState(false);
   const acceptButton = useRef<HTMLButtonElement>(null);
+  const { can } = useAccount();
+  const canEdit = can("tickets.edit");
+  const canVerify = can("tickets.verify");
+  const canFlag = can("tickets.flag");
+  const canSkip = can("tickets.skip");
+  const canOverride = can("tickets.price_override");
   const [override, setOverride] = useState(ticket.unit_price_override ?? "");
   const overrideDirty = override !== (ticket.unit_price_override ?? "");
 
@@ -636,8 +650,9 @@ function ReviewForm({
             type={f.type === "number" ? "text" : f.type ?? "text"}
             inputMode={f.type === "number" ? "decimal" : undefined}
             value={values[f.key]}
+            readOnly={!canEdit}
             onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-            className={`w-full rounded border px-3 py-2.5 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-[#e6a97b] ${
+            className={`w-full rounded border px-3 py-2.5 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-[#e6a97b] read-only:bg-[#f6f7f8] ${
               flaggedFor(f.flagWords) ? "border-amber-400 bg-amber-50" : "border-slate-300"
             }`}
           />
@@ -666,16 +681,35 @@ function ReviewForm({
           id="review-rate-override"
           inputMode="decimal"
           value={override}
+          readOnly={!canOverride}
+          aria-describedby={canOverride ? undefined : "review-rate-override-note"}
           onChange={(e) => setOverride(e.target.value)}
-          className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm read-only:bg-[#f6f7f8]"
         />
+        {!canOverride && <p id="review-rate-override-note" className="mt-1 text-xs text-slate-500">Only a manager or owner can change a ticket’s rate.</p>}
       </div>
-      <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
-        <strong className="text-slate-800">Your acceptance is required.</strong> Confirm that the ticket number, date, material, tons, supplier and job match the original. Only accepted tickets count toward verified totals.
-      </p>
+      {ticket.status === "verified" && (
+        <p className="rounded border border-[#cce4d2] bg-[#f3f9f4] px-3 py-2 text-xs text-[#216c43]" data-testid="verified-by">
+          {ticket.verified_by
+            ? <>Approved by <strong>{ticket.verified_by}</strong>{ticket.verified_at ? <> on {new Date(ticket.verified_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</> : null}</>
+            : <>Approved before individual accounts were introduced; the approver was not recorded.</>}
+        </p>
+      )}
+      {canVerify ? (
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+          <strong className="text-slate-800">Your acceptance is required.</strong> Confirm that the ticket number, date, material, tons, supplier and job match the original. Only accepted tickets count toward verified totals. Your name is recorded with the approval.
+        </p>
+      ) : canEdit ? (
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+          <strong className="text-slate-800">Enter and check each field, then save.</strong> A manager or owner approves quantities before they count toward project totals.
+        </p>
+      ) : (
+        <p className="tf-notice">View-only access. Ask an owner if you need to enter or approve tickets.</p>
+      )}
       {dirty && <p className="text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
-      <div className="sticky bottom-0 z-10 -mx-5 flex flex-wrap gap-2 border-t border-slate-200 bg-white px-5 py-3">
-        <button
+      <TicketHistory ticketId={ticket.id} version={JSON.stringify([ticket.status, ticket.verified_at, ticket.unit_price_override, ...FIELDS.map((f) => ticket[f.key])])} />
+      {canEdit && <div className="sticky bottom-0 z-10 -mx-5 flex flex-wrap gap-2 border-t border-slate-200 bg-white px-5 py-3">
+        {canVerify ? <button
           ref={acceptButton}
           title="Review and accept ticket (Cmd/Ctrl + Enter)"
           onClick={() =>
@@ -688,19 +722,27 @@ function ReviewForm({
           disabled={saving || (ticket.status === "verified" && !dirty)}
         >
           {ticket.status === "verified" && !dirty ? "Accepted" : "Accept & next"}
-        </button>
+        </button> : <button
+          ref={acceptButton}
+          title="Save and go to the next ticket (Cmd/Ctrl + Enter)"
+          onClick={() => run(save, true)}
+          className="min-w-40 flex-1 rounded bg-[#dc6c30] px-4 py-3 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
+          disabled={saving}
+        >
+          Save &amp; next
+        </button>}
         <button disabled={saving || !dirty} onClick={() => run(save)} className="rounded border border-[#cfd6dc] px-3 py-2.5 text-sm font-semibold text-[#39495b] disabled:opacity-40">
           Save changes
         </button>
-        <button disabled={saving} onClick={() => run(async () => {
+        {canFlag && <button disabled={saving} onClick={() => run(async () => {
           const saved = await save();
           if (!saved) return null;
           return ticketAction(ticket.id, "flag").then((t) => { onChange(t); return t; })
             .catch((e) => { onError(e.message); return null; });
         }, true)} className="rounded border border-[#e5b993] bg-[#fff7ee] px-3 py-2.5 text-sm font-semibold text-[#97511e] hover:bg-[#fff0dc] disabled:opacity-40">
           Flag for later
-        </button>
-        <button disabled={saving} onClick={() => {
+        </button>}
+        {canSkip && <button disabled={saving} onClick={() => {
           if (!window.confirm("Skip this ticket? Skipped tickets are excluded from exports and financial totals.")) return;
           run(async () => {
             const saved = await save();
@@ -710,8 +752,51 @@ function ReviewForm({
           }, true);
         }} className="rounded-lg px-3 py-2 text-xs font-medium text-slate-500 hover:text-slate-900 disabled:opacity-40">
           Skip non-ticket
-        </button>
-      </div>
+        </button>}
+      </div>}
     </aside>
+  );
+}
+
+const HISTORY_FIELD: Record<string, string> = {
+  status: "Status", verified_unit_price: "Locked unit price", ticket_number: "Ticket number",
+  delivery_date: "Delivery date", material_type: "Material", tonnage: "Tons", supplier: "Supplier",
+  job_location: "Job location", unit_price_override: "Rate override",
+};
+
+/** Who changed what on this ticket. Loaded only when opened. */
+function TicketHistory({ ticketId, version }: { ticketId: number; version: string }) {
+  const [open, setOpen] = useState(false);
+  const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setFailed(false);
+    getTicketHistory(ticketId).then((rows) => { if (!cancelled) setEntries(rows); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [open, ticketId, version]);
+  useEffect(() => { setEntries(null); }, [ticketId]);
+
+  const show = (value: string | null) => value === null || value === "" ? "—" : (STATUS_LABEL[value] ?? value);
+  return (
+    <details className="rounded border border-[#e2e7eb] text-xs" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="cursor-pointer select-none px-3 py-2 font-semibold text-[#46566a]">Change history</summary>
+      <div className="border-t border-[#e9edf0] px-3 py-2">
+        {failed ? <p className="text-red-700">Could not load history.</p>
+          : entries === null ? <p className="text-slate-500">Loading…</p>
+          : entries.length === 0 ? <p className="text-slate-500">No changes recorded yet.</p>
+          : <ol className="space-y-1.5">
+            {[...entries].reverse().map((e, i) => <li key={i} className="leading-5 text-[#3d4c5d]">
+              <span className="font-semibold">{HISTORY_FIELD[e.field] ?? e.field}</span>: {show(e.old)} → {show(e.new)}
+              <span className="block text-[11px] text-[#7a8796]">
+                {e.actor ?? "Before individual accounts"} · {new Date(e.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+              </span>
+            </li>)}
+          </ol>}
+      </div>
+    </details>
   );
 }

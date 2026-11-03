@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { profile } from "./accounts.mjs";
 
 const cors = {
   "access-control-allow-origin": "http://127.0.0.1:3000",
@@ -22,7 +23,7 @@ test("manual scan upload is visibly non-AI and sends deliberate intake mode", as
     const url = new URL(request.url());
     const path = url.pathname;
     if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    if (path === "/api/auth/me") return json(route, { id: 1, username: "test-owner" });
+    if (path === "/api/auth/me") return json(route, profile("owner", { username: "test-owner" }));
     if (path === "/api/status") return json(route, { extraction_configured: false, model: "unused" });
     if (path === "/api/projects") return json(route, [{
       id: 1, code: "DEMO-001", name: "Synthetic Demonstration", status: "active",

@@ -6,6 +6,7 @@ import {
   InvoiceLineInput, listMaterials, listProjects, listSuppliers, Material,
   Project, saveInvoiceComparison, Supplier,
 } from "../../lib/api";
+import { useAccount } from "../account-context";
 
 const EMPTY: Omit<InvoiceLineInput, "project_id"> & { project_id: number | "" } = {
   project_id: "", invoice_number: "", supplier_name: "", material_name: "",
@@ -39,6 +40,7 @@ function statusStyle(status: InvoiceLineComparison["status"]) {
 }
 
 export default function InvoiceComparisonPage() {
+  const canManage = useAccount().can("invoices.manage");
   const [projects, setProjects] = useState<Project[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -116,6 +118,8 @@ export default function InvoiceComparisonPage() {
       const events = await getInvoiceHistory(id);
       setHistory(events.length ? events.map((event) =>
         event.field + ": " + (event.old ?? "—") + " → " + (event.new ?? "—")
+        + " · " + (event.actor ?? "before individual accounts")
+        + " · " + new Date(event.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
       ) : ["No corrections recorded."]);
       setSelected(id);
     } catch (exc) {
@@ -159,8 +163,9 @@ export default function InvoiceComparisonPage() {
       This first version does not read invoice PDFs or allocate partial deliveries between invoices.
     </p>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
+    {!canManage && <p className="tf-notice" role="note">Invoice lines are recorded and corrected by managers and owners. You can review comparisons and download reports.</p>}
 
-    <section className="tf-panel">
+    {canManage && <section className="tf-panel">
       <div className="tf-panel-heading">
         <div>
           <h2 className="tf-panel-title">{editing === null ? "Record an invoice material line" : "Correct invoice line #" + editing}</h2>
@@ -226,7 +231,7 @@ export default function InvoiceComparisonPage() {
           <span className="text-[11px] text-[#718091]">All comparisons update if the underlying ticket verification changes.</span>
         </div>
       </form>
-    </section>
+    </section>}
 
     <section className="tf-panel">
       <div className="tf-panel-heading">
@@ -253,7 +258,7 @@ export default function InvoiceComparisonPage() {
             <td><span className={"tf-status " + statusStyle(row.status)}>{statusLabel(row.status)}</span></td>
             <td className="whitespace-nowrap">
               <button type="button" onClick={() => { setSelected(row.id); setHistory(null); }} className="tf-link">Details</button>
-              <button type="button" onClick={() => edit(row)} className="tf-link ml-3">Correct</button>
+              {canManage && <button type="button" onClick={() => edit(row)} className="tf-link ml-3">Correct</button>}
             </td>
           </tr>)}</tbody>
         </table>

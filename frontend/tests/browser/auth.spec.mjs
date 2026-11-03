@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { profile } from "./accounts.mjs";
 
 const cors = {
   "access-control-allow-origin": "http://127.0.0.1:3000",
@@ -30,14 +31,14 @@ test("sign-in renders a workspace and sign-out returns to login", async ({ page 
       if (route.request().headers()["x-ticketflow-request"] !== "1") {
         return json(route, { detail: "Missing CSRF header" }, 403);
       }
-      return json(route, { id: 1, username: "owner" });
+      return json(route, profile("owner"));
     }
     if (pathname === "/api/auth/logout") {
       calls.logout++;
       return json(route, { ok: true });
     }
     if (pathname === "/api/auth/me") {
-      return json(route, { id: 1, username: "owner", organization_name: "Original workspace" });
+      return json(route, profile("owner"));
     }
     return json(route, { detail: "Not found" }, 404);
   });

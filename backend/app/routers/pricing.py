@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
 from ..db import get_db
-from ..models import Material, Supplier, SupplierRate
+from ..permissions import require
+from ..models import Material, Supplier, SupplierRate, User
 
 router = APIRouter(prefix="/api")
 
@@ -47,7 +48,8 @@ def list_suppliers(db: Session = Depends(get_db), organization_id: int = Depends
 
 
 @router.post("/suppliers", status_code=201)
-def create_supplier(body: SupplierIn, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def create_supplier(body: SupplierIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    organization_id = user.organization_id
     s = Supplier(organization_id=organization_id, name=body.name.strip(), contact=body.contact)
     db.add(s)
     try:
@@ -59,7 +61,8 @@ def create_supplier(body: SupplierIn, db: Session = Depends(get_db), organizatio
 
 
 @router.delete("/suppliers/{sid}", status_code=204)
-def delete_supplier(sid: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def delete_supplier(sid: int, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    organization_id = user.organization_id
     s = db.scalar(select(Supplier).where(Supplier.id == sid, Supplier.organization_id == organization_id))
     if not s:
         raise HTTPException(404, "Supplier not found")
@@ -75,7 +78,8 @@ def list_materials(db: Session = Depends(get_db), organization_id: int = Depends
 
 
 @router.post("/materials", status_code=201)
-def create_material(body: MaterialIn, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def create_material(body: MaterialIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    organization_id = user.organization_id
     m = Material(organization_id=organization_id, name=body.name.strip(), unit=body.unit)
     db.add(m)
     try:
@@ -87,7 +91,8 @@ def create_material(body: MaterialIn, db: Session = Depends(get_db), organizatio
 
 
 @router.delete("/materials/{mid}", status_code=204)
-def delete_material(mid: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def delete_material(mid: int, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    organization_id = user.organization_id
     m = db.scalar(select(Material).where(Material.id == mid, Material.organization_id == organization_id))
     if not m:
         raise HTTPException(404, "Material not found")
@@ -103,7 +108,8 @@ def list_rates(db: Session = Depends(get_db), organization_id: int = Depends(cur
 
 
 @router.put("/rates", response_model=RateOut)
-def upsert_rate(body: RateIn, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    organization_id = user.organization_id
     if not db.scalar(select(Supplier.id).where(
         Supplier.id == body.supplier_id, Supplier.organization_id == organization_id
     )) or not db.scalar(select(Material.id).where(
@@ -124,7 +130,8 @@ def upsert_rate(body: RateIn, db: Session = Depends(get_db), organization_id: in
 
 
 @router.delete("/rates/{rid}", status_code=204)
-def delete_rate(rid: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def delete_rate(rid: int, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    organization_id = user.organization_id
     r = db.scalar(select(SupplierRate).where(
         SupplierRate.id == rid, SupplierRate.organization_id == organization_id
     ))
