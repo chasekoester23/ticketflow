@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { profile } from "./accounts.mjs";
 
 function fixture(id, number) {
   return {
@@ -30,7 +31,7 @@ async function launch(page, deepLink = 101) {
     const path = url.pathname;
     const method = request.method();
     if (method === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    if (path === "/api/auth/me") return json(route, { id: 1, username: "test-owner" });
+    if (path === "/api/auth/me") return json(route, profile("owner", { username: "test-owner" }));
     if (path === "/api/status") return json(route, { extraction_configured: true, model: "test-only" });
     if (path === "/api/projects") return json(route, [{
       id: 1, code: "P-100", name: "Project A", job_location: "Site", description: null, status: "active",

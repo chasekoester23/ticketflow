@@ -15,8 +15,8 @@ export default function LoginPage() {
     setError("");
     setPending(true);
     try {
-      await logIn(username, password);
-      window.location.replace("/");
+      const account = await logIn(username, password);
+      window.location.replace(account.must_change_password ? "/account" : "/");
     } catch (err) {
       setError((err as Error).message);
       setPending(false);
@@ -67,7 +67,7 @@ export default function LoginPage() {
         </button>
       </form>
       <p className="mt-8 border-t border-[#e4e8ed] pt-5 text-[11px] leading-5 text-[#7c8996]">
-        Accounts are provisioned by a TicketFlow administrator. There is no public registration.
+        Accounts are created by your company’s TicketFlow owner. Each person signs in with their own account so every approval is attributed correctly. Forgot your password? Ask an owner to reset it.
       </p>
     </section>
   </div>;

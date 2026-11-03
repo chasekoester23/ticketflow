@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { profile } from "./accounts.mjs";
 
 const cors = {
   "access-control-allow-origin": "http://127.0.0.1:3000",
@@ -15,9 +16,7 @@ async function mockWorkspace(page, calls = []) {
     const url = new URL(route.request().url());
     calls.push(url.pathname + url.search);
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    if (url.pathname === "/api/auth/me") return json(route, {
-      id: 1, username: "owner", organization_name: "Original workspace",
-    });
+    if (url.pathname === "/api/auth/me") return json(route, profile("owner"));
     if (url.pathname === "/api/projects") return json(route, []);
     if (url.pathname === "/api/records") return json(route, []);
     if (url.pathname === "/api/dashboard") return json(route, {

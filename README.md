@@ -30,14 +30,15 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 test -f .env || cp .env.example .env  # keep any existing local secrets intact
 alembic upgrade head          # safe additive schema migration, required before starting
-python scripts/create_owner.py --username owner  # ONLY for first-time installation; never recreate existing owner
+python scripts/create_owner.py --username owner  # ONLY for first-time installation; then add people from the Team page
 uvicorn app.main:app --reload --port 8000
 
 # Worker (third terminal; use the same Python environment)
 cd backend
 python scripts/run_worker.py
 
-# Frontend (second terminal)
+# Frontend (second terminal) — use Node.js 22 LTS (the CI version).
+# Node 23 currently fails `next build` with "Unexpected end of JSON input".
 cd frontend
 npm install
 npm run dev                   # http://localhost:3000
@@ -49,6 +50,55 @@ Privacy note: with `EXTRACTION_PROVIDER=gemini` and a valid Gemini key, cropped 
 are sent to the Google Gemini API for extraction. If you explicitly select Anthropic,
 images go to Anthropic instead. **Get document-owner authorization before sending
 real contractor scans to ANY external provider.** Paid/free data-handling policies differ.
+
+## Team accounts, roles and attributable approvals
+
+Every person now signs in with **their own account**. Approvals, field
+corrections, uploads and invoice-line corrections record *who* made them,
+so a billing dispute can be traced to a named person. Never share a login.
+
+| Role | Can do |
+|---|---|
+| **Owner** | Everything, plus add people, change roles, deactivate, reset passwords |
+| **Manager** | Approve tickets (locks tons + unit price), skip non-tickets, set rate overrides, manage projects, suppliers/rates and invoice comparisons |
+| **Clerk** | Upload scans, enter/correct ticket fields, flag problems. **Cannot** approve quantities, skip tickets or change prices |
+| **Viewer** | Read-only records, dashboards and exports |
+
+Roles are enforced by the API (`backend/app/permissions.py`); the browser
+only hides buttons a role cannot use. A clerk's edit to an approved ticket
+withdraws that approval (it can only *remove* tons from totals) and is audited.
+
+- **Adding people:** an owner opens **Team**, enters a name, username and role.
+  TicketFlow shows a one-time temporary password (no email is sent). Hand it
+  over in person or by phone. The person must choose their own password at
+  first sign-in before anything else works.
+- **Leaving or role changes:** deactivating someone, changing their role, or
+  resetting their password signs them out everywhere immediately. Owners
+  cannot deactivate or demote themselves, and a company always keeps at least
+  one active owner.
+- **Owner forgot their password:** from a terminal on the server,
+  `cd backend && python scripts/reset_password.py --username <name>`. This is
+  recorded in the company's account history as a server-terminal action.
+- **History before this release** is shown as *"before individual accounts"*.
+  TicketFlow deliberately does not guess who approved older tickets.
+- Sign-in hardening in this release: lockouts can no longer be flushed by
+  spraying usernames, there is a per-account failure limit in addition to the
+  per-address one, unknown usernames take the same time as wrong passwords,
+  each sign-in issues a new session, and expired sessions are purged.
+
+**Upgrade an existing local installation** (additive migration `20261103_07`):
+
+1. Stop the backend, worker and frontend (**Control+C** in each terminal).
+2. After the PR is merged: `git checkout main && git pull origin main`.
+3. **Back up the database:** `cp backend/ticketflow.db backend/ticketflow-before-team-accounts.db`
+4. `cd backend && source .venv/bin/activate && python -m alembic upgrade head`
+5. Restart backend, worker and frontend. Sign in as before.
+
+The migration adds columns and one table; it rebuilds no tables and deletes
+no rows. **Every existing account becomes an Owner** (each was created as its
+company's owner). Existing audit history, verified tickets, batches and
+invoice comparisons keep an empty "who" field. If the backend says *"Team
+accounts migration required"*, step 4 has not run against that database yet.
 
 ## Invoice comparison (Batch #16)
 
@@ -229,9 +279,9 @@ the application is NOT yet safe for public deployment to unrelated contractors.
    `alembic upgrade head`. The new migration adds `users` and
    `login_sessions` without deleting existing ticket data.
 2. Run `python scripts/create_owner.py --username owner` once and enter
-   a unique 12+ character password when prompted. The account setup script
-   refuses to create a second user: all existing records belong to this
-   *single workspace*, not separate companies.
+   a unique 12+ character password when prompted. The script only creates
+   the very first account; add employees from the **Team** page instead
+   (see "Team accounts, roles and attributable approvals" above).
 3. Start FastAPI and Next.js, visit `http://localhost:3000/login`, and
    sign in. Existing scans, dashboards, pricing, exports, and image endpoints
    require authentication; a signed-out user receives HTTP 401.
@@ -368,9 +418,13 @@ Prints OK or a specific failure (missing key, rejected key, unknown model). The 
 cd backend && source .venv/bin/activate && pytest -q
 ```
 
-## Not built yet (by design)
+## Not built yet
 
-ZIP upload, manual crop boxes, authentication/multi-company, deployment, invoice matching.
+ZIP upload, manual crop boxes, invoice PDF extraction, email-based password
+reset/invitations, SSO/MFA, PostgreSQL, private cloud document storage, a
+distributed job queue, monitoring and backups, and hosted deployment. See
+[SECURITY_PRELAUNCH.md](SECURITY_PRELAUNCH.md) for the security status and
+the controls still required before a hosted customer pilot.
 
 ## Price integrity and existing databases
 
@@ -401,6 +455,8 @@ You can also use DATABASE_URL to migrate an alternate database.
 taxes, and project/date-specific contractual rate history. Historical source
 prices that were never stored cannot be recovered automatically.
 
-**Security:** TicketFlow still has no authentication or company data isolation.
-Do not expose it publicly or upload third-party confidential documents until
-those controls have been implemented and reviewed.
+**Security:** authentication, per-company isolation and role-based access
+exist, but TicketFlow has not had an independent security review and is not
+hosted. Do not expose it publicly or upload third-party confidential documents
+to a shared server until the items in [SECURITY_PRELAUNCH.md](SECURITY_PRELAUNCH.md)
+are complete.

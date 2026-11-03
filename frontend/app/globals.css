@@ -66,6 +66,13 @@ a { text-underline-offset: 3px; }
 .tf-organization-name { max-width: 225px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; padding-right: 19px; margin-right: 8px; border-right: 1px solid var(--tf-border); color: #4d5968; font-size: 12px; font-weight: 650; }
 .tf-account-avatar { flex-shrink: 0; display: grid; place-items: center; width: 29px; height: 29px; border-radius: 50%; background: #e9edf0; color: #334251; font-size: 12px; font-weight: 750; }
 .tf-account-name { color: #344252; font-size: 12px; font-weight: 650; }
+.tf-account-name small { display: block; margin-top: 1px; color: #7a8796; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
+.tf-account-link { display: flex; align-items: center; gap: 9px; padding: 3px 6px; border-radius: 4px; text-decoration: none; line-height: 1.2; }
+.tf-account-link:hover { background: #f3f5f7; }
+.tf-account-link:focus-visible { outline: 2px solid #e6a97b; outline-offset: 2px; }
+.tf-notice { border: 1px solid #d9dfe5; background: #f7f9fa; color: #46566a; border-radius: 4px; padding: 10px 12px; font-size: 12px; line-height: 1.55; }
+.tf-role-pill { display: inline-flex; align-items: center; border: 1px solid #d3dae1; background: #f5f7f9; color: #3c4b5c; border-radius: 3px; padding: 3px 7px; font-size: 10px; font-weight: 750; letter-spacing: .03em; white-space: nowrap; }
+.tf-role-pill-owner { background: #fff3ea; border-color: #f2cdb2; color: #9a4b1d; }
 .tf-sign-out { display: flex; align-items: center; gap: 7px; padding: 7px 10px; margin-left: 5px; border: 1px solid var(--tf-border); border-radius: 4px; background: #fff; color: #536274; font-size: 12px; font-weight: 600; }
 .tf-sign-out:hover { background: #f4f5f6; color: #202a34; }
 .tf-main { max-width: 1530px; margin: 0 auto; padding: 28px 34px 70px; }

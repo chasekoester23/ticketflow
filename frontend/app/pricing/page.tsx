@@ -5,8 +5,10 @@ import {
   Material, Rate, Supplier, createMaterial, createSupplier, deleteItem,
   listMaterials, listRates, listSuppliers, saveRate,
 } from "../../lib/api";
+import { useAccount } from "../account-context";
 
 export default function PricingPage() {
+  const canManage = useAccount().can("pricing.manage");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [rates, setRates] = useState<Rate[]>([]);
@@ -48,6 +50,7 @@ export default function PricingPage() {
       <a className="tf-secondary-button" href="/records">View delivery records <span aria-hidden="true">→</span></a>
     </div>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
+    {!canManage && <p className="tf-notice" role="note">Suppliers, materials and rates are maintained by managers and owners. You can view the current schedule.</p>}
 
     <div className="grid gap-5 lg:grid-cols-2">
       <section className="tf-panel">
@@ -55,18 +58,18 @@ export default function PricingPage() {
           <div><h2 className="tf-panel-title">Suppliers</h2><p className="tf-panel-description">Companies delivering material to your jobs</p></div>
           <span className="tf-status">{suppliers.length} suppliers</span>
         </div>
-        <form className="flex gap-2 border-b border-[#e9edf0] p-4"
+        {canManage && <form className="flex gap-2 border-b border-[#e9edf0] p-4"
           onSubmit={(e) => { e.preventDefault(); void act(async () => { await createSupplier(newSupplier.trim()); setNewSupplier(""); }); }}>
           <label className="sr-only" htmlFor="new-supplier">Supplier name</label>
           <input id="new-supplier" required className="tf-field min-w-0 flex-1" placeholder="Add supplier name"
             value={newSupplier} onChange={(e) => setNewSupplier(e.target.value)} />
           <button type="submit" className="tf-secondary-button" disabled={!newSupplier.trim() || saving}>+ Add</button>
-        </form>
+        </form>}
         {suppliers.length ? <ul className="divide-y divide-[#edf0f2]">
           {suppliers.map((s) => <li key={s.id} className="flex items-center justify-between gap-4 px-5 py-3">
             <span className="truncate text-[12px] font-semibold text-[#354555]">{s.name}</span>
-            <button disabled={saving} onClick={() => void remove("suppliers", s.id, s.name)}
-              className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>
+            {canManage && <button disabled={saving} onClick={() => void remove("suppliers", s.id, s.name)}
+              className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}
           </li>)}
         </ul> : <p className="tf-empty">No suppliers yet. Add a company above to begin pricing.</p>}
       </section>
@@ -76,18 +79,18 @@ export default function PricingPage() {
           <div><h2 className="tf-panel-title">Material types</h2><p className="tf-panel-description">Match the material descriptions on your tickets</p></div>
           <span className="tf-status">{materials.length} materials</span>
         </div>
-        <form className="flex gap-2 border-b border-[#e9edf0] p-4"
+        {canManage && <form className="flex gap-2 border-b border-[#e9edf0] p-4"
           onSubmit={(e) => { e.preventDefault(); void act(async () => { await createMaterial(newMaterial.trim()); setNewMaterial(""); }); }}>
           <label className="sr-only" htmlFor="new-material">Material name</label>
           <input id="new-material" required className="tf-field min-w-0 flex-1" placeholder="e.g. No. 53 Crushed Stone"
             value={newMaterial} onChange={(e) => setNewMaterial(e.target.value)} />
           <button type="submit" className="tf-secondary-button" disabled={!newMaterial.trim() || saving}>+ Add</button>
-        </form>
+        </form>}
         {materials.length ? <ul className="divide-y divide-[#edf0f2]">
           {materials.map((m) => <li key={m.id} className="flex items-center justify-between gap-4 px-5 py-3">
             <div><span className="text-[12px] font-semibold text-[#354555]">{m.name}</span><span className="ml-2 text-[11px] text-[#8994a0]">/{m.unit}</span></div>
-            <button disabled={saving} onClick={() => void remove("materials", m.id, m.name)}
-              className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>
+            {canManage && <button disabled={saving} onClick={() => void remove("materials", m.id, m.name)}
+              className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}
           </li>)}
         </ul> : <p className="tf-empty">No materials yet. Add a material type above.</p>}
       </section>
@@ -99,7 +102,7 @@ export default function PricingPage() {
           <p className="tf-panel-description">Prices applied to new approvals; accepted records retain their historical rate</p></div>
         <span className="tf-status">{rates.length} rates</span>
       </div>
-      <form className="grid items-end gap-3 border-b border-[#e9edf0] p-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_160px_auto]"
+      {canManage && <form className="grid items-end gap-3 border-b border-[#e9edf0] p-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_160px_auto]"
         onSubmit={(e) => { e.preventDefault(); void act(async () => {
           await saveRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price);
           setRateForm((v) => ({ ...v, price: "" }));
@@ -121,15 +124,15 @@ export default function PricingPage() {
             value={rateForm.price} onChange={(e) => setRateForm({ ...rateForm, price: e.target.value })} />
         </label>
         <button type="submit" className="tf-primary-button" disabled={saving || !rateForm.supplier || !rateForm.material || !rateForm.price}>Save unit price</button>
-      </form>
+      </form>}
       <div className="tf-table-wrap"><table className="tf-table">
         <thead><tr><th>Supplier</th><th>Material</th><th className="text-right">Rate / ton</th><th className="text-right">Action</th></tr></thead>
         <tbody>{rates.map((r) => <tr key={r.id}>
           <td className="font-semibold">{supplierName(r.supplier_id)}</td>
           <td>{materialName(r.material_id)}</td>
           <td className="text-right font-bold tabular-nums">{`$${Number(r.unit_price).toFixed(2)}`}</td>
-          <td className="text-right"><button disabled={saving} onClick={() => void remove("rates", r.id, "this rate")}
-            className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button></td>
+          <td className="text-right">{canManage && <button disabled={saving} onClick={() => void remove("rates", r.id, "this rate")}
+            className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}</td>
         </tr>)}</tbody>
       </table></div>
       {!rates.length && <p className="tf-empty">No unit prices configured. Add a supplier and material above, then save a rate.</p>}
