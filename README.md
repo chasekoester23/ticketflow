@@ -77,6 +77,14 @@ supplier/material and date range.
 - First version is **manual invoice entry only**. It does not extract invoice
   PDFs, allocate partial loads, match by ticket number, reconcile tax/freight,
   post entries to accounting, or use Gemini. No external cost or credentials.
+- From an invoice comparison's details, **Download CSV report** exports a
+  point-in-time summary of amounts, open review warnings, and the supporting
+  ticket register. Each ticket is marked **exact** or **unclassified** and carries
+  its current review state; a pending or possibly relevant ticket is never
+  presented as verified. Reports are company-scoped, disable caching, and
+  neutralize spreadsheet-formula characters from invoice/ticket text.
+  **CSV exports are investigation aids, not approvals for payment**; always
+  re-open a fresh report after changing ticket approvals.
 
 **For an existing local Mac installation:** after the PR is reviewed and
 merged, stop the backend/worker, pull \`main\` in the **inner** TicketFlow clone,
