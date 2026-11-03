@@ -173,6 +173,16 @@ export async function createMaterial(name: string) {
 export async function saveRate(supplier_id: number, material_id: number, unit_price: string) {
   await check(await apiFetch(`${API}/api/rates`, json("PUT", { supplier_id, material_id, unit_price })));
 }
+export type PricingEventRow = {
+  id: number;
+  action: "supplier_added" | "supplier_removed" | "material_added" | "material_removed" | "rate_set" | "rate_changed" | "rate_removed";
+  supplier: string | null; material: string | null;
+  old: string | null; new: string | null; // decimal strings, never parsed for money math
+  at: string; actor: string | null;
+};
+export async function getPricingHistory(): Promise<PricingEventRow[]> {
+  return (await check(await apiFetch(`${API}/api/pricing/history`))).json();
+}
 export async function deleteItem(kind: "suppliers" | "materials" | "rates", id: number) {
   await check(await apiFetch(`${API}/api/${kind}/${id}`, { method: "DELETE" }));
 }
