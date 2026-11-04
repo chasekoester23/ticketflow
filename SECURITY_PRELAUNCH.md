@@ -1,6 +1,6 @@
 # TicketFlow pre-launch security status
 
-Last updated: 2026-11-03 (pilot hardening release, migration `20261103_08`).
+Last updated: 2026-11-04 (invoice ticket matching, migration `20261104_09`).
 
 TicketFlow handles confidential construction documents and money figures.
 This file records **what is actually implemented and tested** and **what is
@@ -82,6 +82,10 @@ documents on shared hosting yet.
   automatically.
 - Unresolved quantities, missing rates and unclassified tickets are shown,
   never hidden or replaced with zero.
+- Invoice ticket numbers are matched only exactly and only to one verified,
+  complete delivery in the invoice line's scope; ambiguous numbers are never
+  matched. A totals-only comparison is always labelled as not checking
+  individual tickets.
 - Arithmetic agreement between an invoice and tickets is not proof of invoice
   authenticity and is never an approval to pay.
 

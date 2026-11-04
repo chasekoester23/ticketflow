@@ -3,6 +3,10 @@
 One manually entered line per project/supplier/material/date window. Values
 come from the supplier's invoice, NOT guessed by an AI model. Recompute against
 currently approved Ticket rows on every read, using each ticket's locked rate.
+
+A line may also list the invoice's individual ticket numbers. Those are
+checked one by one (services/invoice_matching.py). A line without them is a
+totals-only comparison and is always labelled as such.
 """
 import csv
 from datetime import date
@@ -13,14 +17,19 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
-from ..models import Batch, InvoiceComparison, InvoiceComparisonEvent, Project, Ticket, User, as_utc
+from ..models import (
+    Batch, InvoiceComparison, InvoiceComparisonEvent, InvoiceTicketRef, Project, Ticket, User, as_utc,
+)
 from ..services.accounts import names_by_id
+from ..services.invoice_matching import (
+    ParsedRef, TicketListError, check_tickets, format_ticket_list, parse_ticket_list, ticket_key,
+)
 from ..services.pricing import CENTS, cost_for, effective_price_for, norm
 
 router = APIRouter(prefix="/api/invoice-comparisons")
@@ -38,6 +47,10 @@ class InvoiceLineIn(BaseModel):
     billed_tons: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
     billed_unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=4)
     billed_subtotal: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    # Optional: the invoice's ticket numbers, one per line, each optionally
+    # followed by billed tons (pasted from Excel). Empty = totals-only.
+    # The whole list is replaced on correction.
+    ticket_list: str = Field(default="", max_length=200_000)
 
     @field_validator("invoice_number", "supplier_name", "material_name")
     @classmethod
@@ -56,6 +69,35 @@ class TicketMatch(BaseModel):
     confirmed_price: Decimal | None
     review_status: str
     scope_match: Literal["exact", "unclassified"]
+
+
+class CheckedTicket(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    ticket_id: int
+    batch_id: int
+    ticket_number: str | None
+    delivery_date: date | None
+    supplier: str | None
+    material: str | None
+    tons: Decimal | None
+    review_status: str
+    project: str | None
+
+
+class TicketCheckRow(BaseModel):
+    """One invoice ticket line (line is set) or one delivery the invoice omits."""
+    model_config = ConfigDict(from_attributes=True)
+    result: Literal["matched", "tons_differ", "not_found", "outside_scope",
+                    "ambiguous", "needs_review", "not_on_invoice"]
+    line: int | None
+    invoice_ticket_number: str | None
+    billed_tons: Decimal | None
+    ticket: CheckedTicket | None
+    candidates: list[CheckedTicket]
+    verified_tons: Decimal | None
+    tons_difference: Decimal | None
+    flags: list[Literal["duplicate_on_invoice", "on_another_invoice"]]
+    notes: list[str]
 
 
 class InvoiceLineOut(BaseModel):
@@ -81,8 +123,13 @@ class InvoiceLineOut(BaseModel):
     unpriced_count: int
     rate_mismatch_count: int
     status: Literal["matches", "discrepancy", "incomplete", "no_verified_tickets"]
+    # "totals_only": no ticket numbers entered, individual tickets NOT checked.
+    comparison_mode: Literal["itemized", "totals_only"]
     warnings: list[str]
     tickets: list[TicketMatch]
+    ticket_check: list[TicketCheckRow]
+    ticket_check_counts: dict[str, int]
+    itemized_billed_tons: Decimal | None
     created_at: date
 
 
@@ -130,8 +177,35 @@ def _validate_scope(db: Session, organization_id: int, body: InvoiceLineIn, *,
     _scope_overlap(db, organization_id, body, exclude_id=exclude_id)
 
 
+def _parse_tickets(body: InvoiceLineIn) -> list[ParsedRef]:
+    try:
+        return parse_ticket_list(body.ticket_list)
+    except TicketListError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+def _refs(db: Session, comparison_id: int) -> list[InvoiceTicketRef]:
+    return list(db.scalars(
+        select(InvoiceTicketRef)
+        .where(InvoiceTicketRef.comparison_id == comparison_id)
+        .order_by(InvoiceTicketRef.position)
+    ))
+
+
+def _replace_refs(db: Session, comparison_id: int, parsed: list[ParsedRef]) -> None:
+    # Executed immediately, so the new rows never collide with the old positions.
+    db.execute(delete(InvoiceTicketRef).where(InvoiceTicketRef.comparison_id == comparison_id))
+    db.add_all(
+        InvoiceTicketRef(
+            comparison_id=comparison_id, position=ref.position, ticket_number=ref.ticket_number,
+            ticket_key=ticket_key(ref.ticket_number), billed_tons=ref.billed_tons,
+        )
+        for ref in parsed
+    )
+
+
 def _assign(item: InvoiceComparison, body: InvoiceLineIn) -> None:
-    for field, value in body.model_dump().items():
+    for field, value in body.model_dump(exclude={"ticket_list"}).items():
         setattr(item, field, value)
     item.supplier_key = norm(body.supplier_name)
     item.material_key = norm(body.material_name)
@@ -204,6 +278,9 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         if verified_subtotal is not None else None
     )
 
+    refs = _refs(db, item.id)
+    check = check_tickets(db, organization_id, item, refs, all_tickets) if refs else None
+
     warnings = []
     if not verified:
         warnings.append("No verified delivery tickets match this invoice line.")
@@ -224,12 +301,15 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         warnings.append("Invoice line subtotal differs from billed tons × billed unit rate.")
     if subtotal_difference:
         warnings.append("Invoice material subtotal differs from verified ticket material cost.")
+    if check:
+        warnings.extend(check.warnings)
 
     if not verified:
         status = "no_verified_tickets"
-    elif pending or unclassified or unpriced:
+    elif pending or unclassified or unpriced or (check and check.incomplete):
         status = "incomplete"
-    elif quantity_difference or arithmetic_difference or subtotal_difference or rate_mismatch:
+    elif (quantity_difference or arithmetic_difference or subtotal_difference or rate_mismatch
+          or (check and check.discrepancy)):
         status = "discrepancy"
     else:
         status = "matches"
@@ -248,7 +328,11 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         verified_count=len(verified), pending_count=len(pending),
         unclassified_count=len(unclassified),
         unpriced_count=len(unpriced), rate_mismatch_count=len(rate_mismatch),
-        status=status, warnings=warnings,
+        status=status, comparison_mode="itemized" if check else "totals_only",
+        warnings=warnings,
+        ticket_check=[TicketCheckRow.model_validate(row) for row in check.rows] if check else [],
+        ticket_check_counts=check.counts if check else {},
+        itemized_billed_tons=check.itemized_billed_tons if check else None,
         tickets=[
             TicketMatch(
                 ticket_id=t.id, batch_id=t.batch_id,
@@ -290,9 +374,12 @@ def create_comparison(body: InvoiceLineIn, db: Session = Depends(get_db),
                       user: User = Depends(require("invoices.manage"))):
     organization_id = user.organization_id
     _validate_scope(db, organization_id, body)
+    parsed = _parse_tickets(body)
     item = InvoiceComparison(organization_id=organization_id, created_by_user_id=user.id)
     _assign(item, body)
     db.add(item)
+    db.flush()
+    _replace_refs(db, item.id, parsed)
     db.commit()
     return _line_out(db, item, organization_id)
 
@@ -309,7 +396,8 @@ def correct_comparison(line_id: int, body: InvoiceLineIn, db: Session = Depends(
     organization_id = user.organization_id
     item = _owned_or_404(db, organization_id, line_id)
     _validate_scope(db, organization_id, body, exclude_id=line_id)
-    changes = body.model_dump()
+    parsed = _parse_tickets(body)
+    changes = body.model_dump(exclude={"ticket_list"})
     for field, new in changes.items():
         old = getattr(item, field)
         if old != new:
@@ -317,6 +405,14 @@ def correct_comparison(line_id: int, body: InvoiceLineIn, db: Session = Depends(
                 comparison_id=line_id, actor_user_id=user.id, field=field,
                 old_value=str(old), new_value=str(new),
             ))
+    old_list, new_list = format_ticket_list(_refs(db, line_id)), format_ticket_list(parsed)
+    if old_list != new_list:
+        # The full previous list stays in the history; nothing is lost.
+        db.add(InvoiceComparisonEvent(
+            comparison_id=line_id, actor_user_id=user.id, field="ticket_list",
+            old_value=old_list or "(totals only)", new_value=new_list or "(totals only)",
+        ))
+        _replace_refs(db, line_id, parsed)
     _assign(item, body)
     db.commit()
     return _line_out(db, item, organization_id)
@@ -337,6 +433,23 @@ def comparison_history(line_id: int, db: Session = Depends(get_db),
          "actor": people.get(e.actor_user_id) if e.actor_user_id else None}
         for e in events
     ]
+
+
+MODE_LABELS = {
+    "itemized": "Itemized - each invoice ticket number checked",
+    "totals_only": "Totals-only comparison - individual tickets not checked",
+}
+RESULT_LABELS = {
+    "matched": "Matched",
+    "tons_differ": "Tons differ",
+    "not_found": "Not found in TicketFlow",
+    "outside_scope": "Outside this invoice line",
+    "ambiguous": "Ambiguous - several records",
+    "needs_review": "Delivery not verified or incomplete",
+    "not_on_invoice": "Delivery not on invoice",
+    "duplicate_on_invoice": "Repeated on this invoice",
+    "on_another_invoice": "Also on another invoice",
+}
 
 
 def _csv_text(value: str | None) -> str:
@@ -367,6 +480,7 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     writer.writerow(["Delivery from", result.date_from.isoformat()])
     writer.writerow(["Delivery through", result.date_to.isoformat()])
     writer.writerow(["Comparison status", result.status])
+    writer.writerow(["Comparison type", MODE_LABELS[result.comparison_mode]])
     writer.writerow(["Invoice tons", str(result.billed_tons)])
     writer.writerow(["Invoice rate per ton", str(result.billed_unit_price)])
     writer.writerow(["Invoice material subtotal", str(result.billed_subtotal)])
@@ -383,6 +497,13 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     writer.writerow(["Unclassified ticket count", result.unclassified_count])
     writer.writerow(["Unpriced ticket count", result.unpriced_count])
     writer.writerow(["Rate mismatch count", result.rate_mismatch_count])
+    if result.comparison_mode == "itemized":
+        writer.writerow(["Invoice ticket lines", sum(1 for r in result.ticket_check if r.line is not None)])
+        writer.writerow(["Itemized billed tons",
+                         str(result.itemized_billed_tons) if result.itemized_billed_tons is not None
+                         else "NOT ENTERED FOR EVERY TICKET"])
+        for name, count in result.ticket_check_counts.items():
+            writer.writerow([RESULT_LABELS[name] + " count", count])
     writer.writerow([])
     writer.writerow(["Review warnings"])
     for warning in result.warnings:
@@ -400,6 +521,29 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
             str(ticket.tons) if ticket.tons is not None else "UNRESOLVED",
             str(ticket.confirmed_price) if ticket.confirmed_price is not None else "UNRESOLVED",
         ])
+    if result.comparison_mode == "itemized":
+        writer.writerow([])
+        writer.writerow(["Ticket-by-ticket check"])
+        writer.writerow(["Invoice line", "Invoice ticket number", "Billed tons", "Result", "Flags",
+                         "TicketFlow ticket ID", "Batch ID", "Recorded ticket number", "Delivery date",
+                         "Review status", "Verified tons", "Billed minus verified tons", "Notes"])
+        for row in result.ticket_check:
+            t = row.ticket
+            writer.writerow([
+                row.line if row.line is not None else "NOT ON INVOICE",
+                _csv_text(row.invoice_ticket_number),
+                str(row.billed_tons) if row.billed_tons is not None else "",
+                RESULT_LABELS[row.result],
+                "; ".join(RESULT_LABELS[f] for f in row.flags),
+                t.ticket_id if t else "; ".join(str(c.ticket_id) for c in row.candidates),
+                t.batch_id if t else "",
+                _csv_text(t.ticket_number if t else None),
+                t.delivery_date.isoformat() if t and t.delivery_date else "",
+                t.review_status if t else "",
+                str(row.verified_tons) if row.verified_tons is not None else "",
+                str(row.tons_difference) if row.tons_difference is not None else "",
+                _csv_text(" ".join(row.notes)),
+            ])
     return Response(
         output.getvalue(),
         media_type="text/csv; charset=utf-8",

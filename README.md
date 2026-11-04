@@ -149,7 +149,7 @@ supplier/material and date range.
   rejected** because allocation across partial or overlapping invoices is
   not implemented. Check billing periods before entry.
 - First version is **manual invoice entry only**. It does not extract invoice
-  PDFs, allocate partial loads, match by ticket number, reconcile tax/freight,
+  PDFs, allocate partial loads, reconcile tax/freight,
   post entries to accounting, or use Gemini. No external cost or credentials.
 - From an invoice comparison's details, **Download CSV report** exports a
   point-in-time summary of amounts, open review warnings, and the supporting
@@ -159,6 +159,46 @@ supplier/material and date range.
   neutralize spreadsheet-formula characters from invoice/ticket text.
   **CSV exports are investigation aids, not approvals for payment**; always
   re-open a fresh report after changing ticket approvals.
+
+### Checking individual tickets on an invoice
+
+Equal totals do not prove the right tickets were billed. When the invoice
+lists its delivery tickets, paste them into **Ticket numbers listed on this
+invoice**: copy two columns from Excel, ticket number then billed tons (tons
+optional). A header row and blank rows are fine. An unreadable row rejects
+the whole list with its line number, so nothing is dropped silently.
+
+Each invoice ticket is checked against the company's delivery records:
+
+| Result | Meaning |
+|---|---|
+| Matched | Exactly one verified, complete delivery with this number, in this project, supplier, material and date range; billed tons equal verified tons (if entered) |
+| Tons differ | Matched, but billed tons are not the verified tons |
+| Not in TicketFlow | No delivery has this number. A number differing only in leading zeros is shown as a hint, never counted |
+| Outside this invoice line | The delivery exists but is recorded for another project, supplier, material or date |
+| Several records — not matched | More than one delivery could have this number; resolve the duplicate first |
+| Not verified or incomplete | The delivery still needs review, or lacks a supplier, material, date or tons |
+| Delivered, not on invoice | A delivery in this line's scope that the invoice does not list |
+
+Rows are also flagged when a number is **repeated on this invoice** or is
+**also on another saved invoice** from the same supplier (possible double
+billing). If every ticket has billed tons, their sum is checked against the
+invoice line's billed tons.
+
+Matching rules are deliberately conservative: numbers compare exactly,
+ignoring only letter case and surrounding spaces; **leading zeros count**.
+Nothing is matched by guesswork, and no ticket value is changed. Every
+matched or missing delivery links to its scan and to its review history.
+
+Lines without a ticket list keep the original totals comparison and are
+labelled **"Totals-only comparison — individual tickets not checked."**
+Their best possible result reads "Totals match", never "Tickets match".
+Changing a line's ticket list is recorded in its correction history with the
+full previous list. The CSV report states the comparison type and, for
+itemized lines, includes the ticket-by-ticket check.
+
+Upgrading adds migration `20261104_09` (new `invoice_ticket_refs` table only).
+Existing invoice comparisons become totals-only comparisons, with unchanged figures.
 
 **For an existing local Mac installation:** after the PR is reviewed and
 merged, stop the backend/worker, pull \`main\` in the **inner** TicketFlow clone,

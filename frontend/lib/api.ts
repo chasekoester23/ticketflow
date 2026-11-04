@@ -232,6 +232,29 @@ export type InvoiceLineInput = {
   billed_tons: string;
   billed_unit_price: string;
   billed_subtotal: string;
+  // Optional: the invoice's ticket numbers, one per row, each optionally
+  // followed by billed tons (pasted from Excel). Empty = totals-only.
+  ticket_list: string;
+};
+export type CheckedTicket = {
+  ticket_id: number; batch_id: number; ticket_number: string | null;
+  delivery_date: string | null; supplier: string | null; material: string | null;
+  tons: string | null; review_status: string; project: string | null;
+};
+export type TicketCheckResult =
+  | "matched" | "tons_differ" | "not_found" | "outside_scope"
+  | "ambiguous" | "needs_review" | "not_on_invoice";
+export type TicketCheckRow = {
+  result: TicketCheckResult;
+  line: number | null; // null = a delivery the invoice does not list
+  invoice_ticket_number: string | null;
+  billed_tons: string | null;
+  ticket: CheckedTicket | null;
+  candidates: CheckedTicket[];
+  verified_tons: string | null;
+  tons_difference: string | null;
+  flags: ("duplicate_on_invoice" | "on_another_invoice")[];
+  notes: string[];
 };
 export type InvoiceTicketMatch = {
   ticket_id: number; batch_id: number; ticket_number: string | null;
@@ -252,8 +275,12 @@ export type InvoiceLineComparison = InvoiceLineInput & {
   unpriced_count: number;
   rate_mismatch_count: number;
   status: "matches" | "discrepancy" | "incomplete" | "no_verified_tickets";
+  comparison_mode: "itemized" | "totals_only";
   warnings: string[];
   tickets: InvoiceTicketMatch[];
+  ticket_check: TicketCheckRow[];
+  ticket_check_counts: Record<string, number>;
+  itemized_billed_tons: string | null;
   created_at: string;
 };
 export async function getInvoiceComparisons(): Promise<InvoiceLineComparison[]> {

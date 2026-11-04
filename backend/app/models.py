@@ -264,6 +264,27 @@ class InvoiceComparison(Base):
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
 
+class InvoiceTicketRef(Base):
+    """One delivery ticket number listed on a supplier invoice line.
+
+    ticket_number keeps exactly what was entered (leading zeros included);
+    ticket_key is the match key (case and surrounding spaces ignored only).
+    A line with no rows is a totals-only comparison. The list is replaced as
+    a whole on correction, and every change is recorded in
+    invoice_comparison_events.
+    """
+    __tablename__ = "invoice_ticket_refs"
+    __table_args__ = (UniqueConstraint("comparison_id", "position", name="uq_invoice_ticket_ref_position"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    comparison_id: Mapped[int] = mapped_column(
+        ForeignKey("invoice_comparisons.id"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    ticket_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    ticket_key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    billed_tons: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+
+
 class InvoiceComparisonEvent(Base):
     """Immutable edit history; corrections do not silently replace invoice data."""
     __tablename__ = "invoice_comparison_events"
