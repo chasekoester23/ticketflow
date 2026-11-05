@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import false as sa_false
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -148,6 +148,8 @@ class Batch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     # NULL for uploads made before individual accounts existed.
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # How many paper tickets the person says are in this batch. NULL = not stated.
+    expected_ticket_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     files: Mapped[list["UploadedFile"]] = relationship(back_populates="batch", cascade="all, delete-orphan")
 
 
@@ -223,6 +225,44 @@ class Ticket(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     file: Mapped[UploadedFile] = relationship(back_populates="tickets")
+
+
+class ScanSlot(Base):
+    """One physical position on one scanned page, ticket or not.
+
+    Joined to Ticket by (file_id, page, position), so ticket data is never
+    duplicated here. crop_sha256 identifies the unrotated crop.
+    """
+    __tablename__ = "scan_slots"
+    __table_args__ = (UniqueConstraint("file_id", "page", "position", name="uq_scan_slot_position"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True, nullable=False)
+    file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"), index=True, nullable=False)
+    page: Mapped[int] = mapped_column(Integer, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    crop_box: Mapped[list] = mapped_column(JSON, nullable=False)
+    crop_path: Mapped[str] = mapped_column(String(500), nullable=False)  # internal; never returned
+    crop_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    ink_fraction: Mapped[float] = mapped_column(Float, nullable=False)  # image measure, never money
+    detection: Mapped[str] = mapped_column(String(20), nullable=False)  # content | faint | empty
+    # A person's decision: real_ticket | confirmed_blank | NULL (undecided).
+    decision: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    decided_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rotation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0, 90, 180, 270 clockwise
+
+
+class ScanEvent(Base):
+    """Immutable history of people's decisions about scans."""
+    __tablename__ = "scan_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True, nullable=False)
+    slot_id: Mapped[int | None] = mapped_column(ForeignKey("scan_slots.id"), index=True, nullable=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
 class AuditEvent(Base):

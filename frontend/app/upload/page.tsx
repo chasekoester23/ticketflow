@@ -6,6 +6,8 @@ import {
   Ticket,
   exportUrl,
   getBatch,
+  getManifest,
+  Manifest,
   getStatus,
   listProjects,
   Project,
@@ -19,6 +21,7 @@ import {
   uploadBatch,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
+import { ScanCheck } from "./ScanCheck";
 
 const STATUS_STYLE: Record<string, string> = {
   needs_review: "bg-amber-100 text-amber-800",
@@ -63,6 +66,9 @@ export default function Home() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
+  const [expectedTickets, setExpectedTickets] = useState("");
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [imageVersion, setImageVersion] = useState(0);
 
   useEffect(() => {
     listProjects().then(setProjects).catch((e) => setError(e.message));
@@ -76,6 +82,8 @@ export default function Home() {
     const [b, t] = await Promise.all([getBatch(id), getTickets(id)]);
     setBatch(b);
     setTickets(t);
+    // The scan check adds evidence; failing to load it must not stop review.
+    getManifest(id).then(setManifest).catch(() => setManifest(null));
     return { batch: b, tickets: t };
   }, []);
 
@@ -112,8 +120,10 @@ export default function Home() {
     setError(null);
     setBusy(true);
     try {
-      const b = await uploadBatch(files, layout, projectId ? Number(projectId) : undefined, intakeMode);
+      const b = await uploadBatch(files, layout, projectId ? Number(projectId) : undefined, intakeMode,
+        expectedTickets.trim() ? Number(expectedTickets) : undefined);
       setFiles([]);
+      setExpectedTickets("");
       setSelected(0);
       setFormDirty(false);
       setReviewFilter("pending");
@@ -236,7 +246,7 @@ export default function Home() {
 
       {configured === false && (
         <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          AI extraction is not configured. <strong>Manual entry works without an API key.</strong> Select “Manual entry” below, then run the local processing worker to prepare your scans. AI extraction requires ANTHROPIC_API_KEY in backend/.env.
+          AI extraction is not configured. <strong>Manual entry works without an API key.</strong> Select “Manual entry” below, then run the local processing worker to prepare your scans. AI extraction requires a provider key in backend/.env.
         </div>
       )}
       {error && (
@@ -326,6 +336,12 @@ export default function Home() {
                   <option value="single">One ticket per page</option>
                 </select>
               </label>
+              <label className="block text-sm font-medium text-slate-700">Paper tickets in this upload (optional)
+                <input inputMode="numeric" pattern="[0-9]*" value={expectedTickets}
+                  onChange={(e) => setExpectedTickets(e.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-slate-700 focus:outline-none" />
+                <span className="mt-1 block text-xs font-normal text-slate-500">Count the paper. TicketFlow checks it against the tickets it finds.</span>
+              </label>
             </div>
             <button type="button" disabled={!files.length || !projectId || busy} onClick={onUpload}
               className="tf-primary-button w-full disabled:opacity-40">
@@ -373,6 +389,18 @@ export default function Home() {
               {file.error && <span className="ml-1 text-red-700">({file.error})</span>}
             </li>)}
           </ul>
+          {manifest && manifest.batch_id === batch.id && (
+            <ScanCheck key={batch.id} manifest={manifest} onError={setError}
+              onChanged={(next) => {
+                setManifest(next);
+                setImageVersion((v) => v + 1);
+                refresh(batch.id).catch((e) => setError(e.message));
+              }}
+              onOpenTicket={(ticketId) => {
+                const index = tickets.findIndex((t) => t.id === ticketId);
+                if (index >= 0) selectTicket(index);
+              }} />
+          )}
         </section>
       )}
 
@@ -448,7 +476,7 @@ export default function Home() {
                   className="text-xs font-medium text-slate-700 underline-offset-2 hover:underline">Open full image</a>
               </div>
               <div className="flex min-h-[440px] max-h-[78vh] items-start justify-center overflow-auto bg-[#e6e9eb] p-5">
-                <img src={ticketImageUrl(current.id)} alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
+                <img src={ticketImageUrl(current.id) + (imageVersion ? "?v=" + imageVersion : "")} alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
                   className="h-auto max-h-none rounded-md border border-slate-200 bg-white shadow-sm"
                   style={{ width: zoom * 100 + "%", maxWidth: "none", transform: "rotate(" + rotation + "deg)" }} />
               </div>

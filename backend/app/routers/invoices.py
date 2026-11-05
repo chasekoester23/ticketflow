@@ -26,6 +26,7 @@ from ..permissions import require
 from ..models import (
     Batch, InvoiceComparison, InvoiceComparisonEvent, InvoiceTicketRef, Project, Ticket, User, as_utc,
 )
+from ..services import scan_manifest
 from ..services.accounts import names_by_id
 from ..services.invoice_matching import (
     ParsedRef, TicketListError, check_tickets, format_ticket_list, parse_ticket_list, ticket_key,
@@ -281,6 +282,9 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
     refs = _refs(db, item.id)
     check = check_tickets(db, organization_id, item, refs, all_tickets) if refs else None
 
+    # Tickets that never became records can't appear in any total above.
+    intake_issues = scan_manifest.project_intake_issues(db, organization_id, item.project_id)
+
     warnings = []
     if not verified:
         warnings.append("No verified delivery tickets match this invoice line.")
@@ -303,10 +307,11 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         warnings.append("Invoice material subtotal differs from verified ticket material cost.")
     if check:
         warnings.extend(check.warnings)
+    warnings.extend(intake_issues)
 
     if not verified:
         status = "no_verified_tickets"
-    elif pending or unclassified or unpriced or (check and check.incomplete):
+    elif pending or unclassified or unpriced or intake_issues or (check and check.incomplete):
         status = "incomplete"
     elif (quantity_difference or arithmetic_difference or subtotal_difference or rate_mismatch
           or (check and check.discrepancy)):

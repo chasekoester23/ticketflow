@@ -44,3 +44,35 @@ def make_scan_pdf(tickets: list[dict] | None = None) -> bytes:
     buf = io.BytesIO()
     page.save(buf, format="PDF", resolution=200)
     return buf.getvalue()
+
+
+# ---- Scan-condition fixtures: see docs/engineering/fixtures.md. All fictional.
+
+def make_faint_ticket_image(size=(850, 1100)) -> Image.Image:
+    """A real-looking ticket printed so lightly that the dark-pixel test misses it."""
+    img = Image.new("RGB", size, "white")
+    d = ImageDraw.Draw(img)
+    f = ImageFont.load_default(size=44)
+    light = (205, 205, 205)
+    d.rectangle([10, 10, size[0] - 10, size[1] - 10], outline=light, width=4)
+    for i, text in enumerate(["FAINT MATERIALS CO", "Ticket No. 55120", "Net Tons 18.40", "Sand", "North Lot"]):
+        d.text((40, 60 + i * 150), text, fill=light, font=f)
+    return img
+
+
+def make_page(slots: list, page_size=(1700, 2200)) -> Image.Image:
+    """Four slots; each is a ticket dict, "faint", or None for nothing there."""
+    page = Image.new("RGB", page_size, "white")
+    w, h = page_size[0] // 2, page_size[1] // 2
+    for i, slot in enumerate(slots[:4]):
+        if slot is None:
+            continue
+        source = make_faint_ticket_image() if slot == "faint" else make_ticket_image(slot)
+        page.paste(source.resize((w - 80, h - 80)), ((i % 2) * w + 40, (i // 2) * h + 40))
+    return page
+
+
+def make_pdf(pages: list[Image.Image]) -> bytes:
+    buf = io.BytesIO()
+    pages[0].save(buf, format="PDF", resolution=200, save_all=True, append_images=pages[1:])
+    return buf.getvalue()

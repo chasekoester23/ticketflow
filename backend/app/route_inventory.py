@@ -13,10 +13,10 @@ from dataclasses import dataclass
 from fastapi.routing import APIRoute
 
 from .main import app
-from .routers import api, auth, invoices, pricing, projects, reports, team
+from .routers import api, auth, invoices, pricing, projects, reports, scans, team
 
 ROUTERS = (auth.router, api.router, pricing.router, invoices.router,
-           projects.router, reports.router, team.router)
+           projects.router, reports.router, team.router, scans.router)
 # Sign-in, sign-out and changing your own password act on the caller alone.
 SELF_SERVICE = {"/api/auth/login", "/api/auth/logout", "/api/auth/password"}
 MUTATING = {"POST", "PUT", "PATCH", "DELETE"}

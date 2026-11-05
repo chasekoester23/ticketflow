@@ -124,6 +124,22 @@ company's owner). Existing audit history, verified tickets, batches and
 invoice comparisons keep an empty "who" field. If the backend says *"Team
 accounts migration required"*, step 4 has not run against that database yet.
 
+## Scan check: account for every paper ticket
+
+A ticket that never becomes a record is worse than a misread one, because totals look complete without it. After processing, the batch panel on **Ticket intake** shows a **Scan check**: each original page beside all of its slots, with counts of pages, slots, tickets on record, faint, empty and confirmed-blank slots.
+
+- **Nothing is discarded.** Every slot is kept with its image, including blank-looking ones.
+- **Faint slots block a clean result** until a person chooses **This is a ticket** or **Confirm blank**. They also keep invoice comparisons for that project at "Incomplete", as do failed files and count mismatches.
+- **Enter the paper count** at upload or later. The result reads "Matches your paper count" only when you entered a count and it matches. Without one it says the count isn't confirmed.
+- **Marking a slot** creates an unapproved, empty record. In AI batches it makes no AI call: it stays unread until someone uses Retry, or types it in. Neighbouring tickets aren't touched.
+- **Rotate 90°** writes a derived image and keeps the original. Approved tickets refuse it until the approval is withdrawn, and the check for identical scans still applies.
+- **Who can do what:** clerks can mark tickets, rotate and enter counts. Only managers and owners can confirm blank, since that rules a slot out of the count. Decisions are recorded with the person's name.
+- **Older batches** show **Build scan check**, which reads the stored scan and adds slot records without changing any ticket.
+
+The detection thresholds are cautious defaults, not calibrated on real scanner output. Expect to confirm some blank areas by hand.
+
+Upgrading adds migration `20261105_10` (two new tables and one nullable column). The backend refuses to start until it has run: back up `backend/ticketflow.db`, then run `python -m alembic upgrade head`.
+
 ## Invoice comparison (Batch #16)
 
 The **Invoice comparison** page lets a project engineer manually enter one

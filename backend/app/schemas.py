@@ -20,6 +20,7 @@ class BatchOut(BaseModel):
     intake_mode: str
     status: str
     created_at: datetime
+    expected_ticket_count: int | None = None
     files: list[FileOut] = []
 
 

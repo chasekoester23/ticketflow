@@ -4,14 +4,13 @@ Each file is processed independently, so one bad PDF never fails the whole batch
 """
 import hashlib
 import logging
-import os
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import Batch, Ticket, UploadedFile
-from . import splitter
+from . import scan_manifest, splitter
 from .extraction import ExtractionError, Extractor
 from .validation import compute_flags, parse_date, parse_tonnage
 
@@ -22,7 +21,7 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _pages_for(file: UploadedFile, data: bytes):
+def pages_for(file: UploadedFile, data: bytes):
     if file.original_name.lower().endswith(".pdf"):
         return splitter.render_pdf_pages(
             data, dpi=settings.render_dpi,
@@ -33,12 +32,30 @@ def _pages_for(file: UploadedFile, data: bytes):
     return [splitter.load_image(data, max_pixels=settings.max_image_pixels)]
 
 
+def set_blank_fields(ticket: Ticket) -> None:
+    """A real, unapproved record with no values: nothing is invented."""
+    ticket.ticket_number = None
+    ticket.delivery_date = None
+    ticket.material_type = None
+    ticket.tonnage = None
+    ticket.supplier = None
+    ticket.job_location = None
+    ticket.raw_extraction = None
+    ticket.tonnage_confirmed = False
+    ticket.price_snapshot_state = "pending"
+    ticket.flags = compute_flags(
+        ticket_number=None, delivery_date=None, material_type=None,
+        tonnage=None, supplier=None, job_location=None,
+    )
+    ticket.status = "needs_review"
+
+
 def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extractor | None, *, manual: bool = False) -> None:
     file.status, file.error = "processing", None
     db.commit()
     try:
         data = Path(file.storage_path).read_bytes()
-        pages = _pages_for(file, data)
+        pages = pages_for(file, data)
     except (splitter.PdfError, OSError) as exc:
         file.status, file.error = "failed", str(exc)
         db.commit()
@@ -50,29 +67,27 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
     existing = {(t.source_page, t.position): t for t in file.tickets}
     visited: set[tuple[int, int]] = set()
 
-    crops_dir = settings.storage_dir / "crops" / str(file.batch_id)
-    crops_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    slots = scan_manifest.slots_by_position(db, file.id)
     any_failure = False
     detected_crops = 0
 
     for page_no, page_img in enumerate(pages, start=1):
         for crop in splitter.split_page(page_img, layout):
-            if splitter.is_blank(crop.image):
-                continue  # blank single-page scan or empty quadrant
-            detected_crops += 1
+            # Every slot goes on record, including blank-looking ones.
+            slot = scan_manifest.record_slot(db, file, slots, page_no, crop, sha256_bytes)
             key = (page_no, crop.position)
-            visited.add(key)
             ticket = existing.get(key)
+            if slot.detection != "content" and slot.decision != "real_ticket" and ticket is None:
+                continue  # kept in the manifest for a person; no ticket record
+            detected_crops += 1
+            visited.add(key)
             if ticket is not None and ticket.status != "failed":
                 continue  # never overwrite review work on an existing ticket
 
-            path = crops_dir / f"f{file.id}_p{page_no}_c{crop.position}.png"
-            # Crops contain private job documents; don't create world-readable
-            # images under a permissive process umask.
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "wb") as stream:
-                crop.image.save(stream, format="PNG")
-            path.chmod(0o600)
+            image = scan_manifest.rotated(crop.image, slot.rotation)
+            path = Path(scan_manifest.rotated_path(slot.crop_path, slot.rotation))
+            if slot.rotation:
+                scan_manifest.write_private_png(path, image)
             if ticket is None:
                 ticket = Ticket(
                     batch_id=file.batch_id, file_id=file.id,
@@ -80,34 +95,23 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
                 )
             ticket.crop_box = list(crop.box)
             ticket.crop_path = str(path)
-            ticket.crop_sha256 = sha256_bytes(path.read_bytes())
+            # The unrotated crop's hash: rotating must not defeat the check
+            # that an identical scan cannot be approved twice.
+            ticket.crop_sha256 = slot.crop_sha256
             ticket.error = None
 
             if manual:
                 # Manual intake creates real, unapproved records with actual
                 # stored image crops. No model call and no invented values.
                 # Never replace an existing reviewed/approved ticket.
-                ticket.ticket_number = None
-                ticket.delivery_date = None
-                ticket.material_type = None
-                ticket.tonnage = None
-                ticket.supplier = None
-                ticket.job_location = None
-                ticket.raw_extraction = None
-                ticket.tonnage_confirmed = False
-                ticket.price_snapshot_state = "pending"
-                ticket.flags = compute_flags(
-                    ticket_number=None, delivery_date=None, material_type=None,
-                    tonnage=None, supplier=None, job_location=None,
-                )
-                ticket.status = "needs_review"
+                set_blank_fields(ticket)
                 db.add(ticket)
                 continue
 
             if extractor is None:
                 raise RuntimeError("AI extraction requires a configured extractor")
             try:
-                extracted, raw = extractor.extract(crop.image)
+                extracted, raw = extractor.extract(image)
             except ExtractionError as exc:
                 ticket.status = "failed"
                 ticket.error = str(exc)
@@ -138,10 +142,7 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
     # queue that appears to account for every original delivery.
     if detected_crops == 0:
         file.status = "failed"
-        file.error = (
-            "No ticket content detected in this file. Inspect the original "
-            "scan and layout, then upload a corrected document."
-        )
+        file.error = scan_manifest.NO_CONTENT_ERROR
         db.commit()
         return
 
@@ -151,7 +152,7 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
         for key, t in existing.items()
     )
     file.status = "failed" if any_failure else "ready_for_review"
-    file.error = "Some tickets could not be extracted" if any_failure else None
+    file.error = scan_manifest.SOME_FAILED_ERROR if any_failure else None
     db.commit()
 
 

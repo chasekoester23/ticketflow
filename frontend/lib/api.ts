@@ -15,7 +15,7 @@ export type Role = "owner" | "manager" | "clerk" | "viewer";
 export type Permission =
   | "records.read" | "tickets.upload" | "tickets.edit" | "tickets.flag" | "tickets.verify"
   | "tickets.skip" | "tickets.price_override" | "projects.manage" | "pricing.manage"
-  | "invoices.manage" | "team.manage";
+  | "invoices.manage" | "team.manage" | "scans.resolve" | "scans.confirm_blank";
 export type Account = {
   id: number;
   username: string;
@@ -106,13 +106,59 @@ async function check(res: Response) {
   return res;
 }
 
-export async function uploadBatch(files: File[], layout: string, projectId?: number, intakeMode: "extract" | "manual" = "extract"): Promise<Batch> {
+export async function uploadBatch(files: File[], layout: string, projectId?: number, intakeMode: "extract" | "manual" = "extract", expectedTickets?: number): Promise<Batch> {
   const form = new FormData();
+  if (expectedTickets !== undefined) form.append("expected_ticket_count", String(expectedTickets));
   form.append("layout", layout);
   form.append("intake_mode", intakeMode);
   if (projectId !== undefined) form.append("project_id", String(projectId));
   files.forEach((f) => form.append("files", f));
   return (await check(await apiFetch(`${API}/api/batches`, { method: "POST", body: form }))).json();
+}
+
+// Scan check: every physical slot on every page, ticket or not.
+export type ManifestSlot = {
+  id: number; position: number;
+  state: "ticket" | "suspected_blank" | "empty" | "confirmed_blank";
+  detection: "content" | "faint" | "empty"; decision: string | null; rotation: number;
+  crop_box: number[]; crop_sha256: string;
+  ticket_id: number | null; ticket_number: string | null; ticket_status: string | null;
+};
+export type Manifest = {
+  batch_id: number; layout: string;
+  status: "processing" | "needs_attention" | "count_not_confirmed" | "count_matches";
+  expected_ticket_count: number | null;
+  counts: {
+    files: number; failed_files: number; legacy_files: number; pages: number; slots: number;
+    records: number; suspected_blank: number; empty: number; confirmed_blank: number;
+    needs_review: number; flagged: number; verified: number; failed_tickets: number; skipped: number;
+  };
+  blockers: string[];
+  files: {
+    id: number; original_name: string; sha256: string; status: string; error: string | null;
+    legacy: boolean; pages: { page: number; slots: ManifestSlot[] }[];
+  }[];
+};
+export const slotImageUrl = (id: number) => `${API}/api/scan-slots/${id}/image`;
+export const pageImageUrl = (fileId: number, page: number) => `${API}/api/files/${fileId}/pages/${page}/image`;
+export async function getManifest(batchId: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/batches/${batchId}/manifest`))).json();
+}
+export async function setExpectedCount(batchId: number, expected: number | null): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/batches/${batchId}/expected-count`,
+    json("PUT", { expected_ticket_count: expected })))).json();
+}
+export async function buildManifest(batchId: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/batches/${batchId}/manifest/rebuild`, { method: "POST" }))).json();
+}
+export async function markSlotTicket(slotId: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/scan-slots/${slotId}/mark-ticket`, { method: "POST" }))).json();
+}
+export async function confirmSlotBlank(slotId: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/scan-slots/${slotId}/confirm-blank`, { method: "POST" }))).json();
+}
+export async function rotateSlot(slotId: number, rotation: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/scan-slots/${slotId}/rotate`, json("POST", { rotation })))).json();
 }
 
 export async function getBatch(id: number): Promise<Batch> {

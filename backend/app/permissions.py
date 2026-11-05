@@ -45,6 +45,11 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     "tickets.verify": _APPROVERS,
     "tickets.skip": _APPROVERS,
     "tickets.price_override": _APPROVERS,
+    # Marking a faint slot as a ticket only adds an unapproved record.
+    "scans.resolve": _PREPARERS,
+    # Confirming blank rules a slot out of the count, so it is a manager
+    # decision, like skipping.
+    "scans.confirm_blank": _APPROVERS,
     "projects.manage": _APPROVERS,
     "pricing.manage": _APPROVERS,
     "invoices.manage": _APPROVERS,
