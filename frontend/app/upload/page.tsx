@@ -13,66 +13,68 @@ import {
   listProjects,
   listSuppliers,
   Project,
-  getTicketHistory,
   getTickets,
-  patchTicket,
   recordReviewTiming,
-  type HistoryEntry,
   retryBatch,
-  ticketAction,
   ticketImageUrl,
-  uploadBatch,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
+import { BatchQueue } from "./BatchQueue";
+import { ReviewForm, STATUS_LABEL, STATUS_STYLE, previousValues } from "./ReviewForm";
 import { ScanCheck } from "./ScanCheck";
+import { ScanViewer, zoomIn, zoomOut } from "./ScanViewer";
+import { UploadPanel } from "./UploadPanel";
 
-const STATUS_STYLE: Record<string, string> = {
-  needs_review: "bg-amber-100 text-amber-800",
-  flagged: "bg-orange-100 text-orange-800",
-  verified: "bg-emerald-100 text-emerald-800",
-  skipped: "bg-slate-200 text-slate-600",
-  failed: "bg-red-100 text-red-800",
-};
-const STATUS_LABEL: Record<string, string> = {
-  needs_review: "Needs review",
-  flagged: "Flagged",
-  verified: "Verified",
-  skipped: "Skipped",
-  failed: "Failed",
-};
 const BATCH_LABEL: Record<string, string> = {
   uploaded: "Uploaded",
   processing: "Processing",
   ready_for_review: "Ready for review",
   failed: "Failed",
 };
+const DISCARD = "Discard unsaved changes to this ticket? Select Save changes to keep your corrections.";
+const isTyping = (target: EventTarget | null) => {
+  const element = target as HTMLElement | null;
+  return Boolean(element?.isContentEditable || element?.closest?.("input, textarea, select, [contenteditable], [role=dialog]"));
+};
+const pendingStatus = (t: Ticket) => t.status === "needs_review" || t.status === "failed";
+
+const SHORTCUTS: [string, string][] = [
+  ["⌘/Ctrl + Enter", "Accept (or save) and go to the next ticket"],
+  ["Enter", "Next field, then the Accept button"],
+  ["Alt + D", "Material, supplier and job: same as previous ticket"],
+  ["Alt + ↑ / ↓", "Previous or next ticket, even while typing"],
+  ["J / K, Alt + ← / →", "Next or previous ticket, outside a field"],
+  ["+ / −  ·  0", "Zoom the scan in or out  ·  fit to width"],
+  ["R", "Rotate the view (the stored scan isn't changed)"],
+  ["/", "Search the ticket queue"],
+  ["Esc", "Leave the current field"],
+  ["?", "Show or hide this list"],
+];
 
 export default function Home() {
   const { can } = useAccount();
   const canUpload = can("tickets.upload");
-  const [layout, setLayout] = useState<"single" | "grid_2x2">("grid_2x2");
-  const [intakeMode, setIntakeMode] = useState<"extract" | "manual">("manual");
-  const [files, setFiles] = useState<File[]>([]);
   const [batch, setBatch] = useState<Batch | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState(0);
   const [formDirty, setFormDirty] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<"pending" | "flagged" | "all">("pending");
   const [queueSearch, setQueueSearch] = useState("");
+  const [queueOpen, setQueueOpen] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState("");
-  const [expectedTickets, setExpectedTickets] = useState("");
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [imageVersion, setImageVersion] = useState(0);
   const [timingEnabled, setTimingEnabled] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [session, setSession] = useState({ accepted: 0, seconds: 0 });
   const openedAt = useRef<Record<number, number>>({});
   const [catalog, setCatalog] = useState<{ suppliers: string[]; materials: string[] }>({ suppliers: [], materials: [] });
 
@@ -112,18 +114,28 @@ export default function Home() {
     getManifest(batchId).then(setManifest).catch(() => undefined);
   }, [batchId, ticketStates]);
 
-  // Deep-link directly to one record in a batch, when supplied by Records.
+  // Open the batch and ticket in the address, or the first one needing work.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const id = Number(params.get("batch"));
     const ticketId = Number(params.get("ticket"));
-    if (id) {
-      refresh(id).then(({ tickets: loaded }) => {
-        const index = loaded.findIndex((t) => t.id === ticketId);
-        if (index >= 0) setSelected(index);
-      }).catch((e) => setError(e.message));
-    }
+    if (!id) return;
+    setOpening(true);
+    refresh(id).then(({ tickets: loaded }) => {
+      const wanted = loaded.findIndex((t) => t.id === ticketId);
+      const firstOpen = loaded.findIndex(pendingStatus);
+      if (wanted >= 0) setSelected(wanted);
+      else if (firstOpen >= 0) setSelected(firstOpen);
+    }).catch((e) => setError(e.message)).finally(() => setOpening(false));
   }, [refresh]);
+
+  // Keep the address on the current ticket, so a reload or a shared link lands here.
+  const current = tickets[selected];
+  useEffect(() => {
+    if (batchId === undefined) return;
+    const suffix = current ? `&ticket=${current.id}` : "";
+    window.history.replaceState(null, "", `/upload?batch=${batchId}${suffix}`);
+  }, [batchId, current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll the real backend status until processing actually finishes.
   useEffect(() => {
@@ -132,34 +144,15 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [batch, refresh]);
 
-  const addFiles = (list: FileList | null) => {
-    if (!list) return;
-    // FileList is live. Snapshot it BEFORE clearing the file input; React
-    // may run a state updater after the input's FileList has become empty.
-    const selectedFiles = Array.from(list);
-    if (selectedFiles.length) setFiles((prev) => [...prev, ...selectedFiles]);
-  };
-
-  async function onUpload() {
-    if (formDirty && !window.confirm("You have unsaved ticket corrections. Discard them and start a new upload?")) return;
-    setError(null);
-    setBusy(true);
-    try {
-      const b = await uploadBatch(files, layout, projectId ? Number(projectId) : undefined, intakeMode,
-        expectedTickets.trim() ? Number(expectedTickets) : undefined);
-      setFiles([]);
-      setExpectedTickets("");
-      setSelected(0);
-      setFormDirty(false);
-      setReviewFilter("pending");
-      setQueueSearch("");
-      setBatch(b);
-      await refresh(b.id);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+  async function onUploaded(uploaded: Batch) {
+    if (formDirty && !window.confirm("You have unsaved ticket corrections. Discard them and open the new upload?")) return;
+    setSelected(0);
+    setFormDirty(false);
+    setReviewFilter("pending");
+    setQueueSearch("");
+    setShowUpload(false);
+    setBatch(uploaded);
+    await refresh(uploaded.id);
   }
 
   async function onRetry() {
@@ -176,21 +169,42 @@ export default function Home() {
     }
   }
 
-  const current = tickets[selected];
   useEffect(() => {
     if (current && openedAt.current[current.id] === undefined) openedAt.current[current.id] = Date.now();
-  }, [current]);
-  // Opt-in pilot measurement. It can never block or fail an approval.
+    setNotice(null);
+  }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch the next scans early, so moving on feels instant.
+  useEffect(() => {
+    const upcoming = [
+      tickets[selected + 1],
+      tickets.find((t, i) => i > selected && pendingStatus(t)),
+    ];
+    upcoming.forEach((t) => {
+      if (t) new Image().src = ticketImageUrl(t.id);
+    });
+  }, [selected, tickets]);
+
   function onAccepted(ticketId: number) {
     const started = openedAt.current[ticketId];
-    if (!timingEnabled || started === undefined) return;
+    if (started === undefined) return;
     const seconds = Math.min(3600, Math.max(0.1, Math.round((Date.now() - started) / 100) / 10));
     delete openedAt.current[ticketId];
-    recordReviewTiming(ticketId, seconds).catch(() => undefined);
+    setSession((s) => ({ accepted: s.accepted + 1, seconds: s.seconds + seconds }));
+    // Opt-in pilot measurement. It can never block or fail an approval.
+    if (timingEnabled) recordReviewTiming(ticketId, seconds).catch(() => undefined);
   }
-  const pending = (t: Ticket) => t.status === "needs_review" || t.status === "failed";
+
+  // Someone else changed this ticket. Show them the latest values rather than
+  // quietly applying the person's stale view on top.
+  const onStale = useCallback((message: string) => {
+    setFormDirty(false);
+    setNotice(message);
+    if (batchId !== undefined) refresh(batchId).catch((e) => setError(e.message));
+  }, [batchId, refresh]);
+
   const counts = {
-    review: tickets.filter(pending).length,
+    review: tickets.filter(pendingStatus).length,
     flagged: tickets.filter((t) => t.status === "flagged").length,
     verified: tickets.filter((t) => t.status === "verified").length,
     skipped: tickets.filter((t) => t.status === "skipped").length,
@@ -198,7 +212,7 @@ export default function Home() {
   const done = counts.verified + counts.skipped;
   const progress = tickets.length ? (done / tickets.length) * 100 : 0;
   const queue = tickets.map((t, index) => ({ t, index })).filter(({ t }) => {
-    if (reviewFilter === "pending" && !pending(t)) return false;
+    if (reviewFilter === "pending" && !pendingStatus(t)) return false;
     if (reviewFilter === "flagged" && t.status !== "flagged") return false;
     const search = queueSearch.trim().toLowerCase();
     if (!search) return true;
@@ -208,33 +222,55 @@ export default function Home() {
 
   function selectTicket(index: number) {
     if (index === selected) return;
-    if (formDirty && !window.confirm("Discard unsaved changes to this ticket? Select Save changes to keep your corrections.")) return;
+    if (formDirty && !window.confirm(DISCARD)) return;
     setSelected(index);
     setFormDirty(false);
-    setZoom(1);
-    setRotation(0);
   }
 
-  // Navigation shortcuts are opt-in (Alt + arrow), never steal typing
-  // from editable controls, and reuse the same unsaved-change guard as clicks.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (!event.altKey || event.ctrlKey || event.metaKey || !tickets.length) return;
-      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
-      const element = event.target as HTMLElement | null;
-      if (element?.isContentEditable || element?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
-      event.preventDefault();
-      const next = selected + (event.key === "ArrowRight" ? 1 : -1);
-      if (next < 0 || next >= tickets.length) return;
-      if (formDirty && !window.confirm("Discard unsaved changes to this ticket? Select Save changes to keep your corrections.")) return;
-      setSelected(next);
-      setFormDirty(false);
-      setZoom(1);
-      setRotation(0);
+      if (event.ctrlKey || event.metaKey) return;
+      if (event.key === "Escape") {
+        if (help) setHelp(false);
+        else if (isTyping(event.target)) (event.target as HTMLElement).blur();
+        return;
+      }
+      if (!tickets.length) return;
+      const typing = isTyping(event.target);
+      const move = (step: number) => {
+        event.preventDefault();
+        const next = selected + step;
+        if (next < 0 || next >= tickets.length) return;
+        if (formDirty && !window.confirm(DISCARD)) return;
+        setSelected(next);
+        setFormDirty(false);
+      };
+      if (event.altKey) {
+        // Alt+↑/↓ means nothing in a one-line field, so they work while typing.
+        // Alt+←/→ move by word there, so those never steal from typing.
+        if (event.key === "ArrowDown") move(1);
+        else if (event.key === "ArrowUp") move(-1);
+        else if (!typing && event.key === "ArrowRight") move(1);
+        else if (!typing && event.key === "ArrowLeft") move(-1);
+        return;
+      }
+      if (typing) return;
+      if (event.key === "j") move(1);
+      else if (event.key === "k") move(-1);
+      else if (event.key === "+" || event.key === "=") setZoom(zoomIn);
+      else if (event.key === "-") setZoom(zoomOut);
+      else if (event.key === "0") setZoom(1);
+      else if (event.key === "r") setRotation((v) => (v + 90) % 360);
+      else if (event.key === "?") setHelp((v) => !v);
+      else if (event.key === "/") {
+        event.preventDefault();
+        setQueueOpen(true);
+        requestAnimationFrame(() => document.getElementById("queue-search")?.focus());
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, tickets.length, formDirty]);
+  }, [selected, tickets.length, formDirty, help]);
 
   // Complete the pending queue first, then automatically revisit flagged tickets.
   // A ticket is never auto-accepted; only the explicit Accept action verifies.
@@ -244,19 +280,37 @@ export default function Home() {
       const later = tickets.findIndex((t, i) => i > selected && predicate(t));
       return later >= 0 ? later : tickets.findIndex((t, i) => i < selected && predicate(t));
     };
-    let next = findNext(pending);
+    let next = findNext(pendingStatus);
     if (next < 0) {
       next = findNext((t) => t.status === "flagged");
       if (next >= 0) setReviewFilter("flagged");
     } else {
       setReviewFilter("pending");
     }
-    if (next >= 0) {
-      setSelected(next);
-      setZoom(1);
-      setRotation(0);
-    }
+    if (next >= 0) setSelected(next);
   }
+
+  // Everything for one ticket fits on one screen: the panes take whatever height
+  // is left under the batch summary, so Accept and the scan are always in view.
+  const workspace = useRef<HTMLElement>(null);
+  const hasWorkspace = tickets.length > 0;
+  useEffect(() => {
+    if (!hasWorkspace) return;
+    const update = () => {
+      const element = workspace.current;
+      if (!element) return;
+      const top = element.getBoundingClientRect().top + window.scrollY;
+      element.style.setProperty("--tf-pane-height", `${Math.max(540, window.innerHeight - top - 12)}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(document.body);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [hasWorkspace]);
 
   useEffect(() => {
     if (!formDirty) return;
@@ -268,145 +322,76 @@ export default function Home() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [formDirty]);
 
+  const allResolved = tickets.length > 0 && counts.review === 0 && counts.flagged === 0;
+  const project = batch ? projects.find((p) => p.id === batch.project_id) : undefined;
+  const failedFiles = batch?.files.filter((f) => f.error) ?? [];
+  const pace = session.accepted >= 3 ? Math.round(session.seconds / session.accepted) : null;
 
   return (
-    <div className="space-y-5 pb-14">
-      <div className="tf-page-heading">
+    <div className="space-y-3 pb-6">
+      {!batch && !opening && <div className="tf-page-heading">
         <div>
           <p className="tf-eyebrow">DELIVERY DOCUMENTATION / TICKET INTAKE</p>
           <h1 className="tf-page-title">Ticket intake & review</h1>
           <p className="tf-page-description">Upload delivery scans, compare extracted information with the original, and approve each ticket.</p>
         </div>
         <div className="tf-status tf-status-attention">Human verification required</div>
-      </div>
+      </div>}
 
-      {configured === false && (
-        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      {configured === false && (!batch || showUpload) && (
+        <div role="alert" className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           AI extraction is not configured. <strong>Manual entry works without an API key.</strong> Select “Manual entry” below, then run the local processing worker to prepare your scans. AI extraction requires a provider key in backend/.env.
         </div>
       )}
       {error && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+        <div role="alert" className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
           {error} <button type="button" className="ml-3 font-semibold underline" onClick={() => setError(null)}>Dismiss</button>
         </div>
       )}
+      {notice && (
+        <div role="alert" data-testid="stale-notice" className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+          {notice}
+        </div>
+      )}
 
-      {!canUpload && (
+      {!canUpload && !opening && (
         <p className="tf-notice" role="note">Your role is view-only. You can open batches and ticket images, but uploads and edits are disabled.</p>
       )}
-      {canUpload && <section className="tf-panel">
-        <div className="tf-panel-heading">
-          <div>
-            <h2 className="tf-panel-title">1. Upload delivery tickets</h2>
-            <p className="mt-0.5 text-xs text-slate-500">PDF, JPG, or PNG · All selected files must be valid; none are processed if any is rejected</p>
-          </div>
-          <a className="text-sm font-medium text-slate-700 underline-offset-2 hover:underline" href="/projects">Manage projects</a>
-        </div>
-        <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div>
-            <div
-              role="button"
-              tabIndex={0}
-              aria-label="Select scanned ticket files"
-              onClick={() => inputRef.current?.click()}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inputRef.current?.click(); } }}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
-              className={dragOver ? "flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-orange-500 bg-orange-50 p-6 text-center outline-none focus-visible:ring-2 focus-visible:ring-orange-500" : "flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center outline-none transition hover:border-slate-500 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-slate-800"}
-            >
-              <span className="mb-2 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-xl text-slate-500" aria-hidden="true">↑</span>
-              <span className="text-sm font-semibold text-slate-800">Drop scanned tickets here, or browse files</span>
-              <span className="mt-1 text-xs text-slate-500">Single tickets or four tickets per page</span>
-              <input ref={inputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-            </div>
-            {files.length > 0 && (
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-between text-xs text-slate-500">
-                  <span>{files.length} selected file(s)</span>
-                  <button type="button" className="font-medium text-slate-700 hover:underline" onClick={() => setFiles([])}>Clear all</button>
-                </div>
-                <ul className="max-h-32 space-y-1 overflow-auto text-xs text-slate-700">
-                  {files.map((file, i) => (
-                    <li key={i} className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2">
-                      <span className="min-w-0 truncate">{file.name}</span>
-                      <button type="button" className="font-semibold text-slate-500 hover:text-red-700" aria-label={"Remove " + file.name}
-                        onClick={() => setFiles((previous) => previous.filter((_, index) => index !== i))}>Remove</button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col justify-between gap-4">
-            <div className="space-y-3">
-              <label className="block text-sm font-medium text-slate-700">Project
-                <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-slate-700 focus:outline-none">
-                  <option value="">Select a project...</option>
-                  {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
-                </select>
-              </label>
-              {projects.length === 0 && <p className="text-xs text-amber-800">No projects yet. <a className="underline" href="/projects">Create one first</a>.</p>}
-              <fieldset className="rounded border border-[#dce1e6] p-3">
-                <legend className="px-1 text-xs font-bold text-[#425060]">How should these tickets be entered?</legend>
-                <div className="mt-1 grid gap-2">
-                  <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
-                    <input type="radio" name="intake-mode" value="manual" checked={intakeMode === "manual"}
-                      onChange={() => setIntakeMode("manual")} />
-                    <span><strong>Manual entry</strong><span className="mt-0.5 block text-[#718090]">Create blank fields beside each scan. No AI calls.</span></span>
-                  </label>
-                  <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
-                    <input type="radio" name="intake-mode" value="extract" checked={intakeMode === "extract"}
-                      onChange={() => setIntakeMode("extract")} />
-                    <span><strong>AI extraction</strong><span className="mt-0.5 block text-[#718090]">Requires a configured provider key. Always review before approval.</span></span>
-                  </label>
-                </div>
-              </fieldset>
-              <label className="block text-sm font-medium text-slate-700">Document layout
-                <select value={layout} onChange={(e) => setLayout(e.target.value as "single" | "grid_2x2")}
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-slate-700 focus:outline-none">
-                  <option value="grid_2x2">Four tickets per page (2×2)</option>
-                  <option value="single">One ticket per page</option>
-                </select>
-              </label>
-              <label className="block text-sm font-medium text-slate-700">Paper tickets in this upload (optional)
-                <input inputMode="numeric" pattern="[0-9]*" value={expectedTickets}
-                  onChange={(e) => setExpectedTickets(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-slate-700 focus:outline-none" />
-                <span className="mt-1 block text-xs font-normal text-slate-500">Count the paper. TicketFlow checks it against the tickets it finds.</span>
-              </label>
-            </div>
-            <button type="button" disabled={!files.length || !projectId || busy} onClick={onUpload}
-              className="tf-primary-button w-full disabled:opacity-40">
-              {busy ? "Uploading..." : intakeMode === "manual" ? "Queue for manual entry" : "Queue for AI extraction"}
-            </button>
-          </div>
-        </div>
-      </section>}
+      {!batch && !opening && <BatchQueue />}
+      {canUpload && !opening && (!batch || showUpload) && <UploadPanel projects={projects} onUploaded={onUploaded} onError={setError} />}
 
       {batch && (
-        <section className="tf-panel p-5" aria-live="polite">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="font-semibold text-slate-900">Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}</h2>
-              <p className="mt-1 text-sm text-slate-600">{tickets.length} tickets · {counts.verified} accepted · {counts.flagged} flagged · {counts.review} awaiting review · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</p>
+        <section className="tf-panel px-4 py-3" aria-live="polite">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <div className="min-w-0">
+              <a href="/upload" className="tf-link" onClick={(event) => { if (formDirty && !window.confirm(DISCARD)) event.preventDefault(); }}>← All uploads</a>
+              <h1 className="mt-0.5 text-[15px] font-bold text-[#1d2b38]">
+                Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}
+                {project && <span className="ml-2 font-medium text-[#657182]">{project.code} · {project.name}</span>}
+              </h1>
+              <p className="mt-0.5 text-xs text-[#657182]">{tickets.length} tickets · {counts.verified} accepted · {counts.flagged} flagged · {counts.review} awaiting review · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" className="tf-secondary-button" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts"><kbd className="tf-kbd">?</kbd> Shortcuts</button>
               {batch.status === "failed" && canUpload && (
-                <button type="button" onClick={onRetry} disabled={retrying}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium disabled:opacity-40">
+                <button type="button" onClick={onRetry} disabled={retrying} className="tf-secondary-button disabled:opacity-40">
                   {retrying ? "Retrying…" : "Retry failed files"}
                 </button>
               )}
-              <a className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                href={exportUrl(batch.id)}>Export Excel</a>
+              <a className="tf-secondary-button" href={exportUrl(batch.id)}>Export Excel</a>
+              {canUpload && <button type="button" className="tf-secondary-button" aria-expanded={showUpload} onClick={() => setShowUpload((v) => !v)}>New upload</button>}
             </div>
           </div>
+          {tickets.length > 0 && <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <div className="tf-progress min-w-[160px] flex-1" role="progressbar" aria-label="Tickets accepted or skipped" aria-valuenow={done} aria-valuemax={tickets.length} aria-valuemin={0}>
+              <div style={{ width: progress + "%" }} />
+            </div>
+            <span className="text-xs font-bold tabular-nums text-[#293948]">{done} / {tickets.length} resolved</span>
+            <span className="text-xs text-[#657182]"><strong className="text-[#216c43]">{counts.verified}</strong> accepted · <strong className="text-[#995a18]">{counts.review}</strong> to review · <strong className="text-[#995a18]">{counts.flagged}</strong> flagged for later{counts.skipped > 0 && <> · <strong>{counts.skipped}</strong> skipped</>}</span>
+            {pace !== null && <span className="text-xs text-[#657182]" data-testid="session-pace">This session: {session.accepted} accepted, about {pace} s each</span>}
+          </div>}
           {batch.status === "uploaded" && (
-            <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700" role="status">
+            <p className="tf-notice mt-3" role="status">
               Your files are saved in the processing queue. A separate TicketFlow worker must be running
               to {batch.intake_mode === "manual" ? "prepare ticket images for manual entry" : "extract ticket fields"}.
               From the backend folder, run <code>python scripts/run_worker.py</code>.
@@ -414,17 +399,17 @@ export default function Home() {
             </p>
           )}
           {batch.status === "failed" && (
-            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <p className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               Some files failed to process. Any successfully extracted tickets are still available for review.
               Retrying will preserve accepted tickets and manually corrected values.
             </p>
           )}
-          <ul className="mt-3 space-y-1 text-xs text-slate-500">
+          {(failedFiles.length > 0 || tickets.length === 0) && <ul className="mt-2 space-y-1 text-xs text-[#657182]">
             {batch.files.map((file) => <li key={file.id}>
-              <span className="font-medium text-slate-700">{file.original_name}</span>: {BATCH_LABEL[file.status] ?? file.status}
+              <span className="font-medium text-[#354454]">{file.original_name}</span>: {BATCH_LABEL[file.status] ?? file.status}
               {file.error && <span className="ml-1 text-red-700">({file.error})</span>}
             </li>)}
-          </ul>
+          </ul>}
           {manifest && manifest.batch_id === batch.id && (
             <ScanCheck key={batch.id} manifest={manifest} onError={setError}
               onChanged={(next) => {
@@ -440,448 +425,118 @@ export default function Home() {
         </section>
       )}
 
+      {allResolved && batch && (
+        <section className="tf-panel flex flex-wrap items-center justify-between gap-3 border-[#cce4d2] bg-[#f3f9f4] px-4 py-3" data-testid="batch-complete">
+          <p className="text-sm font-semibold text-[#216c43]">All tickets have been resolved.
+            {manifest?.status === "count_not_confirmed" && <span className="ml-1 font-normal">Enter your paper count in the scan check to confirm nothing was missed.</span>}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <a className="tf-secondary-button" href="/invoices">Compare an invoice</a>
+            <a className="tf-secondary-button" href="/upload">All uploads</a>
+          </div>
+        </section>
+      )}
+      {!allResolved && counts.review === 0 && counts.flagged > 0 && (
+        <p className="tf-notice text-[#7c4518]">Review flagged tickets before finishing.</p>
+      )}
+
       {tickets.length > 0 && current && (
-        <section className="space-y-4" aria-label="Ticket review workspace">
-          <div className="tf-panel px-5 py-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">2. Compare & accept each ticket</h2>
-                <p className="mt-1 text-sm text-slate-600">The original scan stays beside the extracted fields. Nothing is verified until you accept it.</p>
+        <section ref={workspace} className={`tf-review-grid ${queueOpen ? "" : "tf-review-grid-noqueue"}`} aria-label="Ticket review workspace">
+          {queueOpen && <section className="tf-panel tf-review-pane" aria-label="Ticket queue">
+            <div className="border-b border-[#e7eaee] p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-xs font-bold text-[#3c4b5b]">Ticket queue</h2>
+                <button type="button" className="tf-link text-[11px]" onClick={() => setQueueOpen(false)}>Hide</button>
               </div>
-              <span className="text-sm font-semibold tabular-nums text-slate-800">{done} / {tickets.length} resolved</span>
-            </div>
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100" role="progressbar"
-              aria-label="Tickets accepted or skipped" aria-valuenow={done} aria-valuemax={tickets.length} aria-valuemin={0}>
-              <div className="h-full rounded-full bg-emerald-600 transition-all" style={{ width: progress + "%" }} />
-            </div>
-            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-600">
-              <span><strong className="text-emerald-700">{counts.verified}</strong> accepted</span>
-              <span><strong className="text-amber-700">{counts.review}</strong> to review</span>
-              <span><strong className="text-orange-700">{counts.flagged}</strong> flagged for later</span>
-              {counts.skipped > 0 && <span><strong>{counts.skipped}</strong> skipped</span>}
-              {counts.review === 0 && counts.flagged > 0 && <span className="font-medium text-orange-800">Review flagged tickets before finishing.</span>}
-              {counts.review === 0 && counts.flagged === 0 && <span className="font-medium text-emerald-800">All tickets have been resolved.</span>}
-            </div>
-          </div>
-
-          <div className="tf-panel">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e7eaee] px-4 py-3">
-              <h3 className="text-[12px] font-bold text-[#3c4b5b]">Ticket numbers · quick navigation</h3>
-              <span className="text-[11px] text-[#7a8794]">Alt + ← / → to move between tickets</span>
-            </div>
-            <div className="flex gap-2 overflow-x-auto px-4 py-3" role="group" aria-label="Review queue quick navigation">
-              {tickets.map((ticket, index) => (
-                <button type="button" key={ticket.id}
-                  aria-label={`Open ticket ${index + 1}: ${ticket.ticket_number || "number not entered"}`}
-                  aria-current={selected === index ? "true" : undefined}
-                  onClick={() => selectTicket(index)}
-                  className={`shrink-0 rounded border px-3 py-2 text-left text-[11px] font-semibold tabular-nums ${selected === index ? "border-[#d66a34] bg-[#fff4ec] text-[#99501e]" : "border-[#dce1e6] bg-white text-[#455464] hover:border-[#aab5c0]"}`}>
-                  <span className="block">{ticket.ticket_number || `Ticket ${index + 1}`}</span>
-                  <span className={`mt-1 block text-[9px] uppercase tracking-wide ${ticket.status === "verified" ? "text-[#24854a]" : ticket.status === "flagged" ? "text-[#b26a22]" : "text-[#83909e]"}`}>
-                    {STATUS_LABEL[ticket.status] || ticket.status}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
-            <section className="tf-panel">
-              <div className="tf-panel-heading">
-                <div>
-                  <h3 className="font-semibold text-slate-900">Original scanned ticket</h3>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Ticket {selected + 1} of {tickets.length} · Page {current.source_page}, crop {current.position + 1}
-                  </p>
-                </div>
-                <span className={"rounded-full px-2.5 py-1 text-xs font-semibold " + (STATUS_STYLE[current.status] ?? "bg-slate-100")}>
-                  {STATUS_LABEL[current.status] ?? current.status}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2">
-                <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => setZoom((v) => Math.max(1, Math.round((v - .25) * 100) / 100))}
-                    disabled={zoom <= 1} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium disabled:opacity-40" aria-label="Zoom out">−</button>
-                  <span className="w-12 text-center text-xs tabular-nums text-slate-600">{Math.round(zoom * 100)}%</span>
-                  <button type="button" onClick={() => setZoom((v) => Math.min(3, Math.round((v + .25) * 100) / 100))}
-                    disabled={zoom >= 3} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium disabled:opacity-40" aria-label="Zoom in">+</button>
-                  <button type="button" onClick={() => setRotation((v) => (v + 90) % 360)}
-                    className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium">Rotate</button>
-                </div>
-                <a href={ticketImageUrl(current.id)} target="_blank" rel="noreferrer"
-                  className="text-xs font-medium text-slate-700 underline-offset-2 hover:underline">Open full image</a>
-              </div>
-              <div className="flex min-h-[440px] max-h-[78vh] items-start justify-center overflow-auto bg-[#e6e9eb] p-5">
-                <img src={ticketImageUrl(current.id) + (imageVersion ? "?v=" + imageVersion : "")} alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
-                  className="h-auto max-h-none rounded-md border border-slate-200 bg-white shadow-sm"
-                  style={{ width: zoom * 100 + "%", maxWidth: "none", transform: "rotate(" + rotation + "deg)" }} />
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3">
-                <p className="text-xs text-slate-500">Inspect handwriting closely. Alt + left/right arrow changes tickets.</p>
-                <div className="flex items-center gap-2">
-                  <button type="button" disabled={selected === 0} onClick={() => selectTicket(selected - 1)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-40">Previous</button>
-                  <button type="button" disabled={selected >= tickets.length - 1} onClick={() => selectTicket(selected + 1)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-40">Next</button>
-                </div>
-              </div>
-            </section>
-
-            <ReviewForm
-              key={current.id + "-" + current.status + "-" + current.tonnage + "-" + current.ticket_number + "-" + current.unit_price + "-" + current.cost}
-              ticket={current}
-              manual={batch?.intake_mode === "manual"}
-              catalog={catalog}
-              onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
-              onAdvance={advance}
-              onAccepted={onAccepted}
-              onDirtyChange={setFormDirty}
-              onError={setError}
-            />
-          </div>
-
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-              <div>
-                <h3 className="font-semibold text-slate-900">Ticket queue</h3>
-                <p className="mt-1 text-xs text-slate-500">Choose a ticket to inspect. Unsaved changes are protected.</p>
-              </div>
-              <div className="flex gap-1 rounded-lg bg-slate-100 p-1" role="group" aria-label="Filter ticket queue">
+              <div className="tf-segmented mt-2 flex" role="group" aria-label="Filter ticket queue">
                 {(["pending", "flagged", "all"] as const).map((filter) => (
-                  <button type="button" key={filter} onClick={() => setReviewFilter(filter)}
-                    className={reviewFilter === filter ? "rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-sm" : "rounded-md px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900"}>
+                  <button type="button" key={filter} className="flex-1" aria-pressed={reviewFilter === filter} onClick={() => setReviewFilter(filter)}>
                     {filter === "pending" ? "To review" : filter === "flagged" ? "Flagged" : "All"}
                   </button>
                 ))}
               </div>
-            </div>
-            <div className="border-b border-slate-100 px-5 py-3">
               <label htmlFor="queue-search" className="sr-only">Search tickets in queue</label>
-              <input id="queue-search" type="search" value={queueSearch}
-                onChange={(e) => setQueueSearch(e.target.value)}
-                placeholder="Find ticket number, supplier, material, or job..."
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-600"
-              />
-              <p className="mt-1.5 text-xs text-slate-500">{queue.length} matching ticket(s) · {tickets.length} total</p>
+              <input id="queue-search" type="search" value={queueSearch} onChange={(e) => setQueueSearch(e.target.value)}
+                placeholder="Number, supplier, material…" className="tf-field mt-2 w-full !min-h-0 !py-1.5 !text-xs" />
+              <p className="mt-1.5 text-[11px] text-[#7a8794]">{queue.length} matching ticket(s) · {tickets.length} total</p>
             </div>
             {queue.length === 0 ? (
-              <div className="p-6 text-sm text-slate-600">
+              <div className="p-3 text-xs text-[#526273]">
                 No tickets match the current view.
-                {queueSearch && <button type="button" className="ml-2 font-semibold underline" onClick={() => setQueueSearch("")}>Clear search</button>}
-                <button type="button" className="ml-2 font-semibold underline" onClick={() => setReviewFilter("all")}>Show all</button>
+                {queueSearch && <button type="button" className="tf-link ml-2" onClick={() => setQueueSearch("")}>Clear search</button>}
+                <button type="button" className="tf-link ml-2" onClick={() => setReviewFilter("all")}>Show all</button>
               </div>
             ) : (
-              <div className="max-h-80 overflow-auto divide-y divide-slate-100">
+              <div className="tf-review-pane-scroll max-h-72 divide-y divide-[#edf0f2] overflow-auto xl:max-h-none">
                 {queue.map(({ t, index }) => (
                   <button type="button" key={t.id} onClick={() => selectTicket(index)}
                     aria-current={selected === index ? "true" : undefined}
-                    className={selected === index ? "flex w-full flex-wrap items-center justify-between gap-3 border-l-[3px] border-[#df702f] bg-[#fff8f2] px-4 py-3 text-left" : "flex w-full flex-wrap items-center justify-between gap-3 border-l-[3px] border-transparent px-4 py-3 text-left hover:bg-[#f8f9fa]"}>
-                    <span className="min-w-0">
-                      <span className="block text-sm font-semibold text-slate-900">#{index + 1} · {t.ticket_number || "Unrecognized number"}</span>
-                      <span className="mt-0.5 block text-xs text-slate-500">{t.material_type || "Material not identified"} · {t.tonnage ?? "—"} tons</span>
+                    className={`tf-queue-row block w-full border-l-[3px] px-2.5 py-2 text-left ${selected === index ? "border-[#df702f] bg-[#fff8f2]" : "border-transparent hover:bg-[#f8f9fa]"}`}>
+                    <span className="flex items-center justify-between gap-1.5">
+                      <span className="min-w-0 truncate text-xs font-bold tabular-nums text-[#1d2b38]">#{index + 1} · {t.ticket_number || "No number yet"}</span>
+                      <span className={`tf-status shrink-0 !px-1 !py-0.5 !text-[9px] ${STATUS_STYLE[t.status] ?? ""}`}>{STATUS_LABEL[t.status] ?? t.status}</span>
                     </span>
-                    <span className={"shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold " + (STATUS_STYLE[t.status] ?? "bg-slate-100")}>
-                      {STATUS_LABEL[t.status] ?? t.status}
-                    </span>
+                    <span className="mt-0.5 block truncate text-[11px] text-[#7a8794]">{t.flag_note || `${t.material_type || "Material not entered"} · ${t.tonnage ?? "—"} t`}</span>
                   </button>
                 ))}
               </div>
             )}
+          </section>}
+
+          <section className="tf-panel tf-review-pane flex flex-col">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e7eaee] px-3 py-2">
+              <div className="min-w-0">
+                <h2 className="text-[13px] font-bold text-[#1d2b38]">Original scanned ticket</h2>
+                <p className="text-[11px] text-[#657182]">Ticket {selected + 1} of {tickets.length} · Page {current.source_page}, crop {current.position + 1}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {!queueOpen && <button type="button" className="tf-secondary-button !min-h-0 !px-2 !py-1" onClick={() => setQueueOpen(true)}>Show queue</button>}
+                <button type="button" onClick={() => setZoom(zoomOut)} disabled={zoom <= 1} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40" aria-label="Zoom out">−</button>
+                <span className="w-10 text-center text-[11px] tabular-nums text-[#526273]" data-testid="zoom-level">{Math.round(zoom * 100)}%</span>
+                <button type="button" onClick={() => setZoom(zoomIn)} disabled={zoom >= 4} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40" aria-label="Zoom in">+</button>
+                <button type="button" onClick={() => setRotation((v) => (v + 90) % 360)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1">Rotate</button>
+                <a href={ticketImageUrl(current.id)} target="_blank" rel="noreferrer" className="tf-link px-1 text-[11px]">Open full image</a>
+              </div>
+            </div>
+            <ScanViewer src={ticketImageUrl(current.id) + (imageVersion ? "?v=" + imageVersion : "")}
+              alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
+              zoom={zoom} rotation={rotation} onZoom={setZoom} />
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e7eaee] px-3 py-1.5">
+              <p className="text-[11px] text-[#7a8794]">Click to zoom on a spot, drag to pan. Zoom and rotation carry to the next ticket.</p>
+              <div className="flex items-center gap-1.5">
+                <button type="button" disabled={selected === 0} onClick={() => selectTicket(selected - 1)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40">Previous</button>
+                <button type="button" disabled={selected >= tickets.length - 1} onClick={() => selectTicket(selected + 1)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40">Next</button>
+              </div>
+            </div>
           </section>
+
+          <ReviewForm
+            key={current.id + "-" + (current.revision ?? `${current.status}-${current.tonnage}-${current.ticket_number}-${current.unit_price}-${current.cost}`)}
+            ticket={current}
+            manual={batch?.intake_mode === "manual"}
+            catalog={catalog}
+            previous={previousValues(tickets, selected)}
+            onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
+            onAdvance={advance}
+            onAccepted={onAccepted}
+            onDirtyChange={setFormDirty}
+            onError={setError}
+            onStale={onStale}
+          />
         </section>
       )}
+
+      {help && <div className="tf-dialog-scrim" onClick={() => setHelp(false)}>
+        <div role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" className="tf-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="tf-panel-heading">
+            <h2 className="tf-panel-title">Keyboard shortcuts</h2>
+            <button type="button" className="tf-link" onClick={() => setHelp(false)} autoFocus>Close</button>
+          </div>
+          <table className="tf-table"><tbody>
+            {SHORTCUTS.map(([keys, what]) => <tr key={keys}><td className="whitespace-nowrap"><kbd className="tf-kbd">{keys}</kbd></td><td>{what}</td></tr>)}
+          </tbody></table>
+        </div>
+      </div>}
     </div>
-  );
-}
-
-const FIELDS: { key: keyof Ticket; label: string; type?: string; flagWords: string[]; critical?: boolean }[] = [
-  { key: "ticket_number", label: "Ticket number", flagWords: ["Ticket number"], critical: true },
-  { key: "delivery_date", label: "Delivery date", type: "date", flagWords: ["Date"], critical: true },
-  { key: "material_type", label: "Material", flagWords: ["Material"] },
-  { key: "tonnage", label: "Tonnage (tons)", type: "number", flagWords: ["Tonnage"], critical: true },
-  { key: "supplier", label: "Supplier", flagWords: ["Supplier"] },
-  { key: "job_location", label: "Job location", flagWords: ["Job location"] },
-];
-
-function ReviewForm({
-  ticket,
-  manual,
-  catalog,
-  onChange,
-  onAdvance,
-  onAccepted,
-  onDirtyChange,
-  onError,
-}: {
-  ticket: Ticket;
-  manual: boolean;
-  catalog: { suppliers: string[]; materials: string[] };
-  onChange: (t: Ticket) => void;
-  onAdvance: () => void;
-  onAccepted: (ticketId: number) => void;
-  onDirtyChange: (dirty: boolean) => void;
-  onError: (m: string | null) => void;
-}) {
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(FIELDS.map((f) => [f.key, (ticket[f.key] as string | null) ?? ""])),
-  );
-  const [saving, setSaving] = useState(false);
-  const acceptButton = useRef<HTMLButtonElement>(null);
-  const { can } = useAccount();
-  const canEdit = can("tickets.edit");
-  const canVerify = can("tickets.verify");
-  const canFlag = can("tickets.flag");
-  const canSkip = can("tickets.skip");
-  const canOverride = can("tickets.price_override");
-  const [override, setOverride] = useState(ticket.unit_price_override ?? "");
-  const overrideDirty = override !== (ticket.unit_price_override ?? "");
-
-  const dirty = overrideDirty || FIELDS.some((f) => values[f.key] !== ((ticket[f.key] as string | null) ?? ""));
-  useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
-
-  async function save(): Promise<Ticket | null> {
-    const body: Record<string, string | null> = {};
-    FIELDS.forEach((f) => {
-      const orig = (ticket[f.key] as string | null) ?? "";
-      if (values[f.key] !== orig) body[f.key] = values[f.key].trim() === "" ? null : values[f.key];
-    });
-    if (overrideDirty) body.unit_price_override = override.trim() === "" ? null : override;
-    if (!Object.keys(body).length) return ticket;
-    try {
-      const t = await patchTicket(ticket.id, body);
-      onChange(t);
-      return t;
-    } catch (e) {
-      onError((e as Error).message);
-      return null;
-    }
-  }
-
-  async function run(fn: () => Promise<Ticket | null>, advance = false) {
-    onError(null);
-    setSaving(true);
-    const t = await fn();
-    setSaving(false);
-    if (t && advance) onAdvance();
-  }
-
-  const filled = FIELDS.filter((field) => values[field.key].trim() !== "").length;
-  const flaggedFor = (words: string[]) => ticket.flags.some((fl) => words.some((w) => fl.startsWith(w)));
-
-  // Cmd/Ctrl+Enter is a deliberate approval shortcut. It invokes the same
-  // guarded button used by mouse clicks, never bypassing server verification.
-  useEffect(() => {
-    function onApproveShortcut(event: KeyboardEvent) {
-      if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey) || event.repeat || event.isComposing) return;
-      if (event.target instanceof HTMLElement && event.target.closest("[role=dialog]")) return;
-      event.preventDefault();
-      acceptButton.current?.click();
-    }
-    window.addEventListener("keydown", onApproveShortcut);
-    return () => window.removeEventListener("keydown", onApproveShortcut);
-  }, []);
-
-  return (
-    <aside className="space-y-4 rounded-md border border-[#dce1e6] bg-white p-5 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:self-start xl:overflow-y-auto">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
-        <div>
-          <h3 className="text-[14px] font-bold text-[#1d2b38]">{manual ? "Manual ticket entry" : "Extracted ticket information"}</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            {manual ? "Enter the six required fields from the original. No AI populated these values." : "Compare every value with the scan, then accept."}
-          </p>
-        </div>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
-      </div>
-      {manual && <div className="flex items-center justify-between gap-2 rounded border border-[#e5e9ec] bg-[#f8f9fa] px-3 py-2.5">
-        <span className="text-xs font-semibold text-[#526273]">Required fields entered</span>
-        <span className="text-xs font-bold tabular-nums text-[#293948]">{filled} / 6</span>
-      </div>}
-      {ticket.error && <p className="text-sm text-red-700">{ticket.error}</p>}
-      {ticket.flags.length > 0 && (
-        <ul className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          {ticket.flags.map((f) => (
-            <li key={f}>• {f}</li>
-          ))}
-        </ul>
-      )}
-      {ticket.duplicates.length > 0 && (
-        <ul className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-900">
-          <li className="font-medium">Possible duplicate</li>
-          {ticket.duplicates.map((d) => (
-            <li key={d}>• {d}</li>
-          ))}
-        </ul>
-      )}
-      {FIELDS.map((f) => (
-        <div key={f.key}>
-          <label htmlFor={"review-" + f.key} className={"mb-1 block text-xs text-slate-600 " + (f.critical ? "font-bold" : "font-medium")}>
-            {f.label}{f.critical && <span className="ml-1 font-normal text-slate-500">· check against the scan</span>}
-          </label>
-          <input
-            id={"review-" + f.key}
-            list={f.key === "supplier" ? "catalog-suppliers" : f.key === "material_type" ? "catalog-materials" : undefined}
-            aria-describedby={ticket.as_read?.[f.key] !== undefined && ticket.as_read[f.key] !== values[f.key] ? "as-read-" + f.key : undefined}
-            type={f.type === "number" ? "text" : f.type ?? "text"}
-            inputMode={f.type === "number" ? "decimal" : undefined}
-            value={values[f.key]}
-            readOnly={!canEdit}
-            onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-            className={`w-full rounded border px-3 py-2.5 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-[#e6a97b] read-only:bg-[#f6f7f8] ${
-              flaggedFor(f.flagWords) ? "border-amber-400 bg-amber-50" : "border-slate-300"
-            }`}
-          />
-          {ticket.as_read?.[f.key] !== undefined && ticket.as_read[f.key] !== values[f.key] && (
-            <p id={"as-read-" + f.key} className="mt-1 text-[11px] text-slate-500">Read from the ticket: {ticket.as_read[f.key]}</p>
-          )}
-          {canEdit && ticket.suggestions?.[f.key] && ticket.suggestions[f.key] !== values[f.key] && (
-            <button type="button" className="tf-link mt-1 text-[11px]"
-              onClick={() => setValues({ ...values, [f.key]: ticket.suggestions?.[f.key] ?? values[f.key] })}>
-              Use your catalog name: {ticket.suggestions[f.key]}
-            </button>
-          )}
-        </div>
-      ))}
-      <datalist id="catalog-suppliers">{catalog.suppliers.map((name) => <option key={name} value={name} />)}</datalist>
-      <datalist id="catalog-materials">{catalog.materials.map((name) => <option key={name} value={name} />)}</datalist>
-      <div className="rounded border border-[#e2e7eb] bg-[#f7f8f9] p-3 text-sm">
-        {ticket.status === "verified" && ticket.price_snapshot_state === "priced" && (
-          <p className="mb-2 text-emerald-800">Unit price locked at verification. Later changes to supplier rates will not change this ticket.</p>
-        )}
-        {ticket.status === "verified" && ticket.price_snapshot_state === null && (
-          <p className="mb-2 font-medium text-amber-800">Legacy record: the historical rate is unknown. Enter the documented original rate as an override, then save and verify again.</p>
-        )}
-        {ticket.status === "verified" && ticket.price_snapshot_state === "unpriced" && (
-          <p className="mb-2 font-medium text-amber-800">Verified without a price. Enter the correct rate as an override, then save and verify again.</p>
-        )}
-        {ticket.unit_price !== null ? (
-          <p>
-            Rate: ${ticket.unit_price}/ton ({ticket.price_source === "override" ? "manual override" : "supplier rate"})
-            {ticket.cost ? <> · Cost: <strong>${ticket.cost}</strong></> : " · cost appears after you verify the tonnage"}
-          </p>
-        ) : (
-          <p className="text-amber-800">{ticket.pricing_notes.join(". ")}. Add it under Suppliers &amp; Pricing, or enter an override below.</p>
-        )}
-        <label htmlFor="review-rate-override" className="mt-2 block text-xs font-medium text-slate-600">Override rate for this ticket ($/ton, optional)</label>
-        <input
-          id="review-rate-override"
-          inputMode="decimal"
-          value={override}
-          readOnly={!canOverride}
-          aria-describedby={canOverride ? undefined : "review-rate-override-note"}
-          onChange={(e) => setOverride(e.target.value)}
-          className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm read-only:bg-[#f6f7f8]"
-        />
-        {!canOverride && <p id="review-rate-override-note" className="mt-1 text-xs text-slate-500">Only a manager or owner can change a ticket’s rate.</p>}
-      </div>
-      {ticket.status === "verified" && (
-        <p className="rounded border border-[#cce4d2] bg-[#f3f9f4] px-3 py-2 text-xs text-[#216c43]" data-testid="verified-by">
-          {ticket.verified_by
-            ? <>Approved by <strong>{ticket.verified_by}</strong>{ticket.verified_at ? <> on {new Date(ticket.verified_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</> : null}</>
-            : <>Approved before individual accounts were introduced; the approver was not recorded.</>}
-        </p>
-      )}
-      {canVerify ? (
-        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
-          <strong className="text-slate-800">Your acceptance is required.</strong> Confirm that the ticket number, date, material, tons, supplier and job match the original. Only accepted tickets count toward verified totals. Your name is recorded with the approval.
-        </p>
-      ) : canEdit ? (
-        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
-          <strong className="text-slate-800">Enter and check each field, then save.</strong> A manager or owner approves quantities before they count toward project totals.
-        </p>
-      ) : (
-        <p className="tf-notice">View-only access. Ask an owner if you need to enter or approve tickets.</p>
-      )}
-      {dirty && <p className="text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
-      <TicketHistory ticketId={ticket.id} version={JSON.stringify([ticket.status, ticket.verified_at, ticket.unit_price_override, ...FIELDS.map((f) => ticket[f.key])])} />
-      {canEdit && <div className="sticky bottom-0 z-10 -mx-5 flex flex-wrap gap-2 border-t border-slate-200 bg-white px-5 py-3">
-        {canVerify ? <button
-          ref={acceptButton}
-          title="Review and accept ticket (Cmd/Ctrl + Enter)"
-          onClick={() =>
-            run(async () => {
-              const saved = await save();
-              return saved ? ticketAction(ticket.id, "verify").then((t) => (onChange(t), onAccepted(t.id), t)).catch((e) => (onError(e.message), null)) : null;
-            }, true)
-          }
-          className="min-w-40 flex-1 rounded bg-[#dc6c30] px-4 py-3 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
-          disabled={saving || (ticket.status === "verified" && !dirty)}
-        >
-          {ticket.status === "verified" && !dirty ? "Accepted" : "Accept & next"}
-        </button> : <button
-          ref={acceptButton}
-          title="Save and go to the next ticket (Cmd/Ctrl + Enter)"
-          onClick={() => run(save, true)}
-          className="min-w-40 flex-1 rounded bg-[#dc6c30] px-4 py-3 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
-          disabled={saving}
-        >
-          Save &amp; next
-        </button>}
-        <button disabled={saving || !dirty} onClick={() => run(save)} className="rounded border border-[#cfd6dc] px-3 py-2.5 text-sm font-semibold text-[#39495b] disabled:opacity-40">
-          Save changes
-        </button>
-        {canFlag && <button disabled={saving} onClick={() => run(async () => {
-          const saved = await save();
-          if (!saved) return null;
-          return ticketAction(ticket.id, "flag").then((t) => { onChange(t); return t; })
-            .catch((e) => { onError(e.message); return null; });
-        }, true)} className="rounded border border-[#e5b993] bg-[#fff7ee] px-3 py-2.5 text-sm font-semibold text-[#97511e] hover:bg-[#fff0dc] disabled:opacity-40">
-          Flag for later
-        </button>}
-        {canSkip && <button disabled={saving} onClick={() => {
-          if (!window.confirm("Skip this ticket? Skipped tickets are excluded from exports and financial totals.")) return;
-          run(async () => {
-            const saved = await save();
-            if (!saved) return null;
-            return ticketAction(ticket.id, "skip").then((t) => { onChange(t); return t; })
-              .catch((e) => { onError(e.message); return null; });
-          }, true);
-        }} className="rounded-lg px-3 py-2 text-xs font-medium text-slate-500 hover:text-slate-900 disabled:opacity-40">
-          Skip non-ticket
-        </button>}
-      </div>}
-    </aside>
-  );
-}
-
-const HISTORY_FIELD: Record<string, string> = {
-  status: "Status", verified_unit_price: "Locked unit price", ticket_number: "Ticket number",
-  delivery_date: "Delivery date", material_type: "Material", tonnage: "Tons", supplier: "Supplier",
-  job_location: "Job location", unit_price_override: "Rate override",
-};
-
-/** Who changed what on this ticket. Loaded only when opened. */
-function TicketHistory({ ticketId, version }: { ticketId: number; version: string }) {
-  const [open, setOpen] = useState(false);
-  const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    setFailed(false);
-    getTicketHistory(ticketId).then((rows) => { if (!cancelled) setEntries(rows); })
-      .catch(() => { if (!cancelled) setFailed(true); });
-    return () => { cancelled = true; };
-  }, [open, ticketId, version]);
-  useEffect(() => { setEntries(null); }, [ticketId]);
-
-  const show = (value: string | null) => value === null || value === "" ? "—" : (STATUS_LABEL[value] ?? value);
-  return (
-    <details className="rounded border border-[#e2e7eb] text-xs" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary className="cursor-pointer select-none px-3 py-2 font-semibold text-[#46566a]">Change history</summary>
-      <div className="border-t border-[#e9edf0] px-3 py-2">
-        {failed ? <p className="text-red-700">Could not load history.</p>
-          : entries === null ? <p className="text-slate-500">Loading…</p>
-          : entries.length === 0 ? <p className="text-slate-500">No changes recorded yet.</p>
-          : <ol className="space-y-1.5">
-            {[...entries].reverse().map((e, i) => <li key={i} className="leading-5 text-[#3d4c5d]">
-              <span className="font-semibold">{HISTORY_FIELD[e.field] ?? e.field}</span>: {show(e.old)} → {show(e.new)}
-              <span className="block text-[11px] text-[#7a8796]">
-                {e.actor ?? "Before individual accounts"} · {new Date(e.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-              </span>
-            </li>)}
-          </ol>}
-      </div>
-    </details>
   );
 }

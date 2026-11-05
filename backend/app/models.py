@@ -258,6 +258,8 @@ class Ticket(Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Why someone set this ticket aside. Never affects totals or approval.
+    flag_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
     file: Mapped[UploadedFile] = relationship(back_populates="tickets")
 

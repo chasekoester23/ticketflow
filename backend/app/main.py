@@ -65,6 +65,11 @@ async def lifespan(app: FastAPI):
             "Team accounts migration required: back up backend/ticketflow.db, "
             "then run 'cd backend && python -m alembic upgrade head'."
         )
+    if "flag_note" not in {c["name"] for c in inspector.get_columns("tickets")}:
+        raise RuntimeError(
+            "Review workspace migration required: back up backend/ticketflow.db, "
+            "then run 'cd backend && python -m alembic upgrade head'."
+        )
     if "expected_ticket_count" not in {c["name"] for c in inspector.get_columns("batches")}:
         raise RuntimeError(
             "Scan check migration required: back up backend/ticketflow.db, "

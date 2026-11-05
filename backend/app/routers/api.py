@@ -1,3 +1,5 @@
+import hashlib
+import json
 import uuid
 import logging
 import os
@@ -6,17 +8,17 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
 from ..config import settings
 from ..db import SessionLocal, get_db
-from ..models import AuditEvent, Batch, Project, Ticket, UploadedFile, User, as_utc
+from ..models import AuditEvent, Batch, Project, ScanSlot, Ticket, UploadedFile, User, as_utc
 from ..permissions import has_permission, require
-from ..schemas import BatchOut, TicketOut, TicketPatch
+from ..schemas import BatchOut, BatchQueueRow, FlagIn, TicketOut, TicketPatch
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
 from ..services import pipeline, jobqueue, scan_manifest
@@ -168,6 +170,69 @@ def list_batches(db: Session = Depends(get_db), organization_id: int = Depends(c
     ).order_by(Batch.id.desc())).all()
 
 
+OPEN_TICKET_STATES = ("needs_review", "flagged", "failed")
+
+
+@router.get("/batches/queue", response_model=list[BatchQueueRow])
+def batch_queue(open_only: bool = True, project_id: int | None = None, limit: int = Query(100, ge=1, le=500),
+                db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    """Uploads people can come back to, newest first. A fixed number of queries."""
+    query = select(Batch).where(Batch.organization_id == organization_id)
+    if project_id is not None:
+        query = query.where(Batch.project_id == project_id)
+    if open_only:
+        unfinished = select(Ticket.id).where(Ticket.batch_id == Batch.id, Ticket.status.in_(OPEN_TICKET_STATES)).exists()
+        faint = select(ScanSlot.id).where(ScanSlot.batch_id == Batch.id, ScanSlot.detection == "faint",
+                                          ScanSlot.decision.is_(None)).exists()
+        query = query.where(Batch.status.in_(("uploaded", "processing", "failed")) | unfinished | faint)
+    batches = list(db.scalars(query.order_by(Batch.id.desc()).limit(limit)))
+    ids = [b.id for b in batches]
+    if not ids:
+        return []
+    counts: dict[int, dict[str, int]] = {}
+    for batch_id, status, count in db.execute(
+        select(Ticket.batch_id, Ticket.status, func.count()).where(Ticket.batch_id.in_(ids))
+        .group_by(Ticket.batch_id, Ticket.status)
+    ):
+        counts.setdefault(batch_id, {})[status] = count
+    files: dict[int, list[int]] = {}
+    for batch_id, status, count in db.execute(
+        select(UploadedFile.batch_id, UploadedFile.status, func.count()).where(UploadedFile.batch_id.in_(ids))
+        .group_by(UploadedFile.batch_id, UploadedFile.status)
+    ):
+        row = files.setdefault(batch_id, [0, 0])
+        row[0] += count
+        row[1] += count if status == "failed" else 0
+    # A faint slot that already became a ticket needs no decision.
+    open_slots = set(db.execute(select(ScanSlot.batch_id, ScanSlot.file_id, ScanSlot.page, ScanSlot.position).where(
+        ScanSlot.batch_id.in_(ids), ScanSlot.detection == "faint", ScanSlot.decision.is_(None))).all())
+    if open_slots:
+        ticketed = set(db.execute(select(Ticket.batch_id, Ticket.file_id, Ticket.source_page, Ticket.position).where(
+            Ticket.batch_id.in_({slot[0] for slot in open_slots}))).all())
+        open_slots -= ticketed
+    faint_counts: dict[int, int] = {}
+    for slot in open_slots:
+        faint_counts[slot[0]] = faint_counts.get(slot[0], 0) + 1
+    projects = {p.id: p for p in db.scalars(select(Project).where(
+        Project.id.in_({b.project_id for b in batches if b.project_id}), Project.organization_id == organization_id))}
+    people = names_by_id(db, organization_id)
+    rows = []
+    for batch in batches:
+        count = counts.get(batch.id, {})
+        file_count = files.get(batch.id, [0, 0])
+        project = projects.get(batch.project_id)
+        rows.append(BatchQueueRow(
+            id=batch.id, project_id=batch.project_id, project_code=project.code if project else None,
+            project_name=project.name if project else None, status=batch.status, intake_mode=batch.intake_mode,
+            created_at=batch.created_at, created_by=people.get(batch.created_by_user_id),
+            files=file_count[0], failed_files=file_count[1], expected_ticket_count=batch.expected_ticket_count,
+            tickets=sum(count.values()), needs_review=count.get("needs_review", 0), flagged=count.get("flagged", 0),
+            verified=count.get("verified", 0), skipped=count.get("skipped", 0), failed=count.get("failed", 0),
+            faint_slots=faint_counts.get(batch.id, 0),
+        ))
+    return rows
+
+
 @router.get("/batches/{batch_id}", response_model=BatchOut)
 def get_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     batch = db.scalar(select(Batch).where(
@@ -258,7 +323,35 @@ def _out(
             t, aliases if aliases is not None else pricing_svc.alias_suggestions(db, organization_id)),
         as_read={field: str(t.raw_extraction[field]) for field in EDITABLE
                  if isinstance(t.raw_extraction, dict) and t.raw_extraction.get(field) not in (None, "")},
+        revision=ticket_revision(t),
     ))
+
+
+def ticket_revision(t: Ticket) -> str:
+    """A short fingerprint of what a reviewer relies on. Decimals are formatted
+    at stored precision, so a value and its reload always agree."""
+    parts = [
+        t.ticket_number, t.delivery_date.isoformat() if t.delivery_date else None, t.material_type,
+        f"{t.tonnage:.3f}" if t.tonnage is not None else None, t.supplier, t.job_location,
+        f"{t.unit_price_override:.4f}" if t.unit_price_override is not None else None,
+        t.status, bool(t.tonnage_confirmed),
+    ]
+    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
+
+
+def _require_revision(t: Ticket, if_match: str | None) -> None:
+    """Refuse to act on a ticket that changed since the person last saw it.
+
+    Without this, a manager with a stale page could approve 22 tons while
+    looking at 20. Optional, so scripts that read first still work; the browser
+    always sends it.
+    """
+    if if_match is not None and if_match.strip().strip('"') != ticket_revision(t):
+        raise HTTPException(409, {
+            "code": "ticket_changed",
+            "message": "Someone else changed this ticket while you had it open. Nothing was saved. "
+                       "The latest values are shown now: check them against the scan.",
+        })
 
 
 def _verified_by(db: Session, t: Ticket, organization_id: int,
@@ -284,12 +377,13 @@ def _audit(db: Session, t: Ticket, user: User, field: str, old, new) -> None:
     ))
 
 
-def _ticket_or_404(db: Session, ticket_id: int, organization_id: int) -> Ticket:
-    t = db.scalar(
-        select(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
-            Ticket.id == ticket_id, Batch.organization_id == organization_id
-        )
+def _ticket_or_404(db: Session, ticket_id: int, organization_id: int, *, lock: bool = False) -> Ticket:
+    query = select(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
+        Ticket.id == ticket_id, Batch.organization_id == organization_id
     )
+    if lock:  # Held until commit on PostgreSQL. SQLite serializes writers already.
+        query = query.with_for_update(of=Ticket)
+    t = db.scalar(query)
     if not t:
         raise HTTPException(404, "Ticket not found")
     return t
@@ -303,9 +397,10 @@ def _refresh_flags(t: Ticket) -> None:
 
 @router.patch("/tickets/{ticket_id}", response_model=TicketOut)
 def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_db),
-                 user: User = Depends(require("tickets.edit"))):
+                 user: User = Depends(require("tickets.edit")), if_match: str | None = Header(None)):
     organization_id = user.organization_id
-    t = _ticket_or_404(db, ticket_id, organization_id)
+    t = _ticket_or_404(db, ticket_id, organization_id, lock=True)
+    _require_revision(t, if_match)
     changes = patch.model_dump(exclude_unset=True)
     if (
         "unit_price_override" in changes
@@ -352,9 +447,10 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
 
 @router.post("/tickets/{ticket_id}/verify", response_model=TicketOut)
 def verify_ticket(ticket_id: int, db: Session = Depends(get_db),
-                  user: User = Depends(require("tickets.verify"))):
+                  user: User = Depends(require("tickets.verify")), if_match: str | None = Header(None)):
     organization_id = user.organization_id
-    t = _ticket_or_404(db, ticket_id, organization_id)
+    t = _ticket_or_404(db, ticket_id, organization_id, lock=True)
+    _require_revision(t, if_match)
     # Validate the current values rather than trusting stale extraction flags.
     _refresh_flags(t)
     # Unusually high tonnage is a warning, not an absolute rejection: some
@@ -398,6 +494,9 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db),
     t.applied_price_source = source
     t.price_snapshot_state = "priced" if price is not None else "unpriced"
     t.status, t.tonnage_confirmed = "verified", True
+    if t.flag_note is not None:  # Settled by this approval; the audit trail keeps it.
+        _audit(db, t, user, "flag_note", t.flag_note, None)
+        t.flag_note = None
     t.verified_by_user_id = user.id
     t.verified_at = datetime.now(timezone.utc)
     db.commit()
@@ -405,13 +504,18 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db),
 
 
 @router.post("/tickets/{ticket_id}/flag", response_model=TicketOut)
-def flag_ticket(ticket_id: int, db: Session = Depends(get_db),
-                user: User = Depends(require("tickets.flag"))):
+def flag_ticket(ticket_id: int, body: FlagIn | None = Body(default=None), db: Session = Depends(get_db),
+                user: User = Depends(require("tickets.flag")), if_match: str | None = Header(None)):
     """Defer a questionable ticket without approving its quantity or cost."""
     organization_id = user.organization_id
-    t = _ticket_or_404(db, ticket_id, organization_id)
+    t = _ticket_or_404(db, ticket_id, organization_id, lock=True)
+    _require_revision(t, if_match)
     if t.status != "flagged":
         _audit(db, t, user, "status", t.status, "flagged")
+    note = (body.note or "").strip() or None if body is not None else None
+    if note != t.flag_note and (body is not None):
+        _audit(db, t, user, "flag_note", t.flag_note, note)
+        t.flag_note = note
     t.status = "flagged"
     _withdraw_approval(t)
     t.tonnage_confirmed = False
@@ -424,9 +528,10 @@ def flag_ticket(ticket_id: int, db: Session = Depends(get_db),
 
 @router.post("/tickets/{ticket_id}/skip", response_model=TicketOut)
 def skip_ticket(ticket_id: int, db: Session = Depends(get_db),
-                user: User = Depends(require("tickets.skip"))):
+                user: User = Depends(require("tickets.skip")), if_match: str | None = Header(None)):
     organization_id = user.organization_id
-    t = _ticket_or_404(db, ticket_id, organization_id)
+    t = _ticket_or_404(db, ticket_id, organization_id, lock=True)
+    _require_revision(t, if_match)
     _audit(db, t, user, "status", t.status, "skipped")
     t.status = "skipped"
     _withdraw_approval(t)

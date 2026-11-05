@@ -48,7 +48,7 @@ export async function logOut(): Promise<void> {
 
 export type Project = { id: number; code: string; name: string; job_location: string | null; description: string | null; status: string };
 export type FileOut = { id: number; original_name: string; status: string; error: string | null };
-export type Batch = { id: number; project_id: number | null; layout: string; intake_mode?: "extract" | "manual"; status: string; created_at: string; files: FileOut[] };
+export type Batch = { id: number; project_id: number | null; expected_ticket_count?: number | null; layout: string; intake_mode?: "extract" | "manual"; status: string; created_at: string; files: FileOut[] };
 export type Ticket = {
   id: number;
   batch_id: number;
@@ -75,7 +75,19 @@ export type Ticket = {
   verified_at: string | null;
   suggestions?: Record<string, string>; // catalog name for a known spelling; a person applies it
   as_read?: Record<string, string>; // what the reader returned, separate from current values
+  flag_note?: string | null; // why someone set this ticket aside
+  revision?: string; // sent back in If-Match, so nobody approves values they weren't looking at
 };
+export type BatchQueueRow = {
+  id: number; project_id: number | null; project_code: string | null; project_name: string | null;
+  status: string; intake_mode: "extract" | "manual"; created_at: string; created_by: string | null;
+  files: number; failed_files: number; expected_ticket_count: number | null;
+  tickets: number; needs_review: number; flagged: number; verified: number; skipped: number; failed: number;
+  faint_slots: number;
+};
+export async function getBatchQueue(openOnly = true): Promise<BatchQueueRow[]> {
+  return (await check(await apiFetch(`${API}/api/batches/queue?open_only=${openOnly}`))).json();
+}
 export type HistoryEntry = { field: string; old: string | null; new: string | null; at: string; actor: string | null };
 
 export async function getTicketHistory(id: number): Promise<HistoryEntry[]> {
@@ -85,15 +97,26 @@ export type Supplier = { id: number; name: string; contact: string | null };
 export type Material = { id: number; name: string; unit: string };
 export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string };
 
+/** An API refusal. `code` is set when the UI should react, not just show text. */
+export class ApiError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 async function check(res: Response) {
   if (!res.ok) {
     let detail = res.statusText;
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (typeof body.detail === "string") {
         detail = body.detail;
       } else if (body.detail && typeof body.detail.message === "string") {
         detail = body.detail.message;
+        code = body.detail.code;
         // A temporary password must be replaced before any other work.
         if (body.detail.code === "password_change_required" && typeof window !== "undefined"
           && window.location.pathname !== "/account") {
@@ -103,7 +126,7 @@ async function check(res: Response) {
         detail = JSON.stringify(body.detail);
       }
     } catch {}
-    throw new Error(detail);
+    throw new ApiError(detail, code);
   }
   return res;
 }
@@ -171,20 +194,25 @@ export async function getTickets(batchId: number): Promise<Ticket[]> {
   return (await check(await apiFetch(`${API}/api/batches/${batchId}/tickets`))).json();
 }
 
-export async function patchTicket(id: number, body: Partial<Record<string, string | null>>): Promise<Ticket> {
+export async function patchTicket(id: number, body: Partial<Record<string, string | null>>, revision?: string): Promise<Ticket> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (revision) headers["If-Match"] = revision;
   return (
     await check(
-      await apiFetch(`${API}/api/tickets/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }),
+      await apiFetch(`${API}/api/tickets/${id}`, { method: "PATCH", headers, body: JSON.stringify(body) }),
     )
   ).json();
 }
 
-export async function ticketAction(id: number, action: "verify" | "flag" | "skip"): Promise<Ticket> {
-  return (await check(await apiFetch(`${API}/api/tickets/${id}/${action}`, { method: "POST" }))).json();
+export async function ticketAction(id: number, action: "verify" | "flag" | "skip", revision?: string, note?: string): Promise<Ticket> {
+  const headers: Record<string, string> = {};
+  if (revision) headers["If-Match"] = revision;
+  const init: RequestInit = { method: "POST", headers };
+  if (note !== undefined) {
+    headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify({ note });
+  }
+  return (await check(await apiFetch(`${API}/api/tickets/${id}/${action}`, init))).json();
 }
 
 export async function retryBatch(id: number): Promise<void> {

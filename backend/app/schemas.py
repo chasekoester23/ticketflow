@@ -56,10 +56,47 @@ class TicketOut(BaseModel):
     suggestions: dict[str, str] = {}
     # What the reader returned, kept separate from the current values.
     as_read: dict[str, str] = {}
+    flag_note: str | None = None
+    # Changes whenever anything a reviewer relies on changes. Send it back in
+    # If-Match, so nobody approves values they weren't looking at.
+    revision: str = ""
 
     @field_validator("verified_at")
     @classmethod
     def _utc(cls, value: datetime | None) -> datetime | None:
+        from .models import as_utc
+        return as_utc(value)
+
+
+class FlagIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    note: str | None = Field(default=None, max_length=300)
+
+
+class BatchQueueRow(BaseModel):
+    """One upload in the work queue. Counts only, so it stays fast."""
+    id: int
+    project_id: int | None
+    project_code: str | None
+    project_name: str | None
+    status: str
+    intake_mode: str
+    created_at: datetime
+    created_by: str | None
+    files: int
+    failed_files: int
+    expected_ticket_count: int | None
+    tickets: int
+    needs_review: int
+    flagged: int
+    verified: int
+    skipped: int
+    failed: int
+    faint_slots: int
+
+    @field_validator("created_at")
+    @classmethod
+    def _utc(cls, value: datetime) -> datetime:
         from .models import as_utc
         return as_utc(value)
 
