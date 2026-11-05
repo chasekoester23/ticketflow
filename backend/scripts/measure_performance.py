@@ -33,12 +33,13 @@ MATERIALS = ["No. 57 Stone", "Base Rock", "Asphalt Mix", "Concrete Sand", "Rip R
 PROJECTS = 20
 
 READS = [
-    ("Batch's tickets", "/api/batches/1/tickets"),
+    ("One batch's tickets", "/api/batches/1/tickets"),
     ("Uploads list", "/api/batches/queue"),
     ("Dashboard", "/api/dashboard"),
     ("Register, first page", "/api/records/search?page_size=50"),
     ("Register, deep page", "/api/records/search?page=100&page_size=50"),
     ("Register, one project", "/api/records/search?page_size=50&project_id=1"),
+    ("Register, one project, sort by tons", "/api/records/search?page_size=50&project_id=1&sort=tons"),
     ("Search a ticket number", "/api/records/search?page_size=50&q=100123"),
     ("Search and sort by tons", "/api/records/search?page_size=50&q=Stone&sort=tons"),
     ("Name variants", "/api/records/name-variants?field=supplier"),
@@ -94,7 +95,9 @@ def generate(tickets: int, seed: int = 7) -> dict:
     Base.metadata.create_all(engine)
     start = date(2025, 1, 1)
     batches = max(1, tickets // PER_BATCH)
-    other_every = 10  # One batch in ten belongs to the other company.
+    # One batch in ten belongs to the other company. Project 1 stays with the main
+    # one, and it's where the invoice lines and project report measure real work.
+    is_other = lambda b: b % 10 == 7  # noqa: E731
     with engine.begin() as connection:
         connection.execute(insert(Organization), [{"id": MAIN_ORG, "name": "Fictional"}, {"id": OTHER_ORG, "name": "Fictional Other"}])
         connection.execute(insert(User), [{"id": 1, "organization_id": MAIN_ORG, "username": "perf", "password_hash": "x", "role": "owner", "active": True, "must_change_password": False}])
@@ -108,7 +111,7 @@ def generate(tickets: int, seed: int = 7) -> dict:
             for s in range(len(SUPPLIERS)) for m in range(len(MATERIALS))])
         batch_rows, file_rows = [], []
         for b in range(1, batches + 1):
-            other = b % other_every == 0
+            other = is_other(b)
             organization = OTHER_ORG if other else MAIN_ORG
             batch_rows.append({"id": b, "organization_id": organization, "project_id": PROJECTS + 1 if other else (b % PROJECTS) + 1,
                                "layout": "grid_2x2", "intake_mode": "manual", "status": "ready_for_review"})
@@ -119,7 +122,7 @@ def generate(tickets: int, seed: int = 7) -> dict:
     days = 900
     for n in range(tickets):
         batch = n % batches + 1
-        organization = OTHER_ORG if batch % other_every == 0 else MAIN_ORG
+        organization = OTHER_ORG if is_other(batch) else MAIN_ORG
         roll = rng.random()
         status = "verified" if roll < 0.72 else "flagged" if roll < 0.77 else "skipped" if roll < 0.79 else "needs_review"
         verified = status == "verified"
@@ -145,18 +148,21 @@ def generate(tickets: int, seed: int = 7) -> dict:
         with engine.begin() as connection:
             connection.execute(insert(Ticket), chunk_t)
             connection.execute(insert(ScanSlot), chunk_s)
-    # Twenty itemized invoice lines of 50 tickets each, on one project, a day apart.
+    # Twenty itemized invoice lines on project 1, each a month of one supplier and
+    # material, listing 50 tickets that really exist there.
+    project_one = [b for b in range(1, batches + 1) if not is_other(b) and b % PROJECTS == 0] or [1]
     with engine.begin() as connection:
         for line in range(20):
-            day = start + timedelta(days=line * 3)
+            day = start + timedelta(days=line * 30)
             supplier, material = SUPPLIERS[line % len(SUPPLIERS)], MATERIALS[line % len(MATERIALS)]
             result = connection.execute(insert(InvoiceComparison).values(
                 organization_id=MAIN_ORG, project_id=1, invoice_number=f"INV-{line}", supplier_name=supplier,
-                supplier_key=supplier.lower(), material_name=material, material_key=material.lower(), date_from=day, date_to=day,
-                billed_tons=Decimal("100"), billed_unit_price=Decimal("30"), billed_subtotal=Decimal("3000")))
+                supplier_key=supplier.lower(), material_name=material, material_key=material.lower(), date_from=day,
+                date_to=day + timedelta(days=29), billed_tons=Decimal("100"), billed_unit_price=Decimal("30"), billed_subtotal=Decimal("3000")))
+            numbers = [str(100000 + project_one[0] - 1 + (line * 50 + i) * batches) for i in range(50)]
             connection.execute(insert(InvoiceTicketRef), [
-                {"comparison_id": result.inserted_primary_key[0], "position": i + 1, "ticket_number": str(100000 + line * 400 + i),
-                 "ticket_key": str(100000 + line * 400 + i), "billed_tons": Decimal("2")} for i in range(50)])
+                {"comparison_id": result.inserted_primary_key[0], "position": i + 1, "ticket_number": number, "ticket_key": number,
+                 "billed_tons": Decimal("2")} for i, number in enumerate(numbers)])
     return {"tickets": tickets, "batches": batches}
 
 

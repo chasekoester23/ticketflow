@@ -39,13 +39,13 @@ def upgrade() -> None:
     bind.execute(sa.text("""
         INSERT INTO processing_jobs
             (batch_id, status, only_failed, attempts, created_at)
-        SELECT b.id, 'pending', 1, 0, CURRENT_TIMESTAMP
+        SELECT b.id, 'pending', :yes, 0, CURRENT_TIMESTAMP
         FROM batches AS b
         WHERE b.status IN ('uploaded', 'processing')
           AND NOT EXISTS (
               SELECT 1 FROM processing_jobs AS j WHERE j.batch_id = b.id
           )
-    """))
+    """).bindparams(sa.bindparam("yes", True, sa.Boolean())))
 
 
 def downgrade() -> None:
