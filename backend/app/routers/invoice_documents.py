@@ -22,7 +22,7 @@ from ..auth import current_organization_id
 from ..config import settings
 from ..db import get_db
 from ..models import (
-    InvoiceComparison, InvoiceDocument, InvoiceDocumentEvent, InvoiceDraftLine, Project, User, as_utc, utcnow,
+    InvoiceComparison, InvoiceDocument, InvoiceDocumentEvent, InvoiceDraftLine, Project, Supplier, User, as_utc, utcnow,
 )
 from ..permissions import require
 from ..services import invoice_extraction, pipeline, splitter
@@ -174,7 +174,8 @@ async def upload_document(file: UploadFile = File(...), project_id: int | None =
         extractor = invoice_extraction.get_invoice_extractor()
         if extractor is not None:
             extractor_name = extractor.name
-            result = extractor.extract(data)
+            result = extractor.extract(data, tuple(db.scalars(select(Supplier.name).where(
+                Supplier.organization_id == user.organization_id))))
             unread, drafted = result.unread_rows, result.lines
             if result.unsupported_reason:
                 # Scanned or credit documents: flagged, with no drafted figures.

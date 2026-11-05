@@ -17,3 +17,6 @@ frontend/playwright-report/
 
 # Synthetic demonstration PDFs are locally generated, not source assets.
 backend/demo_output/
+
+# Backups hold real documents and records.
+backend/backups/

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     database_url: str = f"sqlite:///{BASE_DIR / 'ticketflow.db'}"
     storage_dir: Path = BASE_DIR / "storage"
+    # Where scripts/backup.py writes, and where the system page looks.
+    backup_dir: Path = BASE_DIR / "backups"
 
     # Gemini is the primary image reader. Claude remains an explicit fallback
     # option, not an automatic hidden retry or an accidental paid API call.

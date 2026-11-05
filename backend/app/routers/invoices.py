@@ -9,6 +9,7 @@ checked one by one (services/invoice_matching.py). A line without them is a
 totals-only comparison and is always labelled as such.
 """
 import csv
+from collections import Counter
 from datetime import date, datetime
 from io import StringIO
 from decimal import Decimal
@@ -24,11 +25,12 @@ from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
 from ..models import (
-    Batch, InvoiceComparison, InvoiceComparisonEvent, InvoiceDraftLine, InvoiceTicketLink, InvoiceTicketRef,
+    InvoiceComparison, InvoiceComparisonEvent, InvoiceTicketLink, InvoiceTicketRef,
     Project, Ticket, User, as_utc,
 )
-from ..services import scan_manifest, ticket_evidence
+from ..services import billing_exceptions, invoice_bridge, ticket_evidence
 from ..services.accounts import names_by_id
+from ..services.invoice_context import LineContext
 from ..services.invoice_matching import (
     ParsedRef, TicketListError, check_tickets, format_ticket_list, parse_ticket_list, ticket_key,
 )
@@ -132,6 +134,54 @@ class TicketLinksIn(BaseModel):
     ticket_ids: list[int] = Field(min_length=1, max_length=2000)
 
 
+class BridgeItem(BaseModel):
+    kind: str
+    label: str
+    tons: Decimal
+    count: int
+    tickets: list[str]
+
+
+class TonsBridge(BaseModel):
+    start: Decimal
+    items: list[BridgeItem]
+    billed: Decimal
+    complete: bool
+    rows_without_tons: int
+    unexplained: Decimal | None
+
+
+class RateGroup(BaseModel):
+    locked_rate: Decimal
+    tickets: int
+    tons: Decimal
+    effect: Decimal
+
+
+class MoneyBridge(BaseModel):
+    start: Decimal
+    quantity_effect: Decimal
+    rate_effect: Decimal
+    rate_groups: list[RateGroup]
+    arithmetic_effect: Decimal
+    rounding: Decimal
+    billed: Decimal
+
+
+class NextStep(BaseModel):
+    text: str
+    href: str | None
+
+
+class Diagnosis(BaseModel):
+    """Why this result, in figures that add up exactly. Explains; never decides."""
+    headline: str
+    tons: TonsBridge | None
+    money: MoneyBridge | None
+    money_unresolved_reason: str | None
+    next_steps: list[NextStep]
+
+
 class InvoiceLineOut(BaseModel):
     id: int
     project_id: int
@@ -164,6 +214,7 @@ class InvoiceLineOut(BaseModel):
     itemized_billed_tons: Decimal | None
     ticket_links: list[TicketLinkOut] = []
     evidence: EvidenceSummary | None = None
+    diagnosis: Diagnosis | None = None
     # The uploaded invoice this line was confirmed from, if any.
     source_document_id: int | None = None
     source_page: int | None = None
@@ -261,41 +312,28 @@ def add_comparison(db: Session, body: InvoiceLineIn, user: User) -> InvoiceCompa
     return item
 
 
-def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> InvoiceLineOut:
-    q = (
-        select(Ticket)
-        .join(Batch, Batch.id == Ticket.batch_id)
-        .where(
-            Batch.organization_id == organization_id,
-            Batch.project_id == item.project_id,
-            Ticket.delivery_date >= item.date_from,
-            Ticket.delivery_date <= item.date_to,
-            Ticket.status != "skipped",
-        )
-        .order_by(Ticket.delivery_date, Ticket.id)
-    )
+def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
+              context: LineContext | None = None) -> InvoiceLineOut:
+    """One line's comparison, always recomputed from current tickets. Pass one
+    LineContext across a list, so each line doesn't re-read the same rows."""
+    context = context or LineContext(db, organization_id, [item])
     all_tickets = [
-        t for t in db.scalars(q)
-        if norm(t.supplier) == item.supplier_key
-        and norm(t.material_type) == item.material_key
+        t for t in context.in_scope(item.project_id, item.supplier_key, item.material_key)
+        if t.delivery_date is not None and item.date_from <= t.delivery_date <= item.date_to
     ]
     verified = [
         t for t in all_tickets
         if t.status == "verified" and t.tonnage_confirmed
     ]
-    pending = [t for t in all_tickets if t not in verified]
+    verified_ids = {t.id for t in verified}
+    pending = [t for t in all_tickets if t.id not in verified_ids]
     # A ticket still under review might lack a date, supplier or material,
     # so it cannot be definitively assigned to an invoice scope. Never show
     # a clean match while a potentially relevant unknown ticket is present.
     # If any KNOWN attribute contradicts the invoice scope, exclude it.
-    candidate_q = select(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
-        Batch.organization_id == organization_id,
-        Batch.project_id == item.project_id,
-        Ticket.status.notin_(["verified", "skipped"]),
-    )
     scoped_ids = {t.id for t in all_tickets}
     unclassified = []
-    for ticket in db.scalars(candidate_q):
+    for ticket in context.unreviewed(item.project_id):
         if ticket.id in scoped_ids:
             continue
         if ticket.delivery_date is not None and not (item.date_from <= ticket.delivery_date <= item.date_to):
@@ -328,19 +366,18 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         if verified_subtotal is not None else None
     )
 
-    refs = _refs(db, item.id)
-    check = check_tickets(db, organization_id, item, refs, all_tickets) if refs else None
+    refs = context.refs(item.id)
+    check = check_tickets(db, organization_id, item, refs, all_tickets, context.numbers) if refs else None
 
     # Links people confirmed, checked against the delivery as it is now.
-    links = ticket_evidence.active_links(db, item.id)
-    linked_tickets = {t.id: t for t in db.scalars(select(Ticket).where(
-        Ticket.id.in_([link.ticket_id for link in links])))} if links else {}
-    people = names_by_id(db, organization_id) if links else {}
+    links = context.links(item.id)
+    linked_tickets = context.linked_tickets
+    people = context.people if links else {}
     link_changes = {link.id: ticket_evidence.changes_since_link(link, linked_tickets[link.ticket_id], item)
                     for link in links}
     links_by_ticket = {link.ticket_id: link for link in links}
     row_tickets = {row.ticket.ticket_id for row in check.rows if row.ticket} if check else set()
-    held_elsewhere = ticket_evidence.links_elsewhere(db, item.id, row_tickets)
+    held_elsewhere = context.links_elsewhere(item.id, row_tickets)
     rows_out: list[TicketCheckRow] = []
     for row in (check.rows if check else []):
         out = TicketCheckRow.model_validate(row)
@@ -361,7 +398,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         rows_out.append(out)
 
     # Tickets that never became records can't appear in any total above.
-    intake_issues = scan_manifest.project_intake_issues(db, organization_id, item.project_id)
+    intake_issues = context.intake_issues(item.project_id)
 
     warnings = []
     if not verified:
@@ -404,8 +441,29 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
     else:
         status = "matches"
 
-    source = db.execute(select(InvoiceDraftLine.document_id, InvoiceDraftLine.page).where(
-        InvoiceDraftLine.comparison_id == item.id)).first()
+    source = context.source(item.id)
+    tons_detail = invoice_bridge.tons_bridge(
+        verified_ids=verified_ids, verified_tons=verified_tons, billed_tons=item.billed_tons, rows=check.rows,
+    ) if check else None
+    money_detail = invoice_bridge.money_bridge(
+        verified_rows=verified, verified_subtotal=verified_subtotal, billed_subtotal=item.billed_subtotal,
+        billed_tons=item.billed_tons, billed_rate=item.billed_unit_price,
+    )
+    diagnosis = Diagnosis(
+        headline=invoice_bridge.headline(
+            status=status, itemized=bool(check), quantity_difference=quantity_difference,
+            subtotal_difference=subtotal_difference, pending=len(pending), unclassified=len(unclassified),
+            verified_count=len(verified)),
+        tons=tons_detail, money=money_detail,
+        money_unresolved_reason=None if money_detail else (
+            f"{len(unpriced)} verified ticket(s) have no locked price, so the approved cost isn't known." if unpriced
+            else "No approved deliveries to compare with."),
+        next_steps=invoice_bridge.actions(
+            tons=tons_detail, itemized=bool(check), pending=len(pending), unclassified=len(unclassified),
+            unpriced=len(unpriced), rate_mismatch=len(rate_mismatch),
+            other_invoice=[row.invoice_ticket_number for row in rows_out if "on_another_invoice" in row.flags],
+            intake_issues=intake_issues, project_id=item.project_id, supplier=item.supplier_name),
+    )
 
     return InvoiceLineOut(
         id=item.id, project_id=item.project_id,
@@ -423,7 +481,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         unclassified_count=len(unclassified),
         unpriced_count=len(unpriced), rate_mismatch_count=len(rate_mismatch),
         status=status, comparison_mode="itemized" if check else "totals_only",
-        warnings=warnings,
+        warnings=warnings, diagnosis=diagnosis,
         ticket_check=rows_out,
         ticket_links=[TicketLinkOut(
             id=link.id, ticket_id=link.ticket_id, batch_id=linked_tickets[link.ticket_id].batch_id,
@@ -469,13 +527,46 @@ def _owned_or_404(db: Session, organization_id: int, line_id: int) -> InvoiceCom
     return item
 
 
+@router.get("/overview")
+def overview(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    """Across all lines: what's billed against what's approved, and billing
+    patterns worth a question. Possible problems for a person to check, never findings."""
+    items = list(db.scalars(select(InvoiceComparison).where(InvoiceComparison.organization_id == organization_id)))
+    context = LineContext(db, organization_id, items)
+    lines = [_line_out(db, item, organization_id, context) for item in items]
+    by_supplier: dict[str, dict] = {}
+    statuses: Counter = Counter()
+    for line in lines:
+        statuses[line.status] += 1
+        group = by_supplier.setdefault(norm(line.supplier_name), {
+            "supplier": line.supplier_name, "lines": 0, "billed": Decimal(0), "verified": Decimal(0),
+            "lines_unresolved": 0, "open": 0})
+        group["lines"] += 1
+        group["billed"] += line.billed_subtotal
+        group["open"] += 1 if line.status != "matches" else 0
+        if line.verified_subtotal is None:
+            group["lines_unresolved"] += 1
+        else:
+            group["verified"] += line.verified_subtotal
+    return {
+        "lines": len(lines), "by_status": dict(statuses),
+        "billed": str(sum((line.billed_subtotal for line in lines), Decimal(0))),
+        "verified": str(sum((line.verified_subtotal or Decimal(0) for line in lines), Decimal(0))),
+        "lines_unresolved": sum(1 for line in lines if line.verified_subtotal is None),
+        "by_supplier": [{**group, "billed": str(group["billed"]), "verified": str(group["verified"])}
+                        for _, group in sorted(by_supplier.items())],
+        "exceptions": billing_exceptions.find(db, organization_id, items),
+    }
+
+
 @router.get("", response_model=list[InvoiceLineOut])
 def list_comparisons(db: Session = Depends(get_db),
                      organization_id: int = Depends(current_organization_id)):
     items = db.scalars(select(InvoiceComparison).where(
         InvoiceComparison.organization_id == organization_id
     ).order_by(InvoiceComparison.id.desc())).all()
-    return [_line_out(db, item, organization_id) for item in items]
+    context = LineContext(db, organization_id, items)
+    return [_line_out(db, item, organization_id, context) for item in items]
 
 
 @router.post("", response_model=InvoiceLineOut, status_code=201)

@@ -1,3 +1,7 @@
+import json
+import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, Request
@@ -8,8 +12,16 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import settings
 from .db import Base, engine
-from .routers import api, auth as auth_router, invoice_documents, invoices, pricing, projects, reports, team, scans
+from .routers import api, auth as auth_router, invoice_documents, invoices, pricing, projects, records, reports, system, team, scans
+from .services import system_health
 from .auth import current_user
+
+request_log = logging.getLogger("ticketflow.request")
+if not request_log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    request_log.addHandler(_handler)
+    request_log.setLevel(logging.INFO)
 
 
 @asynccontextmanager
@@ -65,6 +77,11 @@ async def lifespan(app: FastAPI):
             "Team accounts migration required: back up backend/ticketflow.db, "
             "then run 'cd backend && python -m alembic upgrade head'."
         )
+    if "flag_note" not in {c["name"] for c in inspector.get_columns("tickets")}:
+        raise RuntimeError(
+            "Review workspace migration required: back up backend/ticketflow.db, "
+            "then run 'cd backend && python -m alembic upgrade head'."
+        )
     if "expected_ticket_count" not in {c["name"] for c in inspector.get_columns("batches")}:
         raise RuntimeError(
             "Scan check migration required: back up backend/ticketflow.db, "
@@ -74,9 +91,41 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="TicketFlow", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """One line per request: enough to diagnose, with nothing from the documents.
+
+    Logs the route's template and never its query, since filters can hold names.
+    Added first, so errors pass back through CORS and the browser can read them.
+    """
+    request_id = request.headers.get("X-Request-ID", "")[:64] or uuid.uuid4().hex[:12]
+    started = time.perf_counter()
+    status, failure = 500, None
+    try:
+        response = await call_next(request)
+        status = response.status_code
+    except Exception as exc:
+        failure = type(exc).__name__
+        request_log.exception("Unhandled error %s", json.dumps({"request_id": request_id, "error": failure}))
+        response = JSONResponse({"detail": "Something went wrong on our side, and nothing further was changed. "
+                                           f"If it keeps happening, quote reference {request_id}.", "request_id": request_id},
+                                status_code=500)
+    route = request.scope.get("route")
+    request_log.info(json.dumps({
+        "request_id": request_id, "method": request.method, "route": getattr(route, "path", "unmatched"),
+        "status": status, "ms": round((time.perf_counter() - started) * 1000, 1),
+        **({"error": failure} if failure else {}),
+    }))
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 app.add_middleware(
     CORSMiddleware, allow_origins=settings.cors_origins,
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 app.add_middleware(
     TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts, www_redirect=False,
@@ -110,6 +159,8 @@ app.include_router(pricing.router, dependencies=[Depends(current_user)])
 app.include_router(invoices.router, dependencies=[Depends(current_user)])
 app.include_router(projects.router, dependencies=[Depends(current_user)])
 app.include_router(reports.router, dependencies=[Depends(current_user)])
+app.include_router(records.router, dependencies=[Depends(current_user)])
+app.include_router(system.router, dependencies=[Depends(current_user)])
 app.include_router(team.router, dependencies=[Depends(current_user)])
 app.include_router(scans.router, dependencies=[Depends(current_user)])
 app.include_router(invoice_documents.router, dependencies=[Depends(current_user)])
@@ -123,9 +174,10 @@ def health():
 @app.get("/api/status", dependencies=[Depends(current_user)])
 def status():
     """Lets the UI warn when extraction isn't configured. Never returns the key itself."""
+    result = {**_extraction_status(), "worker_running": system_health.worker_running()}
     if settings.review_timing_enabled:
-        return {**_extraction_status(), "review_timing_enabled": True}
-    return _extraction_status()
+        result["review_timing_enabled"] = True
+    return result
 
 
 def _extraction_status():

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import statistics
 import sys
 import tempfile
 import time
@@ -99,12 +100,31 @@ def main(argv: list[str] | None = None) -> int:
     print(f"| Request ({args.tickets} tickets, {batches} batches, {args.invoice_lines} invoice lines) | Seconds | SQL queries |\n|---|---|---|")
     with TestClient(app, headers={"X-TicketFlow-Request": "1"}) as client:
         for path in ("/api/batches/1/tickets", "/api/records", "/api/dashboard", "/api/batches/1/manifest",
-                     "/api/reports/pilot", "/api/invoice-comparisons"):
+                     "/api/reports/pilot", "/api/invoice-comparisons", "/api/records/search?page_size=50",
+                     "/api/records/search?page_size=50&q=10999&sort=tons", "/api/records/search?page=100&page_size=50",
+                     "/api/batches/queue", "/api/records/name-variants?field=supplier", "/api/reports/project/1",
+                     "/api/records/export.csv", "/api/records/export.xlsx"):
             statements.clear()
             started = time.perf_counter()
             response = client.get(path)
             assert response.status_code == 200, response.text
             print(f"| GET `{path}` | {time.perf_counter() - started:.3f} | {len(statements)} |")
+
+        # The requests a person repeats for every ticket. Median of several, on
+        # tickets still awaiting review (even numbers are unverified above).
+        def timed(label: str, call) -> None:
+            seconds, queries = [], 0
+            for n in range(10):
+                statements.clear()
+                started = time.perf_counter()
+                response = call(n * 2 + 2)
+                assert response.status_code == 200, response.text
+                seconds.append(time.perf_counter() - started)
+                queries = len(statements)
+            print(f"| {label} (median of 10) | {statistics.median(seconds):.3f} | {queries} |")
+
+        timed("PATCH one ticket", lambda n: client.patch(f"/api/tickets/{n * 2 + 1}", json={"job_location": "Lot B"}))
+        timed("Approve one ticket", lambda n: client.post(f"/api/tickets/{n * 2 + 1}/verify"))
 
     # Rendering and splitting one 20-page 4-up PDF, with no extraction.
     page = make_page(TICKETS)

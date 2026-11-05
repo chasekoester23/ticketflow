@@ -18,7 +18,7 @@ async function mockWorkspace(page, calls = []) {
     if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
     if (url.pathname === "/api/auth/me") return json(route, profile("owner"));
     if (url.pathname === "/api/projects") return json(route, []);
-    if (url.pathname === "/api/records") return json(route, []);
+    if (url.pathname === "/api/records/search") return json(route, { rows: [], total: 0, page: 1, page_size: 50, summary: { records: 0, by_status: {}, verified_tons: "0", verified_cost: "0", verified_unpriced: 0 } });
     if (url.pathname === "/api/dashboard") return json(route, {
       tickets: 7, needs_review: 3, flagged: 1, verified: 3,
       total_tons: "72.500", pending_tons: "25.000", total_cost: "2160.50",
@@ -63,5 +63,5 @@ test("review-desk status shortcuts retain filter in the records workspace", asyn
   await page.getByRole("link", { name: /Awaiting verification/ }).click();
   await expect(page).toHaveURL(/\/records\?status=needs_review/);
   await expect(page.getByLabel("Review status")).toHaveValue("needs_review");
-  await expect.poll(() => calls.filter((x) => x === "/api/records?status=needs_review").length).toBeGreaterThan(0);
+  await expect.poll(() => calls.filter((x) => x.startsWith("/api/records/search?status=needs_review")).length).toBeGreaterThan(0);
 });

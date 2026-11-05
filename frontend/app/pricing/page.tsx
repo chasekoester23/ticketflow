@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Material, NameAliasRow, PricingEventRow, Rate, Supplier, addAlias, createMaterial, createSupplier, deleteItem,
-  getPricingHistory, listAliases, listMaterials, listRates, listSuppliers, removeAlias, saveRate,
+  Material, NameAliasRow, PricingEventRow, Rate, RateSheetPlan, Supplier, addAlias, createMaterial, createSupplier, deleteItem,
+  getPricingHistory, importRateSheet, listAliases, listMaterials, listRates, listSuppliers, removeAlias, saveRate,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
 
@@ -37,6 +37,9 @@ export default function PricingPage() {
   const [saving, setSaving] = useState(false);
   const [aliases, setAliases] = useState<NameAliasRow[]>([]);
   const [aliasForm, setAliasForm] = useState({ kind: "supplier" as "supplier" | "material", alias: "", target: "" });
+  const [sheet, setSheet] = useState("");
+  const [sheetPlan, setSheetPlan] = useState<RateSheetPlan | null>(null);
+  const [sheetDone, setSheetDone] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -158,6 +161,45 @@ export default function PricingPage() {
       </table></div>
       {!rates.length && <p className="tf-empty">No unit prices configured. Add a supplier and material above, then save a rate.</p>}
     </section>
+    {canManage && <section className="tf-panel" aria-label="Paste a rate sheet">
+      <div className="tf-panel-heading">
+        <div><h2 className="tf-panel-title">Paste a rate sheet</h2>
+          <p className="tf-panel-description">Copy three columns from Excel: supplier, material, price per ton. You&apos;ll see what changes before anything is saved.</p></div>
+      </div>
+      <div className="space-y-3 p-5">
+        <label className="tf-field-label" htmlFor="rate-sheet">Rate sheet</label>
+        <textarea id="rate-sheet" className="tf-field h-28 w-full font-mono" spellCheck={false} value={sheet}
+          placeholder={"Example Aggregates\tNo. 57 Stone\t28.50"} onChange={(e) => { setSheet(e.target.value); setSheetPlan(null); setSheetDone(null); }} />
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="tf-secondary-button" disabled={!sheet.trim() || saving}
+            onClick={() => void act(async () => { setSheetDone(null); setSheetPlan(await importRateSheet(sheet, false)); })}>Check this sheet</button>
+          {sheetPlan && (sheetPlan.adds + sheetPlan.changes > 0) && <button type="button" className="tf-primary-button" disabled={saving}
+            onClick={() => void act(async () => {
+              const done = await importRateSheet(sheet, true);
+              setSheetDone(`Saved ${done.adds} new and ${done.changes} changed rate(s). Tickets already approved keep their locked prices.`);
+              setSheetPlan(null);
+              setSheet("");
+            })}>Save {sheetPlan.adds + sheetPlan.changes} rate{sheetPlan.adds + sheetPlan.changes === 1 ? "" : "s"}</button>}
+          {sheetDone && <span role="status" className="text-[12px] font-semibold text-[#216c43]">{sheetDone}</span>}
+        </div>
+        {sheetPlan && <div>
+          <p className="mb-2 text-[12px] text-[#526273]" data-testid="sheet-summary">
+            {sheetPlan.adds} new · {sheetPlan.changes} changed · {sheetPlan.unchanged} unchanged
+            {sheetPlan.new_suppliers.length > 0 && <> · adds supplier{sheetPlan.new_suppliers.length === 1 ? "" : "s"}: {sheetPlan.new_suppliers.join(", ")}</>}
+            {sheetPlan.new_materials.length > 0 && <> · adds material{sheetPlan.new_materials.length === 1 ? "" : "s"}: {sheetPlan.new_materials.join(", ")}</>}
+          </p>
+          <div className="tf-table-wrap max-h-72 overflow-auto"><table className="tf-table" aria-label="What this sheet would change">
+            <thead><tr><th>Supplier</th><th>Material</th><th className="text-right">Now</th><th className="text-right">New</th><th>Change</th></tr></thead>
+            <tbody>{sheetPlan.plan.map((row) => <tr key={row.line}>
+              <td className="font-semibold">{row.supplier}</td><td>{row.material}</td>
+              <td className="text-right tabular-nums">{money(row.old_price)}</td><td className="text-right tabular-nums">{money(row.price)}</td>
+              <td><span className={`tf-status ${row.action === "change" ? "tf-status-attention" : row.action === "add" ? "tf-status-open" : ""}`}>{row.action === "add" ? "New" : row.action === "change" ? "Changed" : "Unchanged"}</span></td>
+            </tr>)}</tbody>
+          </table></div>
+        </div>}
+      </div>
+    </section>}
+
     <section className="tf-panel">
       <div className="tf-panel-heading">
         <div><h2 className="tf-panel-title">Other spellings</h2>

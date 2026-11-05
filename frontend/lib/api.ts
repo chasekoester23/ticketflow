@@ -15,7 +15,7 @@ export type Role = "owner" | "manager" | "clerk" | "viewer";
 export type Permission =
   | "records.read" | "tickets.upload" | "tickets.edit" | "tickets.flag" | "tickets.verify"
   | "tickets.skip" | "tickets.price_override" | "projects.manage" | "pricing.manage"
-  | "invoices.manage" | "team.manage" | "scans.resolve" | "scans.confirm_blank";
+  | "invoices.manage" | "team.manage" | "scans.resolve" | "scans.confirm_blank" | "system.read";
 export type Account = {
   id: number;
   username: string;
@@ -48,7 +48,7 @@ export async function logOut(): Promise<void> {
 
 export type Project = { id: number; code: string; name: string; job_location: string | null; description: string | null; status: string };
 export type FileOut = { id: number; original_name: string; status: string; error: string | null };
-export type Batch = { id: number; project_id: number | null; layout: string; intake_mode?: "extract" | "manual"; status: string; created_at: string; files: FileOut[] };
+export type Batch = { id: number; project_id: number | null; expected_ticket_count?: number | null; layout: string; intake_mode?: "extract" | "manual"; status: string; created_at: string; files: FileOut[] };
 export type Ticket = {
   id: number;
   batch_id: number;
@@ -75,7 +75,19 @@ export type Ticket = {
   verified_at: string | null;
   suggestions?: Record<string, string>; // catalog name for a known spelling; a person applies it
   as_read?: Record<string, string>; // what the reader returned, separate from current values
+  flag_note?: string | null; // why someone set this ticket aside
+  revision?: string; // sent back in If-Match, so nobody approves values they weren't looking at
 };
+export type BatchQueueRow = {
+  id: number; project_id: number | null; project_code: string | null; project_name: string | null;
+  status: string; intake_mode: "extract" | "manual"; created_at: string; created_by: string | null;
+  files: number; failed_files: number; expected_ticket_count: number | null;
+  tickets: number; needs_review: number; flagged: number; verified: number; skipped: number; failed: number;
+  faint_slots: number;
+};
+export async function getBatchQueue(openOnly = true): Promise<BatchQueueRow[]> {
+  return (await check(await apiFetch(`${API}/api/batches/queue?open_only=${openOnly}`))).json();
+}
 export type HistoryEntry = { field: string; old: string | null; new: string | null; at: string; actor: string | null };
 
 export async function getTicketHistory(id: number): Promise<HistoryEntry[]> {
@@ -85,15 +97,26 @@ export type Supplier = { id: number; name: string; contact: string | null };
 export type Material = { id: number; name: string; unit: string };
 export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string };
 
+/** An API refusal. `code` is set when the UI should react, not just show text. */
+export class ApiError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 async function check(res: Response) {
   if (!res.ok) {
     let detail = res.statusText;
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (typeof body.detail === "string") {
         detail = body.detail;
       } else if (body.detail && typeof body.detail.message === "string") {
         detail = body.detail.message;
+        code = body.detail.code;
         // A temporary password must be replaced before any other work.
         if (body.detail.code === "password_change_required" && typeof window !== "undefined"
           && window.location.pathname !== "/account") {
@@ -103,7 +126,7 @@ async function check(res: Response) {
         detail = JSON.stringify(body.detail);
       }
     } catch {}
-    throw new Error(detail);
+    throw new ApiError(detail, code);
   }
   return res;
 }
@@ -171,20 +194,25 @@ export async function getTickets(batchId: number): Promise<Ticket[]> {
   return (await check(await apiFetch(`${API}/api/batches/${batchId}/tickets`))).json();
 }
 
-export async function patchTicket(id: number, body: Partial<Record<string, string | null>>): Promise<Ticket> {
+export async function patchTicket(id: number, body: Partial<Record<string, string | null>>, revision?: string): Promise<Ticket> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (revision) headers["If-Match"] = revision;
   return (
     await check(
-      await apiFetch(`${API}/api/tickets/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }),
+      await apiFetch(`${API}/api/tickets/${id}`, { method: "PATCH", headers, body: JSON.stringify(body) }),
     )
   ).json();
 }
 
-export async function ticketAction(id: number, action: "verify" | "flag" | "skip"): Promise<Ticket> {
-  return (await check(await apiFetch(`${API}/api/tickets/${id}/${action}`, { method: "POST" }))).json();
+export async function ticketAction(id: number, action: "verify" | "flag" | "skip", revision?: string, note?: string): Promise<Ticket> {
+  const headers: Record<string, string> = {};
+  if (revision) headers["If-Match"] = revision;
+  const init: RequestInit = { method: "POST", headers };
+  if (note !== undefined) {
+    headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify({ note });
+  }
+  return (await check(await apiFetch(`${API}/api/tickets/${id}/${action}`, init))).json();
 }
 
 export async function retryBatch(id: number): Promise<void> {
@@ -219,7 +247,29 @@ export const pilotReportCsvUrl = (projectId?: string) => `${API}/api/reports/pil
 export async function recordReviewTiming(ticketId: number, seconds: number) {
   await check(await apiFetch(`${API}/api/review-timings`, json("POST", { ticket_id: ticketId, seconds })));
 }
-export async function getStatus(): Promise<{ extraction_configured: boolean; model: string; review_timing_enabled?: boolean }> {
+export type SystemCheck = { name: string; state: "ok" | "attention" | "problem"; message: string; action: string | null };
+export type SystemStatus = {
+  healthy: boolean; checks: SystemCheck[];
+  queue: { pending: number; running: number; failed_jobs: number; oldest_pending_seconds: number | null };
+  worker: { running: boolean; last_seen_seconds: number | null };
+  database: { kind: string; revision: string | null; expected_revision: string | null };
+  invoice_reader: string;
+};
+export async function getSystemStatus(): Promise<SystemStatus> {
+  return (await check(await apiFetch(`${API}/api/system/status`))).json();
+}
+export type Onboarding = { complete: boolean; steps: { key: string; title: string; detail: string; href: string; done: boolean }[] };
+export async function getOnboarding(): Promise<Onboarding> {
+  return (await check(await apiFetch(`${API}/api/onboarding`))).json();
+}
+export type RateSheetPlan = {
+  applied: boolean; adds: number; changes: number; unchanged: number; new_suppliers: string[]; new_materials: string[];
+  plan: { line: number; supplier: string; material: string; price: string; old_price: string | null; action: "add" | "change" | "unchanged"; new_supplier: boolean; new_material: boolean }[];
+};
+export async function importRateSheet(text: string, apply: boolean): Promise<RateSheetPlan> {
+  return (await check(await apiFetch(`${API}/api/rates/import`, json("POST", { text, apply })))).json();
+}
+export async function getStatus(): Promise<{ extraction_configured: boolean; model: string; review_timing_enabled?: boolean; worker_running?: boolean }> {
   return (await check(await apiFetch(`${API}/api/status`))).json();
 }
 export async function listSuppliers(): Promise<Supplier[]> {
@@ -267,7 +317,7 @@ export async function deleteItem(kind: "suppliers" | "materials" | "rates", id: 
   await check(await apiFetch(`${API}/api/${kind}/${id}`, { method: "DELETE" }));
 }
 
-export type Filters = { project_id?: string; supplier?: string; material?: string; status?: string; date_from?: string; date_to?: string };
+export type Filters = { project_id?: string; supplier?: string; material?: string; status?: string; date_from?: string; date_to?: string; q?: string };
 const qs = (f: Filters) => {
   const p = new URLSearchParams();
   Object.entries(f).forEach(([k, v]) => v && p.set(k, v));
@@ -286,7 +336,76 @@ export async function setProjectStatus(id: number, status: "active" | "archived"
 export async function getRecords(f: Filters): Promise<Ticket[]> {
   return (await check(await apiFetch(`${API}/api/records${qs(f)}`))).json();
 }
-export const recordsExportUrl = (f: Filters) => `${API}/api/records/export.xlsx${qs(f)}`;
+export const recordsExportUrl = (f: Filters, format: "xlsx" | "csv" = "xlsx", columns?: string[]) => {
+  const query = qs(f);
+  const extra = columns?.length ? `${query ? "&" : "?"}columns=${columns.join(",")}` : "";
+  return `${API}/api/records/export.${format}${query}${extra}`;
+};
+export type RecordsSort = "date" | "ticket_number" | "tons" | "supplier" | "material" | "status" | "job";
+export type RecordsPage = {
+  rows: Ticket[]; total: number; page: number; page_size: number;
+  summary: { records: number; by_status: Record<string, number>; verified_tons: string; verified_cost: string; verified_unpriced: number };
+};
+export async function searchRecords(f: Filters, options: { page: number; pageSize: number; sort: RecordsSort; direction: "asc" | "desc" }): Promise<RecordsPage> {
+  const params = new URLSearchParams();
+  Object.entries(f).forEach(([k, v]) => v && params.set(k, v));
+  params.set("page", String(options.page));
+  params.set("page_size", String(options.pageSize));
+  params.set("sort", options.sort);
+  params.set("direction", options.direction);
+  return (await check(await apiFetch(`${API}/api/records/search?${params}`))).json();
+}
+export type BulkResult = { changed: number; unchanged: number; left_alone: Record<string, number> };
+export async function bulkEditTickets(ticketIds: number[], field: string, value: string): Promise<BulkResult> {
+  return (await check(await apiFetch(`${API}/api/tickets/bulk-edit`, json("POST", { ticket_ids: ticketIds, field, value })))).json();
+}
+export async function renameOnTickets(field: "supplier" | "material_type", fromValue: string, toValue: string): Promise<BulkResult> {
+  return (await check(await apiFetch(`${API}/api/records/rename`, json("POST", { field, from_value: fromValue, to_value: toValue })))).json();
+}
+export type NameVariant = {
+  value: string; state: "catalog" | "same_name" | "alias" | "unknown"; target: string | null;
+  tickets: number; verified: number; unverified: number;
+};
+export async function getNameVariants(field: "supplier" | "material"): Promise<{ field: string; catalog: string[]; rows: NameVariant[] }> {
+  return (await check(await apiFetch(`${API}/api/records/name-variants?field=${field}`))).json();
+}
+export type SavedView = { id: number; name: string; filters: Filters; columns: string[]; created_by: string | null; created_at: string };
+export async function listSavedViews(): Promise<SavedView[]> {
+  return (await check(await apiFetch(`${API}/api/saved-views`))).json();
+}
+export async function createSavedView(name: string, filters: Filters, columns: string[]): Promise<SavedView> {
+  const kept = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
+  return (await check(await apiFetch(`${API}/api/saved-views`, json("POST", { name, filters: kept, columns })))).json();
+}
+export async function deleteSavedView(id: number) {
+  await check(await apiFetch(`${API}/api/saved-views/${id}`, { method: "DELETE" }));
+}
+export async function moveBatch(batchId: number, projectId: number): Promise<Batch> {
+  return (await check(await apiFetch(`${API}/api/batches/${batchId}/project`, json("PATCH", { project_id: projectId })))).json();
+}
+export type ReportGroup = {
+  tickets: number; verified_tickets: number; verified_tons: string; cost: string; unpriced: number;
+  pending_tickets: number; pending_tons: string;
+};
+export type ProjectReport = {
+  project: { id: number; code: string; name: string; status: string };
+  first_delivery: string | null; last_delivery: string | null;
+  totals: ReportGroup;
+  by_supplier_material: (ReportGroup & { supplier: string; material: string })[];
+  by_month: (ReportGroup & { month: string })[];
+  invoices: {
+    billed_total: string; verified_total: string; lines_unresolved: number; by_status: Record<string, number>;
+    lines: {
+      id: number; invoice_number: string; supplier: string; material: string; date_from: string; date_to: string;
+      status: string; comparison_mode: string; billed_tons: string; verified_tons: string; tons_difference: string;
+      billed_subtotal: string; verified_subtotal: string | null; subtotal_difference: string | null;
+    }[];
+  };
+};
+export async function getProjectReport(id: string): Promise<ProjectReport> {
+  return (await check(await apiFetch(`${API}/api/reports/project/${id}`))).json();
+}
+export const projectReportUrl = (id: string) => `${API}/api/reports/project/${id}/report.xlsx`;
 
 export type Group = { name: string; tickets: number; tons: string | number; cost: string | number };
 export type Dashboard = {
@@ -347,8 +466,29 @@ export type InvoiceTicketMatch = {
   tons: string | null; confirmed_price: string | null;
   review_status: string; scope_match: "exact" | "unclassified";
 };
+export type TonsBridge = {
+  start: string; billed: string; complete: boolean; rows_without_tons: number; unexplained: string | null;
+  items: { kind: string; label: string; tons: string; count: number; tickets: string[] }[];
+};
+export type MoneyBridge = {
+  start: string; quantity_effect: string; rate_effect: string; arithmetic_effect: string; rounding: string; billed: string;
+  rate_groups: { locked_rate: string; tickets: number; tons: string; effect: string }[];
+};
+export type InvoiceDiagnosis = {
+  headline: string; tons: TonsBridge | null; money: MoneyBridge | null; money_unresolved_reason: string | null;
+  next_steps: { text: string; href: string | null }[];
+};
+export type InvoiceOverview = {
+  lines: number; by_status: Record<string, number>; billed: string; verified: string; lines_unresolved: number;
+  by_supplier: { supplier: string; lines: number; billed: string; verified: string; lines_unresolved: number; open: number }[];
+  exceptions: { kind: string; title: string; detail: string; line_ids: number[] }[];
+};
+export async function getInvoiceOverview(): Promise<InvoiceOverview> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons/overview"))).json();
+}
 export type InvoiceLineComparison = InvoiceLineInput & {
   id: number;
+  diagnosis?: InvoiceDiagnosis | null;
   billed_extension: string;
   invoice_arithmetic_difference: string;
   verified_tons: string;

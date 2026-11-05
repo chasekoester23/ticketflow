@@ -198,6 +198,7 @@ class ProcessingJob(Base):
 
 class UploadedFile(Base):
     __tablename__ = "uploaded_files"
+    __table_args__ = (Index("ix_uploaded_files_batch_id", "batch_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"))
     original_name: Mapped[str] = mapped_column(String(255))
@@ -211,6 +212,11 @@ class UploadedFile(Base):
 
 class Ticket(Base):
     __tablename__ = "tickets"
+    __table_args__ = (
+        Index("ix_tickets_ticket_number", "ticket_number"),
+        Index("ix_tickets_delivery_date", "delivery_date"),
+        Index("ix_tickets_batch_status", "batch_id", "status"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True)
     file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"))
@@ -252,6 +258,8 @@ class Ticket(Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Why someone set this ticket aside. Never affects totals or approval.
+    flag_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
     file: Mapped[UploadedFile] = relationship(back_populates="tickets")
 
@@ -291,6 +299,20 @@ class ScanEvent(Base):
     action: Mapped[str] = mapped_column(String(40), nullable=False)
     old_value: Mapped[str | None] = mapped_column(String(100), nullable=True)
     new_value: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class SavedView(Base):
+    """A named set of record filters and export columns, shared within a company.
+    Holds no ticket data, so removing one loses nothing."""
+    __tablename__ = "saved_views"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_saved_view_org_name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    filters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    columns: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 

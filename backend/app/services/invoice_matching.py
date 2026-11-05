@@ -177,7 +177,7 @@ RESULTS = ("matched", "tons_differ", "not_found", "outside_scope",
 FLAGS = ("duplicate_on_invoice", "on_another_invoice")
 
 
-def _info(t: Ticket, project: str | None) -> TicketInfo:
+def _info(t, project: str | None) -> TicketInfo:
     return TicketInfo(
         ticket_id=t.id, batch_id=t.batch_id, ticket_number=t.ticket_number,
         delivery_date=t.delivery_date, supplier=t.supplier, material=t.material_type,
@@ -185,7 +185,7 @@ def _info(t: Ticket, project: str | None) -> TicketInfo:
     )
 
 
-def _conflicts(t: Ticket, project_id: int | None, item: InvoiceComparison,
+def _conflicts(t, project_id: int | None, item: InvoiceComparison,
                projects: dict[int, str]) -> list[str]:
     """Known facts that put this delivery outside the invoice line."""
     reasons = []
@@ -201,7 +201,7 @@ def _conflicts(t: Ticket, project_id: int | None, item: InvoiceComparison,
     return reasons
 
 
-def _gaps(t: Ticket) -> list[str]:
+def _gaps(t) -> list[str]:
     """Why a delivery record cannot be relied on yet."""
     gaps = []
     if t.status != "verified":
@@ -215,51 +215,100 @@ def _gaps(t: Ticket) -> list[str]:
     return gaps
 
 
+# Everything matching and totals read from a delivery. Plain rows, because a
+# list of invoice lines may read a whole project's tickets.
+TICKET_COLUMNS = (
+    Ticket.id, Ticket.batch_id, Ticket.ticket_number, Ticket.delivery_date, Ticket.material_type, Ticket.supplier,
+    Ticket.tonnage, Ticket.status, Ticket.tonnage_confirmed, Ticket.unit_price_override,
+    Ticket.price_snapshot_state, Ticket.applied_unit_price, Ticket.applied_price_source,
+)
+_KEY_CHUNK = 500
+
+
+class NumberLookup:
+    """Deliveries and other invoices by ticket number, for one response.
+
+    Prefetching every line's numbers replaces a table scan per line with one.
+    """
+
+    def __init__(self, db: Session, organization_id: int):
+        self.db = db
+        self.organization_id = organization_id
+        self._by_loose: dict[str, list] = {}
+        self._on_invoices: dict[str, list[tuple[str, int, str]]] = {}
+        self._projects: dict[int, str] | None = None
+
+    @property
+    def projects(self) -> dict[int, str]:
+        if self._projects is None:
+            self._projects = dict(self.db.execute(select(Project.id, Project.code).where(
+                Project.organization_id == self.organization_id)).all())
+        return self._projects
+
+    def prefetch(self, keys: set[str]) -> None:
+        """Load deliveries and other invoice listings for these exact keys.
+
+        The SQL filter is deliberately loose (leading zeros ignored); exact
+        keys are compared by the caller.
+        """
+        missing = sorted({_zero_insensitive(k) for k in keys} - set(self._by_loose))
+        for loose in missing:
+            self._by_loose[loose] = []
+        for start in range(0, len(missing), _KEY_CHUNK):
+            for row in self.db.execute(
+                select(*TICKET_COLUMNS, Batch.project_id).join(Batch, Batch.id == Ticket.batch_id).where(
+                    Batch.organization_id == self.organization_id,
+                    Ticket.status != "skipped",
+                    Ticket.ticket_number.is_not(None),
+                    func.ltrim(func.upper(func.trim(Ticket.ticket_number)), "0").in_(missing[start:start + _KEY_CHUNK]),
+                ).order_by(Ticket.id)
+            ):
+                self._by_loose[_zero_insensitive(ticket_key(row.ticket_number))].append(row)
+        wanted = sorted(set(keys) - set(self._on_invoices))
+        for key in wanted:
+            self._on_invoices[key] = []
+        for start in range(0, len(wanted), _KEY_CHUNK):
+            for key, supplier_key, comparison_id, number in self.db.execute(
+                select(InvoiceTicketRef.ticket_key, InvoiceComparison.supplier_key,
+                       InvoiceComparison.id, InvoiceComparison.invoice_number)
+                .join(InvoiceComparison, InvoiceComparison.id == InvoiceTicketRef.comparison_id)
+                .where(
+                    InvoiceComparison.organization_id == self.organization_id,
+                    InvoiceTicketRef.ticket_key.in_(wanted[start:start + _KEY_CHUNK]),
+                ).order_by(InvoiceComparison.id)
+            ):
+                self._on_invoices[key].append((supplier_key, comparison_id, number))
+
+    def deliveries(self, loose_key: str) -> list:
+        return self._by_loose.get(loose_key, [])
+
+    def other_invoices(self, key: str, item: InvoiceComparison) -> list[str]:
+        """Same supplier ticket on another saved line: possible double billing
+        (same company and supplier; any project)."""
+        numbers: list[str] = []
+        for supplier_key, comparison_id, number in self._on_invoices.get(key, ()):
+            if supplier_key == item.supplier_key and comparison_id != item.id and number not in numbers:
+                numbers.append(number)
+        return numbers
+
+
 def check_tickets(
     db: Session, organization_id: int, item: InvoiceComparison,
-    refs: list[InvoiceTicketRef], in_scope: list[Ticket],
+    refs: list[InvoiceTicketRef], in_scope: list, lookup: NumberLookup | None = None,
 ) -> TicketCheck:
     keys = [ticket_key(r.ticket_number) for r in refs]
-    loose_keys = {_zero_insensitive(k) for k in keys}
-    projects = dict(db.execute(
-        select(Project.id, Project.code).where(Project.organization_id == organization_id)
-    ).all())
+    lookup = lookup or NumberLookup(db, organization_id)
+    lookup.prefetch(set(keys))
+    projects = lookup.projects
 
-    # Every company delivery whose number could matter, in one query. The
-    # SQL filter is deliberately loose (leading zeros ignored); exact keys
-    # are compared in Python below.
-    by_key: dict[str, list[tuple[Ticket, int | None]]] = defaultdict(list)
-    by_loose: dict[str, list[tuple[Ticket, int | None]]] = defaultdict(list)
-    if loose_keys:
-        found = db.execute(
-            select(Ticket, Batch.project_id).join(Batch, Batch.id == Ticket.batch_id).where(
-                Batch.organization_id == organization_id,
-                Ticket.status != "skipped",
-                Ticket.ticket_number.is_not(None),
-                func.ltrim(func.upper(func.trim(Ticket.ticket_number)), "0").in_(loose_keys),
-            ).order_by(Ticket.id)
-        ).all()
-        for t, project_id in found:
-            key = ticket_key(t.ticket_number)
-            by_key[key].append((t, project_id))
-            by_loose[_zero_insensitive(key)].append((t, project_id))
+    by_key: dict[str, list] = defaultdict(list)
+    by_loose: dict[str, list] = defaultdict(list)
+    for loose in {_zero_insensitive(k) for k in keys}:
+        for row in lookup.deliveries(loose):
+            by_key[ticket_key(row.ticket_number)].append((row, row.project_id))
+            by_loose[loose].append((row, row.project_id))
 
-    # The same supplier ticket on another saved invoice line is possible
-    # double billing (same company and supplier; any project).
-    elsewhere: dict[str, list[str]] = defaultdict(list)
-    if keys:
-        for key, number in db.execute(
-            select(InvoiceTicketRef.ticket_key, InvoiceComparison.invoice_number)
-            .join(InvoiceComparison, InvoiceComparison.id == InvoiceTicketRef.comparison_id)
-            .where(
-                InvoiceComparison.organization_id == organization_id,
-                InvoiceComparison.supplier_key == item.supplier_key,
-                InvoiceComparison.id != item.id,
-                InvoiceTicketRef.ticket_key.in_(set(keys)),
-            ).order_by(InvoiceComparison.id)
-        ).all():
-            if number not in elsewhere[key]:
-                elsewhere[key].append(number)
+    elsewhere = {key: lookup.other_invoices(key, item) for key in set(keys)}
 
     repeats = Counter(keys)
     rows: list[CheckRow] = []

@@ -35,8 +35,12 @@ const links: { href: string; label: string; icon: IconName; requires?: Permissio
   { href: "/pricing", label: "Suppliers & rates", icon: "rates" },
   { href: "/reports", label: "Pilot report", icon: "records" },
   { href: "/team", label: "Team", icon: "team", requires: "team.manage" },
+  { href: "/system", label: "System health", icon: "layers", requires: "system.read" },
 ];
-const pageTitles: Record<string, string> = { "/account": "Account settings" };
+const pageTitles: Record<string, string> = {
+  "/account": "Account settings", "/records/names": "Name cleanup", "/reports/project": "Project report",
+  "/invoices/documents": "Invoice PDFs",
+};
 
 export default function AuthShell({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null);

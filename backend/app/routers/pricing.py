@@ -12,6 +12,7 @@ from ..db import get_db
 from ..permissions import require
 from ..models import Material, NameAlias, PricingEvent, Supplier, SupplierRate, User, as_utc, utcnow
 from ..services.accounts import names_by_id
+from ..services import rate_sheet
 from ..services.pricing import norm
 
 router = APIRouter(prefix="/api")
@@ -234,6 +235,81 @@ def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depend
         _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=body.unit_price)
     db.commit()
     return rate
+
+
+class RateSheetIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=500_000)
+    # False previews the plan and saves nothing.
+    apply: bool = False
+
+
+@router.post("/rates/import")
+def import_rate_sheet(body: RateSheetIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    """Paste a rate sheet, see exactly what it would change, then apply it. Locked
+    prices on approved tickets are never touched, and every change is recorded."""
+    organization_id = user.organization_id
+    try:
+        rows = rate_sheet.parse(body.text)
+    except rate_sheet.RateSheetError as exc:
+        raise HTTPException(422, str(exc)) from None
+    suppliers = {norm(s.name): s for s in db.scalars(select(Supplier).where(Supplier.organization_id == organization_id))}
+    materials = {norm(m.name): m for m in db.scalars(select(Material).where(Material.organization_id == organization_id))}
+    existing = {(r.supplier_id, r.material_id): r for r in db.scalars(select(SupplierRate).where(SupplierRate.organization_id == organization_id))}
+    problems = []
+    seen_pairs: dict[tuple[str, str], int] = {}
+    for row in rows:
+        for kind, name, known in (("supplier", row.supplier, suppliers), ("material", row.material, materials)):
+            if not norm(name):
+                problems.append(f"line {row.line}: '{name}' isn't a usable name")
+            elif norm(name) not in known and _name_is_an_alias(db, organization_id, kind, name):
+                problems.append(f"line {row.line}: '{name}' is saved as another spelling of a {kind}, so use the catalog name")
+        pair = (norm(row.supplier), norm(row.material))
+        if pair in seen_pairs:
+            problems.append(f"line {row.line} is the same supplier and material as line {seen_pairs[pair]}")
+        seen_pairs[pair] = row.line
+    if problems:
+        raise HTTPException(422, "Rate sheet needs fixes: " + "; ".join(problems[:8]) + ". Nothing was saved.")
+
+    plan, new_suppliers, new_materials = [], {}, {}
+    for row in rows:
+        supplier, material = suppliers.get(norm(row.supplier)), materials.get(norm(row.material))
+        if supplier is None:
+            new_suppliers.setdefault(norm(row.supplier), row.supplier)
+        if material is None:
+            new_materials.setdefault(norm(row.material), row.material)
+        rate = existing.get((supplier.id, material.id)) if supplier and material else None
+        action = "add" if rate is None else "unchanged" if rate.unit_price == row.price else "change"
+        plan.append({"line": row.line, "supplier": supplier.name if supplier else row.supplier,
+                     "material": material.name if material else row.material, "price": str(row.price),
+                     "old_price": str(rate.unit_price) if rate else None, "action": action,
+                     "new_supplier": supplier is None, "new_material": material is None})
+    summary = {"plan": plan, "new_suppliers": sorted(new_suppliers.values()), "new_materials": sorted(new_materials.values()),
+               "adds": sum(p["action"] == "add" for p in plan), "changes": sum(p["action"] == "change" for p in plan),
+               "unchanged": sum(p["action"] == "unchanged" for p in plan), "applied": False}
+    if not body.apply:
+        return summary
+
+    for key, name in new_suppliers.items():
+        suppliers[key] = Supplier(organization_id=organization_id, name=name)
+        db.add(suppliers[key])
+        _event(db, user, "supplier_added", supplier=name)
+    for key, name in new_materials.items():
+        materials[key] = Material(organization_id=organization_id, name=name)
+        db.add(materials[key])
+        _event(db, user, "material_added", material=name)
+    db.flush()
+    for row in rows:
+        supplier, material = suppliers[norm(row.supplier)], materials[norm(row.material)]
+        rate = existing.get((supplier.id, material.id))
+        if rate is None:
+            db.add(SupplierRate(organization_id=organization_id, supplier_id=supplier.id, material_id=material.id, unit_price=row.price))
+            _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=row.price)
+        elif rate.unit_price != row.price:
+            _event(db, user, "rate_changed", supplier=supplier.name, material=material.name, old=rate.unit_price, new=row.price)
+            rate.unit_price = row.price
+    db.commit()
+    return {**summary, "applied": True}
 
 
 @router.delete("/rates/{rid}", status_code=204)
