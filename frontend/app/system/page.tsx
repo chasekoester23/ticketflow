@@ -5,6 +5,7 @@ import { SystemCheck, SystemStatus, getSystemStatus } from "../../lib/api";
 
 const STATE: Record<SystemCheck["state"], { label: string; tone: string }> = {
   ok: { label: "OK", tone: "tf-status-open" },
+  off: { label: "Not in use", tone: "" },
   attention: { label: "Needs attention", tone: "tf-status-attention" },
   problem: { label: "Problem", tone: "tf-status-error" },
 };
@@ -24,7 +25,6 @@ export default function SystemPage() {
   return <div className="space-y-5">
     <div className="tf-page-heading">
       <div>
-        <p className="tf-eyebrow">ADMINISTRATION</p>
         <h1 className="tf-page-title">System health</h1>
         <p className="tf-page-description">Whether this installation can do its job: processing, backups and database version. Updates by itself.</p>
       </div>

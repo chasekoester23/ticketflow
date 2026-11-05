@@ -91,6 +91,38 @@ test("every planted invoice mistake gets the right result on screen", async ({ p
   await expect(page.getByRole("note", { name: "Billing patterns to check" })).toContainText("PL-earlier");
 });
 
+const PAGES = ["/", "/projects", "/upload", "/records", "/records/names", "/invoices", "/invoices/documents", "/pricing",
+  "/reports", "/reports/project", "/team", "/system", "/account"];
+
+test("no page scrolls sideways on a phone, with real data", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  await signIn(page);
+  for (const path of PAGES) {
+    await page.goto(path);
+    await page.waitForLoadState("networkidle");
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, path).toBeLessThanOrEqual(0);
+  }
+  await context.close();
+});
+
+test("the invoice result and actions are on screen at laptop width without sideways scrolling", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+  const page = await context.newPage();
+  await signIn(page);
+  await page.goto("/invoices");
+  const row = page.getByRole("row").filter({ hasText: "PL-tons_inflated" });
+  await row.scrollIntoViewIfNeeded();
+  for (const name of ["Details", "Correct"]) {
+    const box = await row.getByRole("button", { name }).boundingBox();
+    expect(box.x + box.width, name).toBeLessThanOrEqual(1366);
+  }
+  const wrap = page.locator(".tf-table-wrap").filter({ has: row });
+  expect(await wrap.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  await context.close();
+});
+
 test("the project report and system health load on the real stack", async ({ page }) => {
   await signIn(page);
   await page.goto("/reports/project");

@@ -39,7 +39,7 @@ export default function ProjectsPage() {
 
   return <div className="space-y-5">
     <div className="tf-page-heading">
-      <div><p className="tf-eyebrow">PROJECT MANAGEMENT</p><h1 className="tf-page-title">Projects</h1>
+      <div><h1 className="tf-page-title">Projects</h1>
         <p className="tf-page-description">Organize delivery records by job. Each batch stays associated with its project.</p></div>
       <a href="/upload" className="tf-secondary-button">Ticket intake <span aria-hidden="true">→</span></a>
     </div>

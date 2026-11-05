@@ -77,7 +77,6 @@ export default function DashboardPage() {
   return <div className="space-y-5">
     <div className="tf-page-heading">
       <div>
-        <p className="tf-eyebrow">OPERATIONS / OVERVIEW</p>
         <h1 className="tf-page-title">Delivery operations</h1>
         <p className="tf-page-description">Material ticket volume, review status, and verified quantities across your projects.</p>
       </div>
@@ -101,9 +100,9 @@ export default function DashboardPage() {
           <span className="text-[11px] text-[#788493]">Confirmed figures only where indicated</span>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-5">
-          <Metric label="Tickets received" value={data.tickets} note="All uploaded ticket records" />
-          <Metric label="Needs review" value={data.needs_review} note={`${data.flagged} flagged separately`} attention={data.needs_review > 0} />
-          <Metric label="Accepted tickets" value={data.verified} note="Individually approved records" />
+          <Metric label="Tickets received" value={data.tickets.toLocaleString()} note="All uploaded ticket records" />
+          <Metric label="Needs review" value={data.needs_review.toLocaleString()} note={`${data.flagged.toLocaleString()} flagged separately`} attention={data.needs_review > 0} />
+          <Metric label="Accepted tickets" value={data.verified.toLocaleString()} note="Individually approved records" />
           <Metric label="Verified tonnage" value={tons(data.total_tons)} note={`${tons(data.pending_tons)} unverified tons excluded`} />
           <Metric label="Material cost" value={money(data.total_cost)} note={data.unpriced_tickets ? `${data.unpriced_tickets} accepted tickets missing rates` : "Verified, priced deliveries only"} />
         </div>
@@ -123,7 +122,7 @@ export default function DashboardPage() {
               <td className="whitespace-nowrap">{date(b.created_at)}</td>
               <td className="tabular-nums">{b.files}</td>
               <td><span className={`tf-status ${b.status === "failed" ? "tf-status-error" : b.status === "ready_for_review" ? "tf-status-open" : b.status === "processing" ? "tf-status-attention" : ""}`}>
-                {b.status.replaceAll("_", " ")}
+                {({ uploaded: "Uploaded", processing: "Processing", ready_for_review: "Ready for review", failed: "Failed" } as Record<string, string>)[b.status] ?? b.status}
               </span></td>
             </tr>)}</tbody>
           </table></div> : <div className="tf-empty">
@@ -139,11 +138,11 @@ export default function DashboardPage() {
           <div className="divide-y divide-[#e8ebee]">
             <a href="/records?status=needs_review" className="flex items-center justify-between gap-4 px-5 py-5 hover:bg-[#fafbfc]">
               <div><p className="text-[13px] font-bold text-[#253342]">Awaiting verification</p><p className="mt-1 text-[11px] text-[#7c8996]">Confirm each extracted delivery</p></div>
-              <span className={`rounded border px-2.5 py-1 text-[15px] font-bold tabular-nums ${data.needs_review ? "border-[#efcb9b] bg-[#fff5e6] text-[#b26828]" : "border-[#dce1e6] bg-[#f5f6f7] text-[#657182]"}`}>{data.needs_review}</span>
+              <span className={`rounded border px-2.5 py-1 text-[15px] font-bold tabular-nums ${data.needs_review ? "border-[#efcb9b] bg-[#fff5e6] text-[#b26828]" : "border-[#dce1e6] bg-[#f5f6f7] text-[#657182]"}`}>{data.needs_review.toLocaleString()}</span>
             </a>
             <a href="/records?status=flagged" className="flex items-center justify-between gap-4 px-5 py-5 hover:bg-[#fafbfc]">
               <div><p className="text-[13px] font-bold text-[#253342]">Flagged for follow-up</p><p className="mt-1 text-[11px] text-[#7c8996]">Questions or missing information</p></div>
-              <span className="rounded border border-[#dce1e6] bg-[#f5f6f7] px-2.5 py-1 text-[15px] font-bold tabular-nums text-[#455263]">{data.flagged}</span>
+              <span className="rounded border border-[#dce1e6] bg-[#f5f6f7] px-2.5 py-1 text-[15px] font-bold tabular-nums text-[#455263]">{data.flagged.toLocaleString()}</span>
             </a>
           </div>
           <div className="border-t border-[#e4e8eb] bg-[#f8f9fa] px-5 py-4">

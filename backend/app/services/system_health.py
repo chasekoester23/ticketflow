@@ -143,11 +143,12 @@ def build(db: Session, organization_id: int) -> dict:
         checks.append(_check("Disk space", "ok", f"{free // 1024 ** 3} GB free for document storage."))
 
     provider_key = {"gemini": settings.gemini_api_key, "anthropic": settings.anthropic_api_key}.get(settings.extraction_provider)
-    checks.append(_check("AI ticket reading", "ok" if provider_key else "attention",
+    # Off is a choice, not a fault: manual entry is a complete way to work.
+    checks.append(_check("AI ticket reading", "ok" if provider_key else "off",
                          f"Configured ({settings.extraction_provider})." if provider_key
                          else "Not configured. Manual entry works without it."))
     return {
-        "healthy": all(check["state"] == "ok" for check in checks if check["name"] != "AI ticket reading"),
+        "healthy": all(check["state"] in ("ok", "off") for check in checks),
         "checks": checks,
         "queue": {"pending": pending, "running": running, "failed_jobs": job_counts.get("failed", 0),
                   "oldest_pending_seconds": int(oldest_seconds) if oldest_seconds is not None else None},

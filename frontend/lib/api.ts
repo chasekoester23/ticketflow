@@ -247,7 +247,7 @@ export const pilotReportCsvUrl = (projectId?: string) => `${API}/api/reports/pil
 export async function recordReviewTiming(ticketId: number, seconds: number) {
   await check(await apiFetch(`${API}/api/review-timings`, json("POST", { ticket_id: ticketId, seconds })));
 }
-export type SystemCheck = { name: string; state: "ok" | "attention" | "problem"; message: string; action: string | null };
+export type SystemCheck = { name: string; state: "ok" | "off" | "attention" | "problem"; message: string; action: string | null };
 export type SystemStatus = {
   healthy: boolean; checks: SystemCheck[];
   queue: { pending: number; running: number; failed_jobs: number; oldest_pending_seconds: number | null };

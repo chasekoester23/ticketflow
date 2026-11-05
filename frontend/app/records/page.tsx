@@ -27,10 +27,10 @@ const EXPORT_COLUMNS: [string, string][] = [
 ];
 const DEFAULT_EXPORT = EXPORT_COLUMNS.slice(0, 12).map(([key]) => key);
 
-const HEADERS: { label: string; sort?: RecordsSort; align?: string }[] = [
-  { label: "Ticket #", sort: "ticket_number" }, { label: "Date", sort: "date" }, { label: "Material", sort: "material" },
-  { label: "Tons", sort: "tons", align: "text-right" }, { label: "Supplier", sort: "supplier" }, { label: "Job location", sort: "job" },
-  { label: "Unit price", align: "text-right" }, { label: "Cost", align: "text-right" }, { label: "Status", sort: "status" },
+const HEADERS: { label: string; sort?: RecordsSort; align?: string; narrow?: boolean }[] = [
+  { label: "Ticket #", sort: "ticket_number" }, { label: "Date", sort: "date" }, { label: "Material", sort: "material", narrow: true },
+  { label: "Tons", sort: "tons", align: "text-right" }, { label: "Supplier", sort: "supplier", narrow: true }, { label: "Job location", sort: "job", narrow: true },
+  { label: "Unit price", align: "text-right", narrow: true }, { label: "Cost", align: "text-right", narrow: true }, { label: "Status", sort: "status" },
 ];
 const BULK_FIELDS: [string, string][] = [["supplier", "Supplier"], ["material_type", "Material"], ["job_location", "Job location"], ["delivery_date", "Delivery date"]];
 
@@ -64,6 +64,7 @@ export default function RecordsPage() {
   const [columns, setColumns] = useState<string[]>(DEFAULT_EXPORT);
   const [dialog, setDialog] = useState<"export" | "save" | null>(null);
   const [viewName, setViewName] = useState("");
+  const [moreFilters, setMoreFilters] = useState(false);
   const [catalog, setCatalog] = useState<{ suppliers: string[]; materials: string[] }>({ suppliers: [], materials: [] });
   const reloadKey = useRef(0);
   const [reload, setReload] = useState(0);
@@ -201,7 +202,7 @@ export default function RecordsPage() {
 
   return <div className="space-y-5">
     <div className="tf-page-heading">
-      <div><p className="tf-eyebrow">DELIVERY DOCUMENTATION</p><h1 className="tf-page-title">Delivery records</h1>
+      <div><h1 className="tf-page-title">Delivery records</h1>
         <p className="tf-page-description">Search, audit, and export material delivery tickets by project and status.</p></div>
       <div className="flex flex-wrap gap-2">
         {canEdit && <a href="/records/names" className="tf-secondary-button">Name cleanup</a>}
@@ -225,10 +226,12 @@ export default function RecordsPage() {
           {hasFilter && <button type="button" onClick={() => { setViewId(""); setFilters({}); }} className="tf-link">Clear filters</button>}
         </div>
       </div>
-      <div className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         <label className="tf-field-label">Search
           <input type="search" className="tf-field w-full" placeholder="Number, supplier, job…" value={filters.q ?? ""} onChange={set("q")} />
         </label>
+        <button type="button" className="tf-link text-left sm:hidden" aria-expanded={moreFilters} onClick={() => setMoreFilters((v) => !v)}>{moreFilters ? "Fewer filters" : "More filters"}</button>
+        <div className={`${moreFilters ? "grid" : "hidden"} gap-3 sm:contents`}>
         <label className="tf-field-label">Project
           <select className="tf-field w-full" value={filters.project_id ?? ""} onChange={set("project_id")}>
             <option value="">All projects</option>
@@ -253,6 +256,7 @@ export default function RecordsPage() {
         <label className="tf-field-label">Delivery to
           <input type="date" className="tf-field w-full" value={filters.date_to ?? ""} onChange={set("date_to")} />
         </label>
+        </div>
       </div>
     </section>
 
@@ -294,7 +298,7 @@ export default function RecordsPage() {
       <div className="tf-table-wrap"><table className="tf-table" aria-busy={loading}>
         <thead><tr>
           {canEdit && <th className="w-8"><input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={togglePage} /></th>}
-          {HEADERS.map((h) => <th key={h.label} className={h.align} aria-sort={h.sort === sort ? (direction === "asc" ? "ascending" : "descending") : undefined}>
+          {HEADERS.map((h) => <th key={h.label} className={`${h.align ?? ""} ${h.narrow ? "tf-hide-narrow" : ""}`} aria-sort={h.sort === sort ? (direction === "asc" ? "ascending" : "descending") : undefined}>
             {h.sort ? <button type="button" className="font-[inherit] uppercase tracking-[inherit] hover:text-[#19232e]" onClick={() => toggleSort(h.sort as RecordsSort)}>
               {h.label}{h.sort === sort && <span aria-hidden="true"> {direction === "asc" ? "▲" : "▼"}</span>}
             </button> : h.label}
@@ -305,12 +309,12 @@ export default function RecordsPage() {
           {canEdit && <td><input type="checkbox" aria-label={`Select ticket ${t.ticket_number ?? t.id}`} checked={selected.has(t.id)} onChange={() => toggle(t.id)} /></td>}
           <td className="font-bold tabular-nums">{t.ticket_number || "—"}</td>
           <td className="whitespace-nowrap">{t.delivery_date || "—"}</td>
-          <td className="min-w-[125px]">{t.material_type || "—"}</td>
+          <td className="tf-hide-narrow min-w-[125px]">{t.material_type || "—"}</td>
           <td className="whitespace-nowrap text-right tabular-nums">{t.tonnage ?? "—"}</td>
-          <td className="min-w-[130px]">{t.supplier || "—"}</td>
-          <td>{t.job_location || "—"}</td>
-          <td className="whitespace-nowrap text-right tabular-nums">{money(t.unit_price)}</td>
-          <td className="whitespace-nowrap text-right tabular-nums">{money(t.cost)}</td>
+          <td className="tf-hide-narrow min-w-[130px]">{t.supplier || "—"}</td>
+          <td className="tf-hide-narrow">{t.job_location || "—"}</td>
+          <td className="tf-hide-narrow whitespace-nowrap text-right tabular-nums">{money(t.unit_price)}</td>
+          <td className="tf-hide-narrow whitespace-nowrap text-right tabular-nums">{money(t.cost)}</td>
           <td><span className={`tf-status ${statusClass(t.status)}`}>
             {STATUS_LABEL[t.status] ?? t.status}
           </span>{t.duplicates.length > 0 &&

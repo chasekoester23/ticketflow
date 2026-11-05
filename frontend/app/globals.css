@@ -47,16 +47,13 @@ a { text-underline-offset: 3px; }
 .tf-brand-type > span { color: #f49862; }
 .tf-brand-type small { display: block; margin-top: 7px; color: #98a7b7; font-size: 9px; font-weight: 650; letter-spacing: .15em; }
 .tf-sidebar-divider { border-top: 1px solid #3b4550; margin: 0 20px; }
-.tf-sidebar-section { margin: 30px 23px 12px; font-size: 10px; color: #8494a5; font-weight: 750; letter-spacing: .15em; }
+.tf-sidebar-section { margin: 22px 23px 8px; font-size: 10px; color: #8494a5; font-weight: 750; letter-spacing: .15em; }
 .tf-nav { display: flex; flex-direction: column; gap: 3px; padding: 0 12px; }
 .tf-nav-link { display: flex; position: relative; align-items: center; gap: 13px; min-height: 43px; padding: 0 13px; color: #c0cbd5; font-size: 13px; font-weight: 550; text-decoration: none; border-radius: 4px; }
 .tf-nav-link:hover { color: white; background: #303c49; }
 .tf-nav-link-active, .tf-nav-link-active:hover { color: white; background: #35414e; font-weight: 700; }
 .tf-nav-link-active > svg { color: #ffab77; }
 .tf-nav-active-rule { position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--tf-orange); }
-.tf-sidebar-foot { margin-top: auto; padding: 22px; border-top: 1px solid #3b4550; display: grid; gap: 7px; }
-.tf-sidebar-foot-label { font-size: 10px; color: #8797a6; font-weight: 750; letter-spacing: .1em; }
-.tf-sidebar-foot-text { font-size: 12px; color: #bcc8d2; line-height: 1.6; }
 
 .tf-shell-content { min-width: 0; flex: 1; }
 .tf-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 65px; padding: 0 34px; background: white; border-bottom: 1px solid var(--tf-border); }
@@ -75,17 +72,17 @@ a { text-underline-offset: 3px; }
 .tf-role-pill-owner { background: #fff3ea; border-color: #f2cdb2; color: #9a4b1d; }
 .tf-sign-out { display: flex; align-items: center; gap: 7px; padding: 7px 10px; margin-left: 5px; border: 1px solid var(--tf-border); border-radius: 4px; background: #fff; color: #536274; font-size: 12px; font-weight: 600; }
 .tf-sign-out:hover { background: #f4f5f6; color: #202a34; }
-.tf-main { max-width: 1530px; margin: 0 auto; padding: 28px 34px 70px; }
+.tf-main { max-width: 1530px; margin: 0 auto; padding: 20px 28px 48px; }
 .tf-menu-toggle { display: none; padding: 8px; border: 1px solid var(--tf-border); background: white; border-radius: 4px; color: #344252; }
 .tf-mobile-scrim { display: none; }
 
 /* Reusable operational UI, not decoration-oriented marketing cards. */
-.tf-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 24px; }
+.tf-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 16px; }
 .tf-eyebrow { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; font-weight: 750; color: #667485; }
-.tf-page-title { margin-top: 6px; font-size: 26px; font-weight: 750; letter-spacing: -.035em; line-height: 1.25; color: #18232d; }
-.tf-page-description { color: #657182; font-size: 13px; line-height: 1.6; margin-top: 7px; }
+.tf-page-title { font-size: 22px; font-weight: 750; letter-spacing: -.025em; line-height: 1.25; color: #18232d; }
+.tf-page-description { color: #657182; font-size: 13px; line-height: 1.5; margin-top: 4px; }
 .tf-panel { border: 1px solid var(--tf-border); background: white; border-radius: 6px; overflow: hidden; }
-.tf-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 17px 20px; border-bottom: 1px solid var(--tf-border); }
+.tf-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--tf-border); }
 .tf-panel-title { font-size: 14px; font-weight: 750; letter-spacing: -.012em; }
 .tf-panel-description { color: var(--tf-muted); font-size: 12px; margin-top: 4px; }
 .tf-primary-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 38px; padding: 9px 14px; border: 1px solid #cd6229; border-radius: 4px; color: white; background: var(--tf-orange); font-size: 12px; font-weight: 750; line-height: 1.25; text-decoration: none; white-space: nowrap; }
@@ -96,10 +93,11 @@ a { text-underline-offset: 3px; }
 .tf-field { min-height: 38px; border: 1px solid #cfd6de; border-radius: 4px; background: white; padding: 9px 11px; color: #263442; font-size: 13px; }
 .tf-field:focus { outline: 2px solid #f2b38f; outline-offset: 0; border-color: #d16a33; }
 .tf-field-label { display: flex; flex-direction: column; gap: 6px; color: #49586a; font-size: 11px; font-weight: 700; }
-.tf-table-wrap { width: 100%; overflow-x: auto; }
+/* Relative, so visually hidden text inside a table can't widen the whole page. */
+.tf-table-wrap { position: relative; width: 100%; overflow-x: auto; }
 .tf-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
-.tf-table th { padding: 11px 16px; border-bottom: 1px solid var(--tf-border); background: #f7f8f9; color: #647181; font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .075em; white-space: nowrap; }
-.tf-table td { padding: 13px 16px; border-bottom: 1px solid #e9edf0; color: #354454; vertical-align: middle; }
+.tf-table th { padding: 8px 12px; border-bottom: 1px solid var(--tf-border); background: #f7f8f9; color: #647181; font-size: 10px; font-weight: 750; text-transform: uppercase; letter-spacing: .075em; white-space: nowrap; }
+.tf-table td { padding: 8px 12px; border-bottom: 1px solid #e9edf0; color: #354454; vertical-align: middle; }
 .tf-table tbody tr:last-child td { border-bottom: 0; }
 .tf-table tbody tr:hover { background: #fbfcfc; }
 .tf-table td a { color: #c65a23; font-weight: 700; text-decoration: none; }
@@ -142,13 +140,14 @@ a { text-underline-offset: 3px; }
   .tf-sidebar-open { transform: translateX(0); }
   .tf-mobile-scrim { display: block; position: fixed; inset: 0; z-index: 20; background: rgba(17, 24, 32, .52); border: 0; }
   .tf-menu-toggle { display: inline-flex; }
-  .tf-main { padding: 22px 16px 55px; }
+  .tf-main { padding: 16px 12px 48px; }
   .tf-topbar { height: 59px; padding: 0 16px; }
   .tf-organization-name { max-width: 120px; margin-right: 0; padding-right: 12px; }
   .tf-account-name, .tf-sign-out span { display: none; }
   .tf-sign-out { padding: 7px; }
   .tf-topbar-parent, .tf-topbar-context > svg { display: none; }
-  .tf-page-title { font-size: 23px; }
+  .tf-page-title { font-size: 20px; }
+  .tf-hide-narrow { display: none; }
 }
 @media (max-width: 420px) {
   .tf-topbar-right { gap: 5px; }

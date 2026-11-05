@@ -43,7 +43,7 @@ export default function AccountPage() {
 
   return <div className="max-w-[760px] space-y-5">
     <div className="tf-page-heading">
-      <div><p className="tf-eyebrow">YOUR ACCOUNT</p><h1 className="tf-page-title">Account settings</h1>
+      <div><h1 className="tf-page-title">Account settings</h1>
         <p className="tf-page-description">Your sign-in identity. Ticket approvals, edits and invoice corrections are recorded under this name.</p></div>
     </div>
 

@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { getAuthMe, logOut, type Account, type Permission } from "../lib/api";
 import { AccountContext } from "./account-context";
 
-type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "team" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers";
+type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "team" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers" | "report" | "health";
 
 function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
@@ -22,23 +22,30 @@ function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
     chevron: <path d="m9 6 6 6-6 6" />,
     logout: <><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M14 8l4 4-4 4m-9-4h13" /></>,
     layers: <><path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5" /></>,
+    report: <><path d="M4 20V4M4 20h16M8 16v-5M12 16V7M16 16v-3" /></>,
+    health: <path d="M3 12h4l2.5-6 4 12 2.5-6h5" />,
   };
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
-const links: { href: string; label: string; icon: IconName; requires?: Permission }[] = [
+type NavLink = { href: string; label: string; icon: IconName; requires?: Permission };
+const workLinks: NavLink[] = [
   { href: "/", label: "Overview", icon: "overview" },
-  { href: "/projects", label: "Projects", icon: "projects" },
   { href: "/upload", label: "Ticket intake", icon: "tickets" },
   { href: "/records", label: "Delivery records", icon: "records" },
   { href: "/invoices", label: "Invoice comparison", icon: "invoices" },
-  { href: "/pricing", label: "Suppliers & rates", icon: "rates" },
-  { href: "/reports", label: "Pilot report", icon: "records" },
-  { href: "/team", label: "Team", icon: "team", requires: "team.manage" },
-  { href: "/system", label: "System health", icon: "layers", requires: "system.read" },
+  { href: "/reports/project", label: "Project report", icon: "report" },
 ];
+const setupLinks: NavLink[] = [
+  { href: "/projects", label: "Projects", icon: "projects" },
+  { href: "/pricing", label: "Suppliers & rates", icon: "rates" },
+  { href: "/reports", label: "Pilot report", icon: "report" },
+  { href: "/team", label: "Team", icon: "team", requires: "team.manage" },
+  { href: "/system", label: "System health", icon: "health", requires: "system.read" },
+];
+const links = [...workLinks, ...setupLinks];
 const pageTitles: Record<string, string> = {
-  "/account": "Account settings", "/records/names": "Name cleanup", "/reports/project": "Project report",
+  "/account": "Account settings", "/records/names": "Name cleanup",
   "/invoices/documents": "Invoice PDFs",
 };
 
@@ -49,7 +56,16 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isLogin = pathname === "/login";
   const current = links.find((l) => l.href === pathname);
-  const visibleLinks = links.filter((l) => !l.requires || account?.permissions?.includes(l.requires));
+  const allowed = (l: NavLink) => !l.requires || account?.permissions?.includes(l.requires);
+  const navLink = ({ href, label, icon }: NavLink) => {
+    const active = pathname === href;
+    return <a key={href} href={href} aria-current={active ? "page" : undefined}
+      className={`tf-nav-link ${active ? "tf-nav-link-active" : ""}`}
+      onClick={() => setMenuOpen(false)}>
+      <Icon name={icon} /><span>{label}</span>
+      {active && <span className="tf-nav-active-rule" />}
+    </a>;
+  };
   const personName = account?.display_name || account?.username || "";
   const initial = (personName[0] || "U").toUpperCase();
   const mustChangePassword = Boolean(account?.must_change_password);
@@ -92,22 +108,14 @@ export default function AuthShell({ children }: { children: ReactNode }) {
         <span className="tf-brand-type">TICKET<span>FLOW</span><small>FIELD OPERATIONS</small></span>
       </a>
       <div className="tf-sidebar-divider" />
-      <p className="tf-sidebar-section">WORKSPACE</p>
-      <nav aria-label="Main navigation" className="tf-nav">
-        {!mustChangePassword && visibleLinks.map(({ href, label, icon }) => {
-          const active = pathname === href;
-          return <a key={href} href={href} aria-current={active ? "page" : undefined}
-            className={`tf-nav-link ${active ? "tf-nav-link-active" : ""}`}
-            onClick={() => setMenuOpen(false)}>
-            <Icon name={icon} /><span>{label}</span>
-            {active && <span className="tf-nav-active-rule" />}
-          </a>;
-        })}
+      <nav aria-label="Main navigation">
+        {!mustChangePassword && <>
+          <p className="tf-sidebar-section">WORK</p>
+          <div className="tf-nav">{workLinks.filter(allowed).map(navLink)}</div>
+          <p className="tf-sidebar-section">SETUP</p>
+          <div className="tf-nav">{setupLinks.filter(allowed).map(navLink)}</div>
+        </>}
       </nav>
-      <div className="tf-sidebar-foot">
-        <span className="tf-sidebar-foot-label">TICKETFLOW WORKSPACE</span>
-        <span className="tf-sidebar-foot-text">Delivery documentation<br />& material tracking</span>
-      </div>
     </aside>
 
     <div className="tf-shell-content">

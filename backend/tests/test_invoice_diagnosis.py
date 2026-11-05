@@ -245,11 +245,19 @@ def test_overview_does_not_cross_suppliers(client):
 def test_overview_finds_the_same_bill_under_a_new_number_and_reused_numbers(client):
     _seed(1)
     _raw_line("I-1", day=1)
-    _raw_line("I-1-RESEND", day=2)
+    _raw_line("I-1-RESEND", day=1)
     _raw_line("I-9", tons="5", subtotal="5", day=3)
     _raw_line("I-9", tons="6", subtotal="6", day=4)
     kinds = {e["kind"] for e in client.get("/api/invoice-comparisons/overview").json()["exceptions"]}
     assert kinds == {"same_amounts_new_number", "invoice_number_reused"}
+
+
+def test_equal_amounts_in_different_months_arent_called_a_resend(client):
+    """Fixed-size loads bill the same amount often. Crying wolf hides real resends."""
+    _seed(1)
+    _raw_line("I-1", day=1)
+    _raw_line("I-2", day=2)
+    assert client.get("/api/invoice-comparisons/overview").json()["exceptions"] == []
 
 
 def test_overview_never_crosses_companies(client):

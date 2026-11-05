@@ -69,7 +69,7 @@ export default function PricingPage() {
 
   return <div className="space-y-5">
     <div className="tf-page-heading">
-      <div><p className="tf-eyebrow">COST MANAGEMENT</p><h1 className="tf-page-title">Suppliers & rates</h1>
+      <div><h1 className="tf-page-title">Suppliers & rates</h1>
         <p className="tf-page-description">Maintain the supplier and material price catalog used during ticket verification.</p></div>
       <a className="tf-secondary-button" href="/records">View delivery records <span aria-hidden="true">→</span></a>
     </div>
