@@ -95,4 +95,4 @@ def test_same_supplier_and_number_flagged(client, monkeypatch):
 
 def test_status_endpoint_hides_key(client):
     body = client.get("/api/status").json()
-    assert set(body) == {"extraction_configured", "model"}
+    assert set(body) == {"extraction_configured", "model", "worker_running"}

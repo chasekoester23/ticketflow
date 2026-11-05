@@ -13,6 +13,7 @@ import argparse
 import fcntl
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -22,8 +23,22 @@ from app.config import settings  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.services.extraction import get_extractor  # noqa: E402
 from app.services.jobqueue import claim_next, execute_claimed, recover_interrupted  # noqa: E402
+from app.services.system_health import heartbeat_path  # noqa: E402
 
 logger = logging.getLogger("ticketflow.worker")
+HEARTBEAT_SECONDS = 5
+
+
+def _heartbeat(stop: threading.Event) -> None:
+    """Touch a file so people can see this worker is alive, even during a long
+    job. On its own thread, so a slow AI call can't make a live worker look dead."""
+    path = heartbeat_path()
+    while not stop.is_set():
+        try:
+            path.touch()
+        except OSError:
+            logger.warning("Could not update the worker heartbeat")
+        stop.wait(HEARTBEAT_SECONDS)
 
 
 def run(*, once: bool, poll_seconds: float) -> int:
@@ -44,21 +59,30 @@ def run(*, once: bool, poll_seconds: float) -> int:
                 logger.warning("Recovered %s processing job(s) after worker restart", recovered)
 
         logger.info("Worker started; waiting for queued batches")
-        while True:
-            with SessionLocal() as db:
-                claimed = claim_next(db)
-            if claimed is None:
+        stop = threading.Event()
+        beat = threading.Thread(target=_heartbeat, args=(stop,), daemon=True)
+        beat.start()
+        try:
+            while True:
+                with SessionLocal() as db:
+                    claimed = claim_next(db)
+                if claimed is None:
+                    if once:
+                        return 0
+                    time.sleep(poll_seconds)
+                    continue
+                job_id, token = claimed
+                logger.info("Processing durable job %s", job_id)
+                with SessionLocal() as db:
+                    execute_claimed(db, job_id, token, extractor_factory=get_extractor)
+                logger.info("Finished attempt for job %s", job_id)
                 if once:
                     return 0
-                time.sleep(poll_seconds)
-                continue
-            job_id, token = claimed
-            logger.info("Processing durable job %s", job_id)
-            with SessionLocal() as db:
-                execute_claimed(db, job_id, token, extractor_factory=get_extractor)
-            logger.info("Finished attempt for job %s", job_id)
-            if once:
-                return 0
+        finally:
+            stop.set()
+            beat.join(timeout=2)
+            # A clean stop should read as stopped straight away.
+            heartbeat_path().unlink(missing_ok=True)
 
 
 def main() -> int:

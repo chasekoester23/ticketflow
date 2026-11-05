@@ -54,6 +54,8 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     "pricing.manage": _APPROVERS,
     "invoices.manage": _APPROVERS,
     "team.manage": frozenset({OWNER}),
+    # Installation health: worker, backups, database version.
+    "system.read": _APPROVERS,
 }
 
 

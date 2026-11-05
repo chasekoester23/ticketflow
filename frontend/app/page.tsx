@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Dashboard, Group, Project, getDashboard, listProjects } from "../lib/api";
+import { Dashboard, Group, Onboarding, Project, getDashboard, getOnboarding, listProjects } from "../lib/api";
+import { useAccount } from "./account-context";
 
 const money = (v: string | number) => `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const tons = (v: string | number) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -27,6 +28,31 @@ function Breakdown({ title, rows, description }: { title: string; rows: Group[];
         <td className="text-right tabular-nums">{tons(r.tons)}</td><td className="text-right tabular-nums">{money(r.cost)}</td>
       </tr>)}</tbody>
     </table></div> : <p className="tf-empty">No delivery records to summarize yet.</p>}
+  </section>;
+}
+
+/** First-run steps, read from what actually exists. Gone once they're all done. */
+function GettingStarted() {
+  const canSetUp = useAccount().can("projects.manage");
+  const [state, setState] = useState<Onboarding | null>(null);
+  useEffect(() => { getOnboarding().then(setState).catch(() => setState(null)); }, []);
+  if (!canSetUp || !state || state.complete) return null;
+  const done = state.steps.filter((step) => step.done).length;
+  const next = state.steps.find((step) => !step.done);
+  return <section className="tf-panel" aria-label="Getting started">
+    <div className="tf-panel-heading">
+      <div><h2 className="tf-panel-title">Getting started</h2><p className="tf-panel-description">{done} of {state.steps.length} done</p></div>
+    </div>
+    <ol className="grid divide-y divide-[#e8ebee] md:grid-cols-2 md:divide-y-0 xl:grid-cols-3">
+      {state.steps.map((step) => <li key={step.key} className="flex items-start gap-3 px-5 py-3.5">
+        <span aria-hidden="true" className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[11px] font-bold ${step.done ? "border-[#2f855a] bg-[#2f855a] text-white" : "border-[#cfd6de] text-[#7a8796]"}`}>{step.done ? "✓" : ""}</span>
+        <span className="min-w-0">
+          {step.done ? <span className="text-[13px] font-semibold text-[#657182]">{step.title}<span className="sr-only"> (done)</span></span>
+            : <a href={step.href} className={`text-[13px] font-bold ${step.key === next?.key ? "text-[#bf5927]" : "text-[#253342]"}`}>{step.title}</a>}
+          <span className="mt-0.5 block text-[11px] leading-5 text-[#7a8796]">{step.detail}</span>
+        </span>
+      </li>)}
+    </ol>
   </section>;
 }
 
@@ -66,6 +92,7 @@ export default function DashboardPage() {
     </div>
 
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
+    <GettingStarted />
 
     {data ? <>
       <section className="tf-panel">

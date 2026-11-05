@@ -28,7 +28,7 @@ def test_gemini_is_default_provider_and_api_status_tracks_its_key(client, monkey
     status = client.get("/api/status")
     assert status.status_code == 200
     assert status.json() == {
-        "extraction_configured": False, "model": settings.gemini_model,
+        "extraction_configured": False, "model": settings.gemini_model, "worker_running": False,
     }
 
     monkeypatch.setattr(settings, "gemini_api_key", "fictional-test-key")

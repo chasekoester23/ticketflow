@@ -15,7 +15,7 @@ export type Role = "owner" | "manager" | "clerk" | "viewer";
 export type Permission =
   | "records.read" | "tickets.upload" | "tickets.edit" | "tickets.flag" | "tickets.verify"
   | "tickets.skip" | "tickets.price_override" | "projects.manage" | "pricing.manage"
-  | "invoices.manage" | "team.manage" | "scans.resolve" | "scans.confirm_blank";
+  | "invoices.manage" | "team.manage" | "scans.resolve" | "scans.confirm_blank" | "system.read";
 export type Account = {
   id: number;
   username: string;
@@ -247,7 +247,29 @@ export const pilotReportCsvUrl = (projectId?: string) => `${API}/api/reports/pil
 export async function recordReviewTiming(ticketId: number, seconds: number) {
   await check(await apiFetch(`${API}/api/review-timings`, json("POST", { ticket_id: ticketId, seconds })));
 }
-export async function getStatus(): Promise<{ extraction_configured: boolean; model: string; review_timing_enabled?: boolean }> {
+export type SystemCheck = { name: string; state: "ok" | "attention" | "problem"; message: string; action: string | null };
+export type SystemStatus = {
+  healthy: boolean; checks: SystemCheck[];
+  queue: { pending: number; running: number; failed_jobs: number; oldest_pending_seconds: number | null };
+  worker: { running: boolean; last_seen_seconds: number | null };
+  database: { kind: string; revision: string | null; expected_revision: string | null };
+  invoice_reader: string;
+};
+export async function getSystemStatus(): Promise<SystemStatus> {
+  return (await check(await apiFetch(`${API}/api/system/status`))).json();
+}
+export type Onboarding = { complete: boolean; steps: { key: string; title: string; detail: string; href: string; done: boolean }[] };
+export async function getOnboarding(): Promise<Onboarding> {
+  return (await check(await apiFetch(`${API}/api/onboarding`))).json();
+}
+export type RateSheetPlan = {
+  applied: boolean; adds: number; changes: number; unchanged: number; new_suppliers: string[]; new_materials: string[];
+  plan: { line: number; supplier: string; material: string; price: string; old_price: string | null; action: "add" | "change" | "unchanged"; new_supplier: boolean; new_material: boolean }[];
+};
+export async function importRateSheet(text: string, apply: boolean): Promise<RateSheetPlan> {
+  return (await check(await apiFetch(`${API}/api/rates/import`, json("POST", { text, apply })))).json();
+}
+export async function getStatus(): Promise<{ extraction_configured: boolean; model: string; review_timing_enabled?: boolean; worker_running?: boolean }> {
   return (await check(await apiFetch(`${API}/api/status`))).json();
 }
 export async function listSuppliers(): Promise<Supplier[]> {
