@@ -10,13 +10,14 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
 from ..config import settings
 from ..db import SessionLocal, get_db
-from ..models import AuditEvent, Batch, Project, ScanSlot, Ticket, UploadedFile, User, as_utc
+from ..models import AuditEvent, Batch, InvoiceTicketLink, Project, ScanEvent, ScanSlot, Ticket, UploadedFile, User, as_utc
 from ..permissions import has_permission, require
 from ..schemas import BatchOut, BatchQueueRow, FlagIn, TicketOut, TicketPatch
 from ..services import export as export_svc
@@ -243,6 +244,41 @@ def get_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int
     return batch
 
 
+class BatchProjectIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: int = Field(gt=0)
+
+
+@router.patch("/batches/{batch_id}/project", response_model=BatchOut)
+def move_batch(batch_id: int, body: BatchProjectIn, db: Session = Depends(get_db),
+               user: User = Depends(require("projects.manage"))):
+    """Fix an upload filed under the wrong project. Invoice comparisons recompute
+    from current tickets, so they follow automatically; a ticket a person already
+    linked to an invoice line has to be released first."""
+    organization_id = user.organization_id
+    batch = db.scalar(select(Batch).where(Batch.id == batch_id, Batch.organization_id == organization_id))
+    if batch is None:
+        raise HTTPException(404, "Batch not found")
+    target = db.scalar(select(Project).where(Project.id == body.project_id, Project.organization_id == organization_id))
+    if target is None:
+        raise HTTPException(404, "Project not found")
+    if target.status != "active":
+        raise HTTPException(409, "Project is archived; unarchive it to move tickets into it")
+    if batch.project_id == target.id:
+        return batch
+    linked = db.scalar(select(func.count()).select_from(InvoiceTicketLink).join(Ticket, Ticket.id == InvoiceTicketLink.ticket_id).where(
+        Ticket.batch_id == batch_id, InvoiceTicketLink.released_at.is_(None)))
+    if linked:
+        raise HTTPException(409, f"{linked} ticket(s) in this batch are linked to an invoice line. Release those links first.")
+    old_code = db.scalar(select(Project.code).where(Project.id == batch.project_id)) if batch.project_id else None
+    db.add(ScanEvent(batch_id=batch_id, actor_user_id=user.id, action="project_changed",
+                     old_value=old_code, new_value=target.code))
+    batch.project_id = target.id
+    db.commit()
+    db.refresh(batch)
+    return batch
+
+
 @router.post("/batches/{batch_id}/retry", response_model=BatchOut)
 def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db),
                 user: User = Depends(require("tickets.upload"))):
@@ -387,6 +423,21 @@ def _ticket_or_404(db: Session, ticket_id: int, organization_id: int, *, lock: b
     if not t:
         raise HTTPException(404, "Ticket not found")
     return t
+
+
+def apply_review_edit(db: Session, t: Ticket, user: User, field: str, new) -> bool:
+    """One audited change to an unapproved ticket. False when nothing changed.
+    A previewed price no longer applies; it is captured at approval as usual."""
+    old = getattr(t, field)
+    if old == new:
+        return False
+    _audit(db, t, user, field, old, new)
+    setattr(t, field, new)
+    t.price_snapshot_state = "pending"
+    t.applied_unit_price = None
+    t.applied_price_source = None
+    _refresh_flags(t)
+    return True
 
 
 def _refresh_flags(t: Ticket) -> None:

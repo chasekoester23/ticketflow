@@ -14,6 +14,7 @@ import {
   listSuppliers,
   Project,
   getTickets,
+  moveBatch,
   recordReviewTiming,
   retryBatch,
   ticketImageUrl,
@@ -75,6 +76,8 @@ export default function Home() {
   const [timingEnabled, setTimingEnabled] = useState(false);
   const [help, setHelp] = useState(false);
   const [session, setSession] = useState({ accepted: 0, seconds: 0 });
+  const [moving, setMoving] = useState(false);
+  const canMove = can("projects.manage");
   const openedAt = useRef<Record<number, number>>({});
   const [catalog, setCatalog] = useState<{ suppliers: string[]; materials: string[] }>({ suppliers: [], materials: [] });
 
@@ -166,6 +169,17 @@ export default function Home() {
       setError((e as Error).message);
     } finally {
       setRetrying(false);
+    }
+  }
+
+  async function onMove(projectId: number) {
+    if (!batch) return;
+    try {
+      setBatch(await moveBatch(batch.id, projectId));
+      setMoving(false);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
     }
   }
 
@@ -368,7 +382,16 @@ export default function Home() {
               <h1 className="mt-0.5 text-[15px] font-bold text-[#1d2b38]">
                 Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}
                 {project && <span className="ml-2 font-medium text-[#657182]">{project.code} · {project.name}</span>}
+                {canMove && !moving && <button type="button" className="tf-link ml-2 text-[11px]" onClick={() => setMoving(true)}>Change project</button>}
               </h1>
+              {moving && <label className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold text-[#49586a]">Move this batch to
+                <select className="tf-field !min-h-0 !py-1 !text-xs" aria-label="Move this batch to project" defaultValue=""
+                  onChange={(e) => { if (e.target.value) void onMove(Number(e.target.value)); }}>
+                  <option value="" disabled>Choose a project…</option>
+                  {projects.filter((p) => p.id !== batch.project_id).map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+                </select>
+                <button type="button" className="tf-link text-[11px]" onClick={() => setMoving(false)}>Cancel</button>
+              </label>}
               <p className="mt-0.5 text-xs text-[#657182]">{tickets.length} tickets · {counts.verified} accepted · {counts.flagged} flagged · {counts.review} awaiting review · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">

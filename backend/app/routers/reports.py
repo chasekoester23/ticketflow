@@ -8,7 +8,7 @@ from io import StringIO
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import false, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
@@ -19,7 +19,7 @@ from ..permissions import require
 from ..schemas import TicketOut
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
-from ..services import pilot_report
+from ..services import pilot_report, project_report
 from ..services.invoice_context import LineContext
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
@@ -39,31 +39,53 @@ TOTALS_COLUMNS = (
 )
 
 
-def filtered_tickets(
-    db: Session, *, organization_id: int, project_id: int | None, supplier: str | None, material: str | None,
-    status: str | None, date_from: date | None, date_to: date | None, include_skipped: bool = False,
-    columns: tuple | None = None,
-) -> list:
-    """Ticket objects, or lightweight rows with these attributes when ``columns`` is given."""
-    q = (select(*columns) if columns else select(Ticket)).select_from(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
+def filtered_query(
+    query, *, organization_id: int, project_id: int | None, supplier: str | None, material: str | None,
+    status: str | None, date_from: date | None, date_to: date | None, q: str | None = None,
+    include_skipped: bool = False,
+):
+    """Add the record filters to ``query``. One definition, so a list, its totals
+    and its exports can never disagree about which tickets are included."""
+    query = query.select_from(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
         Batch.organization_id == organization_id
     )
     if project_id is not None:
-        q = q.where(Batch.project_id == project_id)
+        query = query.where(Batch.project_id == project_id)
     if supplier:
-        q = q.where(Ticket.supplier.ilike(f"%{supplier.strip()}%"))
+        query = query.where(Ticket.supplier.icontains(supplier.strip(), autoescape=True))
     if material:
-        q = q.where(Ticket.material_type.ilike(f"%{material.strip()}%"))
+        query = query.where(Ticket.material_type.icontains(material.strip(), autoescape=True))
+    if q and q.strip():
+        text = q.strip()
+        query = query.where(or_(
+            Ticket.ticket_number.icontains(text, autoescape=True), Ticket.supplier.icontains(text, autoescape=True),
+            Ticket.material_type.icontains(text, autoescape=True), Ticket.job_location.icontains(text, autoescape=True),
+        ))
     if status in VALID_STATUS:
-        q = q.where(Ticket.status == status)
+        query = query.where(Ticket.status == status)
+    elif status == "-none-":
+        query = query.where(false())
     elif not include_skipped:
-        q = q.where(Ticket.status != "skipped")
+        query = query.where(Ticket.status != "skipped")
     if date_from:
-        q = q.where(Ticket.delivery_date >= date_from)
+        query = query.where(Ticket.delivery_date >= date_from)
     if date_to:
-        q = q.where(Ticket.delivery_date <= date_to)
-    q = q.order_by(Ticket.delivery_date, Ticket.id)
-    return list(db.execute(q).all() if columns else db.scalars(q).all())
+        query = query.where(Ticket.delivery_date <= date_to)
+    return query
+
+
+def filtered_tickets(
+    db: Session, *, organization_id: int, project_id: int | None, supplier: str | None, material: str | None,
+    status: str | None, date_from: date | None, date_to: date | None, include_skipped: bool = False,
+    columns: tuple | None = None, q: str | None = None,
+) -> list:
+    """Ticket objects, or lightweight rows with these attributes when ``columns`` is given."""
+    query = filtered_query(
+        select(*columns) if columns else select(Ticket), organization_id=organization_id, project_id=project_id,
+        supplier=supplier, material=material, status=status, date_from=date_from, date_to=date_to, q=q,
+        include_skipped=include_skipped,
+    ).order_by(Ticket.delivery_date, Ticket.id)
+    return list(db.execute(query).all() if columns else db.scalars(query).all())
 
 
 @router.get("/records", response_model=list[TicketOut])
@@ -85,16 +107,20 @@ def records(
 @router.get("/records/export.xlsx")
 def export_records(
     project_id: int | None = None, supplier: str | None = None, material: str | None = None,
-    status: str | None = None, date_from: date | None = None, date_to: date | None = None,
+    status: str | None = None, date_from: date | None = None, date_to: date | None = None, q: str | None = None,
+    columns: str | None = None,
     db: Session = Depends(get_db),
     organization_id: int = Depends(current_organization_id),
 ):
+    keys = [key.strip() for key in columns.split(",") if key.strip()] if columns else None
+    if keys is not None and (not keys or set(keys) - set(export_svc.COLUMNS)):
+        raise HTTPException(422, "Unknown export column.")
     table = pricing_svc.rate_table(db, organization_id)
     ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=supplier, material=material,
-                          status=status, date_from=date_from, date_to=date_to)
+                          status=status, date_from=date_from, date_to=date_to, q=q)
     prices = {t.id: p for t in ts if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
     return Response(
-        export_svc.build_workbook(ts, prices, names_by_id(db, organization_id)),
+        export_svc.build_workbook(ts, prices, names_by_id(db, organization_id), keys, export_svc.project_codes(db, organization_id)),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="delivery-records.xlsx"'})
 
@@ -165,6 +191,33 @@ def _pilot(db: Session, organization_id: int, project_id: int | None) -> dict:
     context = LineContext(db, organization_id, items)
     statuses = Counter(_line_out(db, item, organization_id, context).status for item in items)
     return pilot_report.build_report(db, organization_id, project_id, statuses)
+
+
+@router.get("/reports/project/{project_id}")
+def project_report_view(project_id: int, db: Session = Depends(get_db),
+                        organization_id: int = Depends(current_organization_id)):
+    return _project_report(db, organization_id, project_id)
+
+
+@router.get("/reports/project/{project_id}/report.xlsx")
+def project_report_xlsx(project_id: int, db: Session = Depends(get_db),
+                        organization_id: int = Depends(current_organization_id)):
+    report = _project_report(db, organization_id, project_id)
+    return Response(
+        project_report.workbook(report),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="project-{project_id}-report.xlsx"', "Cache-Control": "no-store"})
+
+
+def _project_report(db: Session, organization_id: int, project_id: int) -> dict:
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.organization_id == organization_id))
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    items = list(db.scalars(select(InvoiceComparison).where(
+        InvoiceComparison.organization_id == organization_id, InvoiceComparison.project_id == project_id,
+    ).order_by(InvoiceComparison.id)))
+    context = LineContext(db, organization_id, items)
+    return project_report.build(db, organization_id, project, [_line_out(db, item, organization_id, context) for item in items])
 
 
 def _project_filter(db: Session, organization_id: int, project_id: int | None) -> None:

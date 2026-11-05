@@ -295,7 +295,7 @@ export async function deleteItem(kind: "suppliers" | "materials" | "rates", id: 
   await check(await apiFetch(`${API}/api/${kind}/${id}`, { method: "DELETE" }));
 }
 
-export type Filters = { project_id?: string; supplier?: string; material?: string; status?: string; date_from?: string; date_to?: string };
+export type Filters = { project_id?: string; supplier?: string; material?: string; status?: string; date_from?: string; date_to?: string; q?: string };
 const qs = (f: Filters) => {
   const p = new URLSearchParams();
   Object.entries(f).forEach(([k, v]) => v && p.set(k, v));
@@ -314,7 +314,76 @@ export async function setProjectStatus(id: number, status: "active" | "archived"
 export async function getRecords(f: Filters): Promise<Ticket[]> {
   return (await check(await apiFetch(`${API}/api/records${qs(f)}`))).json();
 }
-export const recordsExportUrl = (f: Filters) => `${API}/api/records/export.xlsx${qs(f)}`;
+export const recordsExportUrl = (f: Filters, format: "xlsx" | "csv" = "xlsx", columns?: string[]) => {
+  const query = qs(f);
+  const extra = columns?.length ? `${query ? "&" : "?"}columns=${columns.join(",")}` : "";
+  return `${API}/api/records/export.${format}${query}${extra}`;
+};
+export type RecordsSort = "date" | "ticket_number" | "tons" | "supplier" | "material" | "status" | "job";
+export type RecordsPage = {
+  rows: Ticket[]; total: number; page: number; page_size: number;
+  summary: { records: number; by_status: Record<string, number>; verified_tons: string; verified_cost: string; verified_unpriced: number };
+};
+export async function searchRecords(f: Filters, options: { page: number; pageSize: number; sort: RecordsSort; direction: "asc" | "desc" }): Promise<RecordsPage> {
+  const params = new URLSearchParams();
+  Object.entries(f).forEach(([k, v]) => v && params.set(k, v));
+  params.set("page", String(options.page));
+  params.set("page_size", String(options.pageSize));
+  params.set("sort", options.sort);
+  params.set("direction", options.direction);
+  return (await check(await apiFetch(`${API}/api/records/search?${params}`))).json();
+}
+export type BulkResult = { changed: number; unchanged: number; left_alone: Record<string, number> };
+export async function bulkEditTickets(ticketIds: number[], field: string, value: string): Promise<BulkResult> {
+  return (await check(await apiFetch(`${API}/api/tickets/bulk-edit`, json("POST", { ticket_ids: ticketIds, field, value })))).json();
+}
+export async function renameOnTickets(field: "supplier" | "material_type", fromValue: string, toValue: string): Promise<BulkResult> {
+  return (await check(await apiFetch(`${API}/api/records/rename`, json("POST", { field, from_value: fromValue, to_value: toValue })))).json();
+}
+export type NameVariant = {
+  value: string; state: "catalog" | "same_name" | "alias" | "unknown"; target: string | null;
+  tickets: number; verified: number; unverified: number;
+};
+export async function getNameVariants(field: "supplier" | "material"): Promise<{ field: string; catalog: string[]; rows: NameVariant[] }> {
+  return (await check(await apiFetch(`${API}/api/records/name-variants?field=${field}`))).json();
+}
+export type SavedView = { id: number; name: string; filters: Filters; columns: string[]; created_by: string | null; created_at: string };
+export async function listSavedViews(): Promise<SavedView[]> {
+  return (await check(await apiFetch(`${API}/api/saved-views`))).json();
+}
+export async function createSavedView(name: string, filters: Filters, columns: string[]): Promise<SavedView> {
+  const kept = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
+  return (await check(await apiFetch(`${API}/api/saved-views`, json("POST", { name, filters: kept, columns })))).json();
+}
+export async function deleteSavedView(id: number) {
+  await check(await apiFetch(`${API}/api/saved-views/${id}`, { method: "DELETE" }));
+}
+export async function moveBatch(batchId: number, projectId: number): Promise<Batch> {
+  return (await check(await apiFetch(`${API}/api/batches/${batchId}/project`, json("PATCH", { project_id: projectId })))).json();
+}
+export type ReportGroup = {
+  tickets: number; verified_tickets: number; verified_tons: string; cost: string; unpriced: number;
+  pending_tickets: number; pending_tons: string;
+};
+export type ProjectReport = {
+  project: { id: number; code: string; name: string; status: string };
+  first_delivery: string | null; last_delivery: string | null;
+  totals: ReportGroup;
+  by_supplier_material: (ReportGroup & { supplier: string; material: string })[];
+  by_month: (ReportGroup & { month: string })[];
+  invoices: {
+    billed_total: string; verified_total: string; lines_unresolved: number; by_status: Record<string, number>;
+    lines: {
+      id: number; invoice_number: string; supplier: string; material: string; date_from: string; date_to: string;
+      status: string; comparison_mode: string; billed_tons: string; verified_tons: string; tons_difference: string;
+      billed_subtotal: string; verified_subtotal: string | null; subtotal_difference: string | null;
+    }[];
+  };
+};
+export async function getProjectReport(id: string): Promise<ProjectReport> {
+  return (await check(await apiFetch(`${API}/api/reports/project/${id}`))).json();
+}
+export const projectReportUrl = (id: string) => `${API}/api/reports/project/${id}/report.xlsx`;
 
 export type Group = { name: string; tickets: number; tons: string | number; cost: string | number };
 export type Dashboard = {

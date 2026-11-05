@@ -302,6 +302,20 @@ class ScanEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
+class SavedView(Base):
+    """A named set of record filters and export columns, shared within a company.
+    Holds no ticket data, so removing one loses nothing."""
+    __tablename__ = "saved_views"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_saved_view_org_name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    filters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    columns: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class ReviewTiming(Base):
     """Opt-in pilot measurement: how long a ticket took to accept, and whether
     it needed correcting. Deliberately has no person and no ticket contents."""

@@ -87,6 +87,7 @@ export default function ProjectsPage() {
           <td><span className={`tf-status ${p.status === "active" ? "tf-status-open" : ""}`}>{p.status === "active" ? "Active" : "Archived"}</span></td>
           <td><div className="flex justify-end gap-4 whitespace-nowrap">
             <a href={`/records?project_id=${p.id}`}>View records</a>
+            <a href={`/reports/project?project_id=${p.id}`}>Report</a>
             {canManage && <button type="button" onClick={() => void changeStatus(p)} className="text-[12px] font-semibold text-[#637385] hover:underline">
               {p.status === "active" ? "Archive" : "Unarchive"}
             </button>}

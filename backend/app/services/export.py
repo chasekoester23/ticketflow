@@ -1,20 +1,18 @@
 """Excel export with openpyxl. Phase 1: unit price / cost columns exist but stay blank until Phase 2 pricing."""
 import io
 from collections import defaultdict
+from dataclasses import dataclass
 from decimal import Decimal
+from typing import Callable, Iterator
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from ..models import Ticket
+from ..models import Batch, Project, Ticket
 
-HEADERS = [
-    "Ticket Number", "Delivery Date", "Material Type", "Tonnage", "Supplier", "Job Location",
-    "Unit Price", "Calculated Cost", "Verification Status", "Source File Reference",
-    # Appended (not inserted) so existing column positions never move.
-    "Approved By", "Approved At (UTC)",
-]
 LEGACY_APPROVER = "Not recorded (approved before individual accounts)"
 STATUS_LABEL = {"verified": "Verified", "needs_review": "Needs review", "failed": "Extraction failed", "skipped": "Skipped", "flagged": "Flagged for review"}
 HEADER_FILL = PatternFill("solid", fgColor="1F2937")
@@ -61,50 +59,118 @@ def _approval(t: Ticket, approvers: dict[int, str]) -> tuple[str | None, object]
     return _safe_excel_text(name), at
 
 
+@dataclass
+class ExportContext:
+    unit_prices: dict[int, Decimal]
+    approvers: dict[int, str]
+    projects: dict[int, str]
+
+
+@dataclass(frozen=True)
+class Column:
+    header: str
+    width: int
+    value: Callable[[Ticket, Decimal | None, Decimal | None, ExportContext], object]
+    number_format: str | None = None
+
+
+def _money(value: Decimal | None) -> float | None:
+    return float(value) if value is not None else None
+
+
+# Keyed for export configurations. The default set and its order never change,
+# so existing spreadsheets and macros keep working.
+COLUMNS: dict[str, Column] = {
+    "ticket_number": Column("Ticket Number", 16, lambda t, *_: _safe_excel_text(t.ticket_number)),
+    "delivery_date": Column("Delivery Date", 14, lambda t, *_: t.delivery_date, "yyyy-mm-dd"),
+    "material": Column("Material Type", 28, lambda t, *_: _safe_excel_text(t.material_type)),
+    "tons": Column("Tonnage", 12, lambda t, *_: _money(t.tonnage), "#,##0.00"),
+    "supplier": Column("Supplier", 24, lambda t, *_: _safe_excel_text(t.supplier)),
+    "job_location": Column("Job Location", 24, lambda t, *_: _safe_excel_text(t.job_location)),
+    "unit_price": Column("Unit Price", 12, lambda t, price, *_: _money(price), '"$"#,##0.00'),
+    "cost": Column("Calculated Cost", 16, lambda t, price, cost, _c: _money(cost), '"$"#,##0.00'),
+    "status": Column("Verification Status", 20, lambda t, *_: STATUS_LABEL.get(t.status, t.status)),
+    "source": Column("Source File Reference", 44, lambda t, *_: _safe_excel_text(_source_ref(t))),
+    "approved_by": Column("Approved By", 26, lambda t, p, c, ctx: _approval(t, ctx.approvers)[0]),
+    "approved_at": Column("Approved At (UTC)", 18, lambda t, p, c, ctx: _approval(t, ctx.approvers)[1], "yyyy-mm-dd hh:mm"),
+    "project": Column("Project", 16, lambda t, p, c, ctx: _safe_excel_text(ctx.projects.get(t.id))),
+    "batch": Column("Batch", 8, lambda t, *_: t.batch_id),
+}
+DEFAULT_COLUMNS = ("ticket_number", "delivery_date", "material", "tons", "supplier", "job_location", "unit_price",
+                   "cost", "status", "source", "approved_by", "approved_at")
+HEADERS = [COLUMNS[key].header for key in DEFAULT_COLUMNS]
+
+
+def project_codes(db: Session, organization_id: int) -> "_ProjectCodes":
+    return _ProjectCodes(db, organization_id)
+
+
+class _ProjectCodes:
+    """Ticket id to project code, read only if a Project column was asked for."""
+
+    def __init__(self, db: Session, organization_id: int):
+        self.db, self.organization_id = db, organization_id
+        self._by_ticket: dict[int, str] | None = None
+
+    def get(self, ticket_id: int) -> str | None:
+        if self._by_ticket is None:
+            self._by_ticket = dict(self.db.execute(
+                select(Ticket.id, Project.code).join(Batch, Batch.id == Ticket.batch_id)
+                .join(Project, Project.id == Batch.project_id).where(Batch.organization_id == self.organization_id)
+            ).all())
+        return self._by_ticket.get(ticket_id)
+
+
 def build_workbook(tickets: list[Ticket], unit_prices: dict[int, Decimal] | None = None,
-                   approvers: dict[int, str] | None = None) -> bytes:
+                   approvers: dict[int, str] | None = None, columns: list[str] | None = None,
+                   projects=None) -> bytes:
     """``approvers`` maps user id -> display name for the exporting company."""
-    unit_prices = unit_prices or {}
-    approvers = approvers or {}
+    context = ExportContext(unit_prices or {}, approvers or {}, projects or {})
+    keys = columns or list(DEFAULT_COLUMNS)
+    chosen = [COLUMNS[key] for key in keys]
     tickets = [t for t in tickets if t.status != "skipped"]
     wb = Workbook()
     ws = wb.active
     ws.title = "Delivery Records"
-    ws.append(HEADERS)
+    ws.append([column.header for column in chosen])
     for c in ws[1]:
         c.font, c.fill = Font(bold=True, color="FFFFFF"), HEADER_FILL
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     rows = []
     for t in tickets:
-        price = unit_prices.get(t.id)
+        price = context.unit_prices.get(t.id)
         cost = ticket_cost(t, price)
         rows.append((t, price, cost))
-        approved_by, approved_at = _approval(t, approvers)
-        ws.append([
-            _safe_excel_text(t.ticket_number), t.delivery_date, _safe_excel_text(t.material_type),
-            float(t.tonnage) if t.tonnage is not None else None,
-            _safe_excel_text(t.supplier), _safe_excel_text(t.job_location),
-            float(price) if price is not None else None,
-            float(cost) if cost is not None else None,
-            STATUS_LABEL.get(t.status, t.status), _safe_excel_text(_source_ref(t)),
-            approved_by, approved_at,
-        ])
-    for r in range(2, ws.max_row + 1):
-        ws.cell(r, 2).number_format = "yyyy-mm-dd"
-        ws.cell(r, 4).number_format = "#,##0.00"
-        ws.cell(r, 7).number_format = '"$"#,##0.00'
-        ws.cell(r, 8).number_format = '"$"#,##0.00'
-        ws.cell(r, 12).number_format = "yyyy-mm-dd hh:mm"
-    for i, w in enumerate([16, 14, 28, 12, 24, 24, 12, 16, 20, 44, 26, 18], start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+        ws.append([column.value(t, price, cost, context) for column in chosen])
+    for index, column in enumerate(chosen, start=1):
+        if column.number_format:
+            for r in range(2, ws.max_row + 1):
+                ws.cell(r, index).number_format = column.number_format
+        ws.column_dimensions[get_column_letter(index)].width = column.width
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(HEADERS))}{max(ws.max_row, 2)}"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(chosen))}{max(ws.max_row, 2)}"
 
     _summary_sheet(wb, rows)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def csv_lines(tickets: list[Ticket], keys: list[str], context: ExportContext) -> Iterator[list]:
+    """Rows for a CSV: exact decimal text, never floats, and formula-safe text."""
+    exact = {"tons": lambda t, _p, _c: t.tonnage, "unit_price": lambda t, p, _c: p, "cost": lambda t, _p, c: c}
+    yield [COLUMNS[key].header for key in keys]
+    for t in tickets:
+        if t.status == "skipped":
+            continue
+        price = context.unit_prices.get(t.id)
+        cost = ticket_cost(t, price)
+        row = []
+        for key in keys:
+            value = exact[key](t, price, cost) if key in exact else COLUMNS[key].value(t, price, cost, context)
+            row.append("" if value is None else value.isoformat() if hasattr(value, "isoformat") else str(value))
+        yield row
 
 
 def _summary_sheet(wb: Workbook, rows) -> None:

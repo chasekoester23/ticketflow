@@ -100,7 +100,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"| Request ({args.tickets} tickets, {batches} batches, {args.invoice_lines} invoice lines) | Seconds | SQL queries |\n|---|---|---|")
     with TestClient(app, headers={"X-TicketFlow-Request": "1"}) as client:
         for path in ("/api/batches/1/tickets", "/api/records", "/api/dashboard", "/api/batches/1/manifest",
-                     "/api/reports/pilot", "/api/invoice-comparisons"):
+                     "/api/reports/pilot", "/api/invoice-comparisons", "/api/records/search?page_size=50",
+                     "/api/records/search?page_size=50&q=10999&sort=tons", "/api/records/search?page=100&page_size=50",
+                     "/api/batches/queue", "/api/records/name-variants?field=supplier", "/api/reports/project/1",
+                     "/api/records/export.csv", "/api/records/export.xlsx"):
             statements.clear()
             started = time.perf_counter()
             response = client.get(path)
