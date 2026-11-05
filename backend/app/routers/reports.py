@@ -8,18 +8,19 @@ from io import StringIO
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
 from ..config import settings
 from ..db import get_db
-from ..models import AuditEvent, Batch, InvoiceComparison, Project, ReviewTiming, Ticket, User
+from ..models import AuditEvent, Batch, InvoiceComparison, Project, ReviewTiming, Ticket, UploadedFile, User
 from ..permissions import require
 from ..schemas import TicketOut
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
 from ..services import pilot_report
+from ..services.invoice_context import LineContext
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
 from .api import EDITABLE, _out
@@ -30,11 +31,21 @@ router = APIRouter(prefix="/api")
 VALID_STATUS = {"needs_review", "verified", "skipped", "failed", "flagged"}
 
 
+# What totals need. Whole Ticket objects cost several times as much to load,
+# which matters on every dashboard view of a large company.
+TOTALS_COLUMNS = (
+    Ticket.id, Ticket.status, Ticket.tonnage, Ticket.tonnage_confirmed, Ticket.supplier, Ticket.material_type,
+    Ticket.unit_price_override, Ticket.price_snapshot_state, Ticket.applied_unit_price, Ticket.applied_price_source,
+)
+
+
 def filtered_tickets(
     db: Session, *, organization_id: int, project_id: int | None, supplier: str | None, material: str | None,
     status: str | None, date_from: date | None, date_to: date | None, include_skipped: bool = False,
-) -> list[Ticket]:
-    q = select(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
+    columns: tuple | None = None,
+) -> list:
+    """Ticket objects, or lightweight rows with these attributes when ``columns`` is given."""
+    q = (select(*columns) if columns else select(Ticket)).select_from(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
         Batch.organization_id == organization_id
     )
     if project_id is not None:
@@ -51,7 +62,8 @@ def filtered_tickets(
         q = q.where(Ticket.delivery_date >= date_from)
     if date_to:
         q = q.where(Ticket.delivery_date <= date_to)
-    return list(db.scalars(q.order_by(Ticket.delivery_date, Ticket.id)).all())
+    q = q.order_by(Ticket.delivery_date, Ticket.id)
+    return list(db.execute(q).all() if columns else db.scalars(q).all())
 
 
 @router.get("/records", response_model=list[TicketOut])
@@ -64,7 +76,7 @@ def records(
     table = pricing_svc.rate_table(db, organization_id)
     ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=supplier, material=material,
                           status=status, date_from=date_from, date_to=date_to)
-    index = dup_svc.load_index(db, organization_id)
+    index = dup_svc.load_index(db, organization_id, ts)
     names = pricing_svc.catalog_names(db, organization_id)
     aliases = pricing_svc.alias_suggestions(db, organization_id, names)
     return [_out(db, t, organization_id, table, duplicate_index=index, catalog=names, aliases=aliases) for t in ts]
@@ -92,7 +104,7 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
               organization_id: int = Depends(current_organization_id)):
     table = pricing_svc.rate_table(db, organization_id)
     all_ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=None, material=None, status=None,
-                              date_from=None, date_to=None, include_skipped=True)
+                              date_from=None, date_to=None, include_skipped=True, columns=TOTALS_COLUMNS)
     ts = [t for t in all_ts if t.status != "skipped"]
 
     # Only approved quantities belong in actuals. Unverified extractions are
@@ -118,6 +130,9 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
     bq = select(Batch).where(Batch.organization_id == organization_id).order_by(Batch.id.desc()).limit(8)
     if project_id is not None:
         bq = bq.where(Batch.project_id == project_id)
+    recent = list(db.scalars(bq))
+    file_counts = dict(db.execute(select(UploadedFile.batch_id, func.count()).where(
+        UploadedFile.batch_id.in_([b.id for b in recent])).group_by(UploadedFile.batch_id)).all()) if recent else {}
     projects = {p.id: p.name for p in db.scalars(select(Project).where(
         Project.organization_id == organization_id
     ))}
@@ -136,8 +151,8 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
         "by_supplier": group(lambda t: t.supplier),
         "by_material": group(lambda t: t.material_type),
         "recent_batches": [
-            {"id": b.id, "status": b.status, "created_at": b.created_at, "files": len(b.files),
-             "project": projects.get(b.project_id)} for b in db.scalars(bq)
+            {"id": b.id, "status": b.status, "created_at": b.created_at, "files": file_counts.get(b.id, 0),
+             "project": projects.get(b.project_id)} for b in recent
         ],
     }
 
@@ -146,7 +161,9 @@ def _pilot(db: Session, organization_id: int, project_id: int | None) -> dict:
     query = select(InvoiceComparison).where(InvoiceComparison.organization_id == organization_id)
     if project_id is not None:
         query = query.where(InvoiceComparison.project_id == project_id)
-    statuses = Counter(_line_out(db, item, organization_id).status for item in db.scalars(query))
+    items = list(db.scalars(query))
+    context = LineContext(db, organization_id, items)
+    statuses = Counter(_line_out(db, item, organization_id, context).status for item in items)
     return pilot_report.build_report(db, organization_id, project_id, statuses)
 
 

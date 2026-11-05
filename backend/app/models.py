@@ -198,6 +198,7 @@ class ProcessingJob(Base):
 
 class UploadedFile(Base):
     __tablename__ = "uploaded_files"
+    __table_args__ = (Index("ix_uploaded_files_batch_id", "batch_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"))
     original_name: Mapped[str] = mapped_column(String(255))
@@ -211,6 +212,11 @@ class UploadedFile(Base):
 
 class Ticket(Base):
     __tablename__ = "tickets"
+    __table_args__ = (
+        Index("ix_tickets_ticket_number", "ticket_number"),
+        Index("ix_tickets_delivery_date", "delivery_date"),
+        Index("ix_tickets_batch_status", "batch_id", "status"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True)
     file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"))

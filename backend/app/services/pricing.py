@@ -1,6 +1,7 @@
 """Rate lookup and cost calculation. Money is always Decimal; we never invent a price."""
 import re
 from decimal import Decimal
+from functools import lru_cache
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ from ..models import Material, NameAlias, Supplier, SupplierRate, Ticket
 CENTS = Decimal("0.01")
 
 
+@lru_cache(maxsize=4096)  # Pure, and called for every ticket on every list.
 def norm(name: str | None) -> str:
     """Case/punctuation/space-insensitive key so 'ABC Aggregates.' matches 'abc  aggregates'."""
     return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()

@@ -28,7 +28,10 @@ def build_report(db: Session, organization_id: int, project_id: int | None, comp
     ids = [b.id for b in batches]
 
     files = list(db.scalars(select(UploadedFile).where(UploadedFile.batch_id.in_(ids)))) if ids else []
-    tickets = list(db.scalars(select(Ticket).where(Ticket.batch_id.in_(ids)))) if ids else []
+    tickets = list(db.execute(select(
+        Ticket.id, Ticket.batch_id, Ticket.file_id, Ticket.source_page, Ticket.position, Ticket.status, Ticket.flags,
+        Ticket.tonnage, Ticket.tonnage_confirmed, Ticket.price_snapshot_state, Ticket.applied_unit_price,
+    ).where(Ticket.batch_id.in_(ids)))) if ids else []
     slots = list(db.execute(select(
         ScanSlot.batch_id, ScanSlot.file_id, ScanSlot.page, ScanSlot.position, ScanSlot.detection, ScanSlot.decision,
     ).where(ScanSlot.batch_id.in_(ids)))) if ids else []

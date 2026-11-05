@@ -217,14 +217,15 @@ def list_tickets(batch_id: int, db: Session = Depends(get_db), organization_id: 
     if batch is None:
         raise HTTPException(404, "Batch not found")
     q = select(Ticket).where(Ticket.batch_id == batch_id).order_by(Ticket.file_id, Ticket.source_page, Ticket.position)
+    tickets = db.scalars(q).all()
     table = pricing_svc.rate_table(db, organization_id)
-    index = dup_svc.load_index(db, organization_id)
+    index = dup_svc.load_index(db, organization_id, tickets)
     names = pricing_svc.catalog_names(db, organization_id)
     people = names_by_id(db, organization_id)
     aliases = pricing_svc.alias_suggestions(db, organization_id, names)
     return [
         _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names, people=people, aliases=aliases)
-        for ticket in db.scalars(q).all()
+        for ticket in tickets
     ]
 
 

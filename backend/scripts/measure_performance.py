@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import statistics
 import sys
 import tempfile
 import time
@@ -105,6 +106,22 @@ def main(argv: list[str] | None = None) -> int:
             response = client.get(path)
             assert response.status_code == 200, response.text
             print(f"| GET `{path}` | {time.perf_counter() - started:.3f} | {len(statements)} |")
+
+        # The requests a person repeats for every ticket. Median of several, on
+        # tickets still awaiting review (even numbers are unverified above).
+        def timed(label: str, call) -> None:
+            seconds, queries = [], 0
+            for n in range(10):
+                statements.clear()
+                started = time.perf_counter()
+                response = call(n * 2 + 2)
+                assert response.status_code == 200, response.text
+                seconds.append(time.perf_counter() - started)
+                queries = len(statements)
+            print(f"| {label} (median of 10) | {statistics.median(seconds):.3f} | {queries} |")
+
+        timed("PATCH one ticket", lambda n: client.patch(f"/api/tickets/{n * 2 + 1}", json={"job_location": "Lot B"}))
+        timed("Approve one ticket", lambda n: client.post(f"/api/tickets/{n * 2 + 1}/verify"))
 
     # Rendering and splitting one 20-page 4-up PDF, with no extraction.
     page = make_page(TICKETS)
