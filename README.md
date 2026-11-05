@@ -150,6 +150,22 @@ Tickets from one quarry can spell its name several ways. Under **Suppliers & rat
 
 Upgrading adds migration `20261105_11` (new `name_aliases` table only).
 
+## Invoice PDFs: drafts beside the original
+
+**Invoice comparison → Invoice PDFs** lets a manager upload a supplier invoice and correct draft lines beside the original page. Nothing counts until someone clicks **Confirm line**, which creates a normal comparison through the same code as typed entry, with the same checks and the same math. Typed entry still works as before.
+
+- **What reads the PDF:** the file's own text layer, on this machine. No AI and no network. There is no AI invoice reader yet: writing one needs an API budget and permission to send invoices to a provider. `INVOICE_EXTRACTOR=manual` turns drafting off entirely.
+- **Scanned PDFs** have no text layer, so they're flagged and entered by hand beside the original.
+- **The reader is deliberately strict.** It only drafts rows with a material, quantity, a recognized unit, rate and amount, plus clearly labelled invoice number, supplier and delivery period. It has been tested on our fictional layout only: expect real invoices to need hand entry or layout-specific work.
+- **Nothing is folded in silently.** Freight, tax, totals and other money rows are listed as "not used", and never join a material subtotal.
+- **Units are never converted.** A line billed in cubic yards can't be confirmed, because comparison works in tons only.
+- **Credits are blocked.** Credit memos and negative amounts are flagged, and nothing is drafted.
+- **Duplicates:** the same file can't be uploaded twice, and an invoice number with the same supplier and material can't be confirmed twice. The overlapping-date rule still applies.
+- **Wrong file?** Void it. The file and its history are kept, but voiding is refused once a line has created a comparison.
+- **History:** every edit, confirmation and rejection is recorded with the person's name. A comparison made this way links back to its original page.
+
+Upgrading adds migration `20261105_12` (three new tables only).
+
 ## Invoice comparison (Batch #16)
 
 The **Invoice comparison** page lets a project engineer manually enter one

@@ -342,8 +342,54 @@ export type InvoiceLineComparison = InvoiceLineInput & {
   ticket_check: TicketCheckRow[];
   ticket_check_counts: Record<string, number>;
   itemized_billed_tons: string | null;
+  source_document_id?: number | null;
+  source_page?: number | null;
   created_at: string;
 };
+// Uploaded invoice PDFs and their drafts. A draft counts for nothing until confirmed.
+export type InvoiceDraftLine = {
+  id: number; page: number; source_text: string | null; state: "pending_review" | "confirmed" | "rejected";
+  project_id: number | null; invoice_number: string | null; supplier_name: string | null; material_name: string | null;
+  billed_quantity: string | null; unit: string | null; billed_unit_price: string | null; billed_subtotal: string | null;
+  date_from: string | null; date_to: string | null; ticket_list: string;
+  comparison_id: number | null; blockers: string[]; warnings: string[];
+};
+export type InvoiceDocument = {
+  id: number; project_id: number | null; original_name: string; sha256: string; page_count: number;
+  status: "needs_review" | "unsupported" | "failed" | "voided"; extractor: string; message: string | null;
+  unread_rows: string[]; created_at: string; lines: InvoiceDraftLine[];
+};
+const DOCS = `${API}/api/invoice-documents`;
+export const invoicePageUrl = (id: number, page: number) => `${DOCS}/${id}/pages/${page}/image`;
+export const invoiceOriginalUrl = (id: number) => `${DOCS}/${id}/original`;
+export async function listInvoiceDocuments(): Promise<InvoiceDocument[]> {
+  return (await check(await apiFetch(DOCS))).json();
+}
+export async function getInvoiceDocument(id: number): Promise<InvoiceDocument> {
+  return (await check(await apiFetch(`${DOCS}/${id}`))).json();
+}
+export async function uploadInvoiceDocument(file: File, projectId?: number): Promise<InvoiceDocument> {
+  const form = new FormData();
+  form.append("file", file);
+  if (projectId !== undefined) form.append("project_id", String(projectId));
+  return (await check(await apiFetch(DOCS, { method: "POST", body: form }))).json();
+}
+export async function addDraftLine(id: number, page: number) {
+  await check(await apiFetch(`${DOCS}/${id}/lines?page=${page}`, { method: "POST" }));
+}
+export async function saveDraftLine(id: number, lineId: number, body: Record<string, string | number | null>) {
+  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}`, json("PATCH", body)));
+}
+export async function confirmDraftLine(id: number, lineId: number) {
+  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/confirm`, { method: "POST" }));
+}
+export async function rejectDraftLine(id: number, lineId: number) {
+  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/reject`, { method: "POST" }));
+}
+export async function voidInvoiceDocument(id: number) {
+  await check(await apiFetch(`${DOCS}/${id}/void`, { method: "POST" }));
+}
+
 export async function getInvoiceComparisons(): Promise<InvoiceLineComparison[]> {
   return (await check(await apiFetch(API + "/api/invoice-comparisons"))).json();
 }

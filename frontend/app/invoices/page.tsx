@@ -200,7 +200,10 @@ export default function InvoiceComparisonPage() {
           Compare supplier invoice lines with verified material deliveries by project, supplier, material and delivery dates.
         </p>
       </div>
-      <a href="/records" className="tf-secondary-button">View ticket records →</a>
+      <div className="flex flex-wrap gap-2">
+        <a href="/invoices/documents" className="tf-secondary-button">Invoice PDFs →</a>
+        <a href="/records" className="tf-secondary-button">View ticket records →</a>
+      </div>
     </div>
 
     <p className="rounded border border-[#e2e7ec] bg-white px-4 py-3 text-[12px] leading-5 text-[#47576a]">
@@ -340,6 +343,7 @@ export default function InvoiceComparisonPage() {
           <p className="tf-panel-description">
             {chosen.comparison_mode === "itemized" ? "Each invoice ticket number checked against verified deliveries." : TOTALS_ONLY}
             {" "}Current comparison, not an invoice approval or payment recommendation.
+            {chosen.source_document_id && <> <a className="tf-link" href={"/invoices/documents?id=" + chosen.source_document_id}>View original invoice, page {chosen.source_page}</a></>}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

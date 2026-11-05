@@ -76,3 +76,45 @@ def make_pdf(pages: list[Image.Image]) -> bytes:
     buf = io.BytesIO()
     pages[0].save(buf, format="PDF", resolution=200, save_all=True, append_images=pages[1:])
     return buf.getvalue()
+
+
+def make_invoice_pdf(*, number="EA-2026-1107", supplier="Example Aggregates", period="10/01/2026 - 10/31/2026",
+                     rows=(("No. 53 Crushed Stone", "46.600", "TON", "30.0000", "1,398.00"),),
+                     extras=(("Freight", "120.00"), ("Sales tax", "83.88"), ("Invoice total", "1,601.88")),
+                     tickets=(("10482", "24.50"), ("10483", "22.10")), title="INVOICE", pages=1) -> bytes:
+    """A fictional supplier invoice with a real text layer, drawn in table cells."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    y = 740
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(50, y, title)
+    pdf.setFont("Helvetica", 10)
+    for text in (f"Invoice No: {number}", f"Supplier: {supplier}", f"Delivery Period: {period}"):
+        y -= 18
+        pdf.drawString(50, y, text)
+    y -= 30
+    for x, text in zip((50, 280, 340, 400, 490), ("Description", "Qty", "Unit", "Rate", "Amount")):
+        pdf.drawString(x, y, text)
+    for row in rows:
+        y -= 16
+        for x, text in zip((50, 280, 340, 400, 490), row):
+            pdf.drawString(x, y, text)
+    for label, amount in extras:
+        y -= 16
+        pdf.drawString(50, y, label)
+        pdf.drawString(490, y, amount)
+    if pages > 1:
+        pdf.showPage()
+        pdf.setFont("Helvetica", 10)
+        y = 740
+    y -= 30
+    for number_text, tons in tickets:
+        y -= 14
+        pdf.drawString(50, y, f"Ticket {number_text}")
+        pdf.drawString(200, y, tons)
+    pdf.showPage()
+    pdf.save()
+    return buffer.getvalue()

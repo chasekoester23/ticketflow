@@ -8,7 +8,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import settings
 from .db import Base, engine
-from .routers import api, auth as auth_router, invoices, pricing, projects, reports, team, scans
+from .routers import api, auth as auth_router, invoice_documents, invoices, pricing, projects, reports, team, scans
 from .auth import current_user
 
 
@@ -112,6 +112,7 @@ app.include_router(projects.router, dependencies=[Depends(current_user)])
 app.include_router(reports.router, dependencies=[Depends(current_user)])
 app.include_router(team.router, dependencies=[Depends(current_user)])
 app.include_router(scans.router, dependencies=[Depends(current_user)])
+app.include_router(invoice_documents.router, dependencies=[Depends(current_user)])
 
 
 @app.get("/health")

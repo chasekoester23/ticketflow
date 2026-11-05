@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # Optional comparison-only provider; never selected by the live worker.
     openai_api_key: str | None = None
 
+    # How invoice PDFs become draft lines: text_layer (this machine only, no
+    # network or AI) or manual (no drafting). No AI invoice reader exists yet.
+    invoice_extractor: str = "text_layer"
+
     max_upload_bytes: int = 25 * 1024 * 1024
     # Limit work before OCR: compressed PDFs/photos can otherwise allocate
     # enormous amounts of memory despite having a small uploaded file size.

@@ -1,6 +1,6 @@
 # TicketFlow pre-launch security status
 
-Last updated: 2026-11-05 (name aliases, migration `20261105_11`).
+Last updated: 2026-11-05 (invoice PDFs, migration `20261105_12`).
 
 TicketFlow handles confidential construction documents and money figures.
 This file records **what is actually implemented and tested** and **what is
@@ -30,6 +30,7 @@ documents on shared hosting yet.
 | Lockout safety | A company always keeps one active owner; owners cannot deactivate or demote themselves; terminal-only recovery script, audited | `services/accounts.py`, `scripts/reset_password.py` |
 | Uploads | Extension allow-list, magic-byte check; limits on file count, per-file bytes, total batch bytes and file-name length; whole selection rejected if any file is invalid; random internal file names | `routers/api.py`, `config.py` |
 | Scan images | Slot and page images require sign-in and are company-scoped; cross-company IDs return 404; internal paths are never returned | `routers/scans.py` |
+| Invoice PDFs | PDF only, magic-byte check, size and page limits, encrypted files refused; stored 0600 with random names; originals served only through company-scoped routes. Reading stays on this machine | `routers/invoice_documents.py` |
 | Scan processing | PDF page count, per-page rendered pixels, total rendered pixels and image dimensions are bounded **before** heavy decoding; exceeding a limit is a visible failure, never an empty "success" | `services/splitter.py`, `services/pipeline.py` |
 | File privacy | New uploads and ticket crops are written with mode 0600 in 0700 per-batch directories (not retroactive for older files) | `routers/api.py`, `services/pipeline.py` |
 | API headers | `Cache-Control: private, no-store` on `/api`; `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` | `main.py` |
@@ -89,6 +90,8 @@ documents on shared hosting yet.
   complete delivery in the invoice line's scope; ambiguous numbers are never
   matched. A totals-only comparison is always labelled as not checking
   individual tickets.
+- A drafted invoice line counts for nothing until a manager confirms it. Units
+  are never converted, and credits are blocked rather than entered.
 - Arithmetic agreement between an invoice and tickets is not proof of invoice
   authenticity and is never an approval to pay.
 

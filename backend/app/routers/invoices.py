@@ -24,7 +24,8 @@ from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
 from ..models import (
-    Batch, InvoiceComparison, InvoiceComparisonEvent, InvoiceTicketRef, Project, Ticket, User, as_utc,
+    Batch, InvoiceComparison, InvoiceComparisonEvent, InvoiceDraftLine, InvoiceTicketRef, Project, Ticket,
+    User, as_utc,
 )
 from ..services import scan_manifest
 from ..services.accounts import names_by_id
@@ -131,6 +132,9 @@ class InvoiceLineOut(BaseModel):
     ticket_check: list[TicketCheckRow]
     ticket_check_counts: dict[str, int]
     itemized_billed_tons: Decimal | None
+    # The uploaded invoice this line was confirmed from, if any.
+    source_document_id: int | None = None
+    source_page: int | None = None
     created_at: date
 
 
@@ -210,6 +214,19 @@ def _assign(item: InvoiceComparison, body: InvoiceLineIn) -> None:
         setattr(item, field, value)
     item.supplier_key = norm(body.supplier_name)
     item.material_key = norm(body.material_name)
+
+
+def add_comparison(db: Session, body: InvoiceLineIn, user: User) -> InvoiceComparison:
+    """The one way a comparison is created, typed or confirmed from a draft, so
+    both paths get the same checks and the same math. Caller commits."""
+    _validate_scope(db, user.organization_id, body)
+    parsed = _parse_tickets(body)
+    item = InvoiceComparison(organization_id=user.organization_id, created_by_user_id=user.id)
+    _assign(item, body)
+    db.add(item)
+    db.flush()
+    _replace_refs(db, item.id, parsed)
+    return item
 
 
 def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> InvoiceLineOut:
@@ -319,8 +336,12 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
     else:
         status = "matches"
 
+    source = db.execute(select(InvoiceDraftLine.document_id, InvoiceDraftLine.page).where(
+        InvoiceDraftLine.comparison_id == item.id)).first()
+
     return InvoiceLineOut(
         id=item.id, project_id=item.project_id,
+        source_document_id=source[0] if source else None, source_page=source[1] if source else None,
         invoice_number=item.invoice_number,
         supplier_name=item.supplier_name, material_name=item.material_name,
         date_from=item.date_from, date_to=item.date_to,
@@ -377,16 +398,9 @@ def list_comparisons(db: Session = Depends(get_db),
 @router.post("", response_model=InvoiceLineOut, status_code=201)
 def create_comparison(body: InvoiceLineIn, db: Session = Depends(get_db),
                       user: User = Depends(require("invoices.manage"))):
-    organization_id = user.organization_id
-    _validate_scope(db, organization_id, body)
-    parsed = _parse_tickets(body)
-    item = InvoiceComparison(organization_id=organization_id, created_by_user_id=user.id)
-    _assign(item, body)
-    db.add(item)
-    db.flush()
-    _replace_refs(db, item.id, parsed)
+    item = add_comparison(db, body, user)
     db.commit()
-    return _line_out(db, item, organization_id)
+    return _line_out(db, item, user.organization_id)
 
 
 @router.get("/{line_id}", response_model=InvoiceLineOut)
@@ -486,6 +500,9 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     writer.writerow(["Delivery through", result.date_to.isoformat()])
     writer.writerow(["Comparison status", result.status])
     writer.writerow(["Comparison type", MODE_LABELS[result.comparison_mode]])
+    writer.writerow(["Source invoice document",
+                     f"Document {result.source_document_id}, page {result.source_page}"
+                     if result.source_document_id else "Entered by hand"])
     writer.writerow(["Invoice tons", str(result.billed_tons)])
     writer.writerow(["Invoice rate per ton", str(result.billed_unit_price)])
     writer.writerow(["Invoice material subtotal", str(result.billed_subtotal)])
