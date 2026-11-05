@@ -185,6 +185,8 @@ Upgrading adds migration `20261105_13` (one new table).
 
 - [Fictional demo and script](docs/engineering/demo-quickstart.md), including `frontend/tests/e2e/run.sh`, which runs the whole workflow in a real browser on a temporary database.
 - [Pilot readiness](docs/engineering/pilot-readiness.md): what's green, amber and red, how to reproduce the tests, performance, and upgrade steps.
+- [Engineering review](docs/engineering/2026-11-product-engineering-review.md): what a whole-product review found, benchmarks, and what it would take to sell this.
+- [Operating TicketFlow](docs/engineering/operations.md): backups, restoring, upgrading, reading logs, and what to do when something goes wrong.
 
 Upgrading adds migration `20261105_14` (one new table).
 

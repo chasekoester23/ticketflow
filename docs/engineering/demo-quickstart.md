@@ -15,6 +15,16 @@ tests/e2e/run.sh
 
 It never reads `backend/ticketflow.db`, and it blanks API keys in its own environment.
 
+## See it with thousands of records
+
+To look around a busy company, with misspellings, duplicates, blank tickets and 12 planted invoice mistakes:
+
+```bash
+python scripts/make_synthetic_dataset.py --tickets 5000
+```
+
+Run it after `create_demo_workspace.py` in the steps below. It refuses any database without "demo" in its file name. Open **Invoice comparison** to see each planted mistake explained, and **Name cleanup** for the misspellings.
+
 ## Run it by hand
 
 Use three terminals, all with the same demo settings:
