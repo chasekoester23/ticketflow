@@ -23,7 +23,7 @@ from app import main as main_module
 from app.auth import current_user
 from app.models import Organization, User
 from app.config import settings
-from app.db import engine_options, normalized_url
+from app.db import enforce_references, engine_options, normalized_url
 from app.main import app
 from app.routers import api as api_module
 from app.services.validation import ExtractedTicket
@@ -96,6 +96,7 @@ def client(tmp_path, monkeypatch, postgres_engine):
         _reset_postgres(engine)
     else:
         engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        enforce_references(engine)
         db_module.Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     with Session() as session:

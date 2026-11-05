@@ -4,7 +4,9 @@ Nothing here approves an invoice or posts anywhere. A draft counts for nothing
 until a manager confirms it, which creates an ordinary invoice comparison
 through the same code as typed entry.
 """
+import hashlib
 import io
+import json
 import os
 import uuid
 from datetime import date
@@ -12,10 +14,11 @@ from decimal import Decimal
 from pathlib import Path
 
 import pymupdf as fitz
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
@@ -28,7 +31,8 @@ from ..permissions import require
 from ..services import invoice_extraction, pipeline, splitter
 from ..services.accounts import names_by_id
 from ..services.invoice_extraction import InvoiceExtractionError
-from ..services.pricing import CENTS, norm
+from ..services.locks import take_turn
+from ..services.pricing import norm, to_cents
 from .invoices import InvoiceLineIn, add_comparison
 
 router = APIRouter(prefix="/api/invoice-documents")
@@ -97,16 +101,22 @@ def _blockers(line: InvoiceDraftLine) -> list[str]:
 def _warnings(line: InvoiceDraftLine) -> list[str]:
     if None in (line.billed_quantity, line.billed_unit_price, line.billed_subtotal):
         return []
-    extension = (line.billed_quantity * line.billed_unit_price).quantize(CENTS)
+    extension = to_cents(line.billed_quantity * line.billed_unit_price)
     if extension != line.billed_subtotal:
         return [f"Quantity × rate is {extension}, but the subtotal is {line.billed_subtotal}."]
     return []
 
 
+def line_revision(line: InvoiceDraftLine) -> str:
+    """Changes when any figure on the draft changes, so confirming needs the current ones."""
+    parts = [str(getattr(line, name)) for name in _EDITABLE] + [line.state]
+    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
+
+
 def _line_out(line: InvoiceDraftLine) -> dict:
     # Decimals go out as strings. In a plain dict FastAPI would make them floats.
     return {
-        "id": line.id, "page": line.page, "source_text": line.source_text, "state": line.state,
+        "id": line.id, "revision": line_revision(line), "page": line.page, "source_text": line.source_text, "state": line.state,
         **{name: str(value) if isinstance(value := getattr(line, name), Decimal) else value for name in _EDITABLE},
         "comparison_id": line.comparison_id, "blockers": _blockers(line) if line.state == "pending_review" else [],
         "warnings": _warnings(line),
@@ -132,13 +142,14 @@ def list_documents(db: Session = Depends(get_db), organization_id: int = Depends
 
 
 @router.post("", status_code=201)
-async def upload_document(file: UploadFile = File(...), project_id: int | None = Form(None),
-                          db: Session = Depends(get_db), user: User = Depends(require("invoices.manage"))):
+def upload_document(file: UploadFile = File(...), project_id: int | None = Form(None),
+                    db: Session = Depends(get_db), user: User = Depends(require("invoices.manage"))):
+    # Not async: parsing a PDF here would otherwise stop every other request.
     organization_id = user.organization_id
     if project_id is not None:
         _project_or_404(db, project_id, organization_id)
     name = Path(file.filename or "").name or "invoice.pdf"
-    data = await file.read(settings.max_upload_bytes + 1)
+    data = file.file.read(settings.max_upload_bytes + 1)
     if len(name) > 255 or not name.lower().endswith(".pdf") or not data.startswith(b"%PDF"):
         raise HTTPException(400, "Upload a PDF invoice.")
     if len(data) > settings.max_upload_bytes:
@@ -202,7 +213,13 @@ async def upload_document(file: UploadFile = File(...), project_id: int | None =
             date_from=draft.date_from, date_to=draft.date_to, ticket_list=draft.ticket_list,
         ))
     _event(db, document, user, "uploaded", new=name)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Someone uploaded this exact file at the same moment. Theirs stands.
+        db.rollback()
+        path.unlink(missing_ok=True)
+        raise HTTPException(409, "This exact file was just uploaded by someone else.") from None
     return _document_out(db, document)
 
 
@@ -311,7 +328,7 @@ def reject_line(document_id: int, line_id: int, db: Session = Depends(get_db),
 
 @router.post("/{document_id}/lines/{line_id}/confirm")
 def confirm_line(document_id: int, line_id: int, db: Session = Depends(get_db),
-                 user: User = Depends(require("invoices.manage"))):
+                 user: User = Depends(require("invoices.manage")), if_match: str | None = Header(None)):
     """A manager's explicit decision. Creates a comparison through the same code
     as typed entry, with the same overlap rules. Never approves payment."""
     document = _document_or_404(db, document_id, user.organization_id)
@@ -319,6 +336,9 @@ def confirm_line(document_id: int, line_id: int, db: Session = Depends(get_db),
     line = _line_or_404(db, document, line_id)
     if line.state != "pending_review":
         raise HTTPException(409, f"This line is already {line.state.replace('_', ' ')}.")
+    if if_match is not None and if_match.strip().strip('"') != line_revision(line):
+        raise HTTPException(409, {"code": "line_changed", "message": "Someone else changed this line while you had it open. "
+                                  "Nothing was confirmed. The latest figures are shown now: check them against the invoice."})
     blockers = _blockers(line)
     if blockers:
         raise HTTPException(422, "This line can't be confirmed yet: " + "; ".join(blockers) + ".")
@@ -334,6 +354,7 @@ def confirm_line(document_id: int, line_id: int, db: Session = Depends(get_db),
             f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors())) from None
     # The same invoice billing the same material twice is a mistake, even in
     # another date range. Typed entry can still record that deliberately.
+    take_turn(db, "invoice-number", user.organization_id, norm(body.supplier_name), body.invoice_number)
     repeat = db.scalar(select(InvoiceComparison.id).where(
         InvoiceComparison.organization_id == user.organization_id,
         InvoiceComparison.invoice_number == body.invoice_number,

@@ -300,6 +300,8 @@ def test_edits_require_a_project_in_this_company_and_other_companies_see_nothing
     assert client.patch(line, json={"project_id": 9999}).status_code == 404
     with api_module.SessionLocal() as db:
         db.add(Organization(id=2, name="Other Fictional Contractor"))
+        db.flush()
+        db.add(User(id=2, organization_id=2, username="other", password_hash="fixture", role="owner"))
         db.commit()
     _as("owner", organization=2, uid=2)
     assert client.get("/api/invoice-documents").json() == []

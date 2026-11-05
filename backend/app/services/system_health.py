@@ -81,6 +81,17 @@ def latest_backup() -> dict | None:
     return newest
 
 
+# Rules migration 20261106_18 leaves out if existing rows already break them.
+SAFEGUARD_INDEXES = {"tickets": ("uq_tickets_slot", "uq_tickets_approved_scan"), "supplier_rates": ("uq_supplier_rate",),
+                     "invoice_documents": ("uq_invoice_document_file",)}
+
+
+def missing_safeguards(db: Session) -> list[str]:
+    inspector = inspect(db.get_bind())
+    return [name for table, names in SAFEGUARD_INDEXES.items()
+            for name in names if name not in {index["name"] for index in inspector.get_indexes(table)}]
+
+
 def _check(name: str, state: str, message: str, action: str | None = None) -> dict:
     return {"name": name, "state": state, "message": message, "action": action}
 
@@ -125,6 +136,15 @@ def build(db: Session, organization_id: int) -> dict:
                              "Back up, then run: python -m alembic upgrade head"))
     else:
         checks.append(_check("Database version", "ok", f"Up to date ({revision})."))
+
+    missing = missing_safeguards(db)
+    if missing:
+        checks.append(_check("Duplicate safeguards", "problem",
+                             f"Existing records break {len(missing)} rule(s) that stop double counting, so the database can't enforce them: "
+                             + ", ".join(missing) + ".",
+                             "See 'Duplicates found during an upgrade' in docs/engineering/operations.md."))
+    else:
+        checks.append(_check("Duplicate safeguards", "ok", "The database enforces the rules that stop double counting."))
 
     backup = latest_backup()
     if backup is None:

@@ -204,13 +204,14 @@ export async function patchTicket(id: number, body: Partial<Record<string, strin
   ).json();
 }
 
-export async function ticketAction(id: number, action: "verify" | "flag" | "skip", revision?: string, note?: string): Promise<Ticket> {
+export async function ticketAction(id: number, action: "verify" | "flag" | "skip", revision?: string,
+  extra?: { note?: string; confirm_duplicate?: boolean }): Promise<Ticket> {
   const headers: Record<string, string> = {};
   if (revision) headers["If-Match"] = revision;
   const init: RequestInit = { method: "POST", headers };
-  if (note !== undefined) {
+  if (extra) {
     headers["Content-Type"] = "application/json";
-    init.body = JSON.stringify({ note });
+    init.body = JSON.stringify(extra);
   }
   return (await check(await apiFetch(`${API}/api/tickets/${id}/${action}`, init))).json();
 }
@@ -488,6 +489,7 @@ export async function getInvoiceOverview(): Promise<InvoiceOverview> {
 }
 export type InvoiceLineComparison = InvoiceLineInput & {
   id: number;
+  revision?: string;
   diagnosis?: InvoiceDiagnosis | null;
   billed_extension: string;
   invoice_arithmetic_difference: string;
@@ -514,7 +516,7 @@ export type InvoiceLineComparison = InvoiceLineInput & {
 };
 // Uploaded invoice PDFs and their drafts. A draft counts for nothing until confirmed.
 export type InvoiceDraftLine = {
-  id: number; page: number; source_text: string | null; state: "pending_review" | "confirmed" | "rejected";
+  id: number; revision?: string; page: number; source_text: string | null; state: "pending_review" | "confirmed" | "rejected";
   project_id: number | null; invoice_number: string | null; supplier_name: string | null; material_name: string | null;
   billed_quantity: string | null; unit: string | null; billed_unit_price: string | null; billed_subtotal: string | null;
   date_from: string | null; date_to: string | null; ticket_list: string;
@@ -546,8 +548,8 @@ export async function addDraftLine(id: number, page: number) {
 export async function saveDraftLine(id: number, lineId: number, body: Record<string, string | number | null>) {
   await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}`, json("PATCH", body)));
 }
-export async function confirmDraftLine(id: number, lineId: number) {
-  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/confirm`, { method: "POST" }));
+export async function confirmDraftLine(id: number, lineId: number, revision?: string) {
+  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/confirm`, { method: "POST", headers: revision ? { "If-Match": revision } : {} }));
 }
 export async function rejectDraftLine(id: number, lineId: number) {
   await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/reject`, { method: "POST" }));
@@ -560,13 +562,12 @@ export async function getInvoiceComparisons(): Promise<InvoiceLineComparison[]> 
   return (await check(await apiFetch(API + "/api/invoice-comparisons"))).json();
 }
 export async function saveInvoiceComparison(
-  body: InvoiceLineInput, id?: number,
+  body: InvoiceLineInput, id?: number, revision?: string,
 ): Promise<InvoiceLineComparison> {
   const suffix = id !== undefined ? "/" + id : "";
-  return (await check(await apiFetch(
-    API + "/api/invoice-comparisons" + suffix,
-    json(id !== undefined ? "PUT" : "POST", body),
-  ))).json();
+  const init = json(id !== undefined ? "PUT" : "POST", body);
+  if (revision) (init.headers as Record<string, string>)["If-Match"] = revision;
+  return (await check(await apiFetch(API + "/api/invoice-comparisons" + suffix, init))).json();
 }
 export async function confirmTicketLinks(id: number, ticketIds: number[]): Promise<InvoiceLineComparison> {
   return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/ticket-links",

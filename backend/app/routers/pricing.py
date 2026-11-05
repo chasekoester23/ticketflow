@@ -13,6 +13,7 @@ from ..permissions import require
 from ..models import Material, NameAlias, PricingEvent, Supplier, SupplierRate, User, as_utc, utcnow
 from ..services.accounts import names_by_id
 from ..services import rate_sheet
+from ..services.locks import take_turn
 from ..services.pricing import norm
 
 router = APIRouter(prefix="/api")
@@ -220,6 +221,7 @@ def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depend
         Material.id == body.material_id, Material.organization_id == organization_id))
     if supplier is None or material is None:
         raise HTTPException(404, "Supplier or material not found")
+    take_turn(db, "rate", organization_id, body.supplier_id, body.material_id)
     rate = db.scalar(select(SupplierRate).where(
         SupplierRate.supplier_id == body.supplier_id,
         SupplierRate.material_id == body.material_id,
@@ -249,6 +251,8 @@ def import_rate_sheet(body: RateSheetIn, db: Session = Depends(get_db), user: Us
     """Paste a rate sheet, see exactly what it would change, then apply it. Locked
     prices on approved tickets are never touched, and every change is recorded."""
     organization_id = user.organization_id
+    if body.apply:
+        take_turn(db, "rate-sheet", organization_id)
     try:
         rows = rate_sheet.parse(body.text)
     except rate_sheet.RateSheetError as exc:

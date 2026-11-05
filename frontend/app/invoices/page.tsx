@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  confirmTicketLinks, downloadInvoiceComparisonReport, getInvoiceComparisons, getInvoiceOverview, releaseTicketLink, getInvoiceHistory,
+  ApiError, confirmTicketLinks, downloadInvoiceComparisonReport, getInvoiceComparisons, getInvoiceOverview, releaseTicketLink, getInvoiceHistory,
   InvoiceDiagnosis, InvoiceLineComparison, InvoiceLineInput, InvoiceOverview, listMaterials, listProjects, listSuppliers, Material,
   Project, saveInvoiceComparison, Supplier, CheckedTicket, TicketCheckRow, ticketImageUrl,
 } from "../../lib/api";
@@ -148,6 +148,7 @@ export default function InvoiceComparisonPage() {
   const [lines, setLines] = useState<InvoiceLineComparison[]>([]);
   const [form, setForm] = useState<typeof EMPTY>({ ...EMPTY });
   const [editing, setEditing] = useState<number | null>(null);
+  const [editingRevision, setEditingRevision] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<number | null>(null);
   const [history, setHistory] = useState<string[] | null>(null);
   const [saving, setSaving] = useState(false);
@@ -202,13 +203,22 @@ export default function InvoiceComparisonPage() {
     setSaving(true);
     setError(null);
     try {
-      const row = await saveInvoiceComparison(form as InvoiceLineInput, editing ?? undefined);
+      const row = await saveInvoiceComparison(form as InvoiceLineInput, editing ?? undefined, editing !== null ? editingRevision : undefined);
       await reload();
       setSelected(row.id);
       setHistory(null);
       reset();
     } catch (exc) {
       setError((exc as Error).message);
+      // A colleague got there first. Show their figures, not a stale form.
+      if ((exc as ApiError).code === "line_changed" && editing !== null) {
+        const latest = (await getInvoiceComparisons().catch(() => null))?.find((line) => line.id === editing);
+        if (latest) {
+          setLines((old) => old.map((line) => line.id === latest.id ? latest : line));
+          edit(latest);
+          setError((exc as Error).message);
+        }
+      }
     } finally {
       setSaving(false);
     }
@@ -216,6 +226,7 @@ export default function InvoiceComparisonPage() {
 
   function edit(row: InvoiceLineComparison) {
     setEditing(row.id);
+    setEditingRevision(row.revision);
     setShowForm(true);
     setForm({
       project_id: row.project_id,

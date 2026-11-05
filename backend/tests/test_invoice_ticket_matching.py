@@ -51,7 +51,8 @@ def _deliveries(client, project_id, specs, verify=True):
         for ticket, values in zip(tickets, chunk):
             assert client.patch(f"/api/tickets/{ticket['id']}", json=values).status_code == 200
             if verify:
-                verified = client.post(f"/api/tickets/{ticket['id']}/verify")
+                # Some tests build repeated numbers on purpose, so this says so.
+                verified = client.post(f"/api/tickets/{ticket['id']}/verify", json={"confirm_duplicate": True})
                 assert verified.status_code == 200, verified.text
             ids.append(ticket["id"])
     return ids

@@ -7,11 +7,13 @@ from decimal import Decimal
 
 from sqlalchemy import false as sa_false
 from sqlalchemy import (
-    JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text,
+    JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, event,
+    select, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
+from . import db_guards  # noqa: F401 - installs rules the database itself enforces
 
 
 def utcnow() -> datetime:
@@ -96,6 +98,8 @@ class Material(Base):
 class SupplierRate(Base):
     """Tenant-scoped price per supplier+material. Historical snapshots stay immutable."""
     __tablename__ = "supplier_rates"
+    # Two rows for one pair would make the price locked at approval arbitrary.
+    __table_args__ = (Index("uq_supplier_rate", "organization_id", "supplier_id", "material_id", unique=True),)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     id: Mapped[int] = mapped_column(primary_key=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id", ondelete="CASCADE"))
@@ -216,9 +220,19 @@ class Ticket(Base):
         Index("ix_tickets_ticket_number", "ticket_number"),
         Index("ix_tickets_delivery_date", "delivery_date"),
         Index("ix_tickets_batch_status", "batch_id", "status"),
+        Index("ix_tickets_organization_id", "organization_id"),
+        # One record per physical position, so a retried worker can't make a second.
+        Index("uq_tickets_slot", "file_id", "source_page", "position", unique=True),
+        # The same scan can't be approved twice in a company, whichever code path tries.
+        Index("uq_tickets_approved_scan", "organization_id", "crop_sha256", unique=True,
+              sqlite_where=text("status = 'verified'"), postgresql_where=text("status = 'verified'")),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True)
+    # Copied from the batch. A batch never changes company.
+    organization_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Every UPDATE checks this, so two people saving at once can't overwrite each other.
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"))
     source_page: Mapped[int] = mapped_column(Integer)
     position: Mapped[int] = mapped_column(Integer)  # index within the page (0..3 for 2x2)
@@ -262,6 +276,14 @@ class Ticket(Base):
     flag_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
     file: Mapped[UploadedFile] = relationship(back_populates="tickets")
+
+    __mapper_args__ = {"version_id_col": lock_version}
+
+
+@event.listens_for(Ticket, "before_insert")
+def _ticket_company(_mapper, connection, ticket: Ticket) -> None:
+    if ticket.organization_id is None:
+        ticket.organization_id = connection.scalar(select(Batch.organization_id).where(Batch.id == ticket.batch_id))
 
 
 class ScanSlot(Base):
@@ -366,6 +388,9 @@ class InvoiceComparison(Base):
     billed_subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+    __mapper_args__ = {"version_id_col": lock_version}
 
 
 class InvoiceTicketRef(Base):
@@ -417,6 +442,8 @@ class InvoiceDocument(Base):
     """An uploaded supplier invoice PDF. Separate from comparisons: nothing here
     counts until a manager confirms a draft line."""
     __tablename__ = "invoice_documents"
+    __table_args__ = (Index("uq_invoice_document_file", "organization_id", "sha256", unique=True,
+                            sqlite_where=text("status <> 'voided'"), postgresql_where=text("status <> 'voided'")),)
     id: Mapped[int] = mapped_column(primary_key=True)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)

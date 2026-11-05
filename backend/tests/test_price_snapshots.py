@@ -163,10 +163,15 @@ def test_legacy_verified_ticket_requires_documented_rate_before_relocking(client
     generator = app.dependency_overrides[get_db]()
     db = next(generator)
     try:
+        # In two steps, because the database refuses to change a locked price on a
+        # ticket that stays approved.
         record = db.get(Ticket, tid)
+        record.status = "needs_review"
         record.applied_unit_price = None
         record.applied_price_source = None
         record.price_snapshot_state = None
+        db.commit()
+        record.status = "verified"
         db.commit()
     finally:
         generator.close()

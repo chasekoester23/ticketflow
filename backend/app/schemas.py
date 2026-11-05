@@ -68,6 +68,13 @@ class TicketOut(BaseModel):
         return as_utc(value)
 
 
+class VerifyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # A person has seen that this supplier's ticket number is already approved,
+    # and has decided both are real. Recorded in the ticket's history.
+    confirm_duplicate: bool = False
+
+
 class FlagIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     note: str | None = Field(default=None, max_length=300)
@@ -104,12 +111,12 @@ class BatchQueueRow(BaseModel):
 class TicketPatch(BaseModel):
     """Only fields present in the request are changed; each change is audited."""
     model_config = ConfigDict(extra="forbid")
-    ticket_number: str | None = None
+    ticket_number: str | None = Field(default=None, max_length=100)
     delivery_date: date | None = None
-    material_type: str | None = None
+    material_type: str | None = Field(default=None, max_length=200)
     tonnage: Decimal | None = Field(default=None, ge=0)
-    supplier: str | None = None
-    job_location: str | None = None
+    supplier: str | None = Field(default=None, max_length=200)
+    job_location: str | None = Field(default=None, max_length=200)
     unit_price_override: Decimal | None = Field(default=None, ge=0)
 
     @field_validator("tonnage", "unit_price_override")

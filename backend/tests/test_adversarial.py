@@ -60,8 +60,11 @@ def test_every_mutating_route_refuses_a_role_without_its_permission(client, role
 def _other_company_resources():
     with _session() as db:
         db.add(Organization(id=2, name="Another Company"))
+        db.flush()
         db.add(Project(id=20, organization_id=2, code="X", name="Theirs"))
+        db.flush()
         db.add(Batch(id=20, organization_id=2, project_id=20, layout="single", status="ready_for_review", intake_mode="manual"))
+        db.flush()
         db.add(UploadedFile(id=20, batch_id=20, original_name="theirs.pdf", storage_path="x", sha256="9" * 64))
         db.flush()
         db.add(Ticket(id=20, batch_id=20, file_id=20, source_page=1, position=0, crop_box=[0, 0, 1, 1], crop_path="x", crop_sha256="9" * 64,
@@ -216,8 +219,10 @@ def test_real_threads_racing_to_approve_lock_one_price_and_one_audit_entry(tmp_p
     Base.metadata.create_all(engine)
     with Session() as db:
         db.add(Organization(id=1, name="Fictional"))
+        db.flush()
         db.add(User(id=1, organization_id=1, username="a", password_hash="x", role="owner"))
         db.add(Batch(id=1, organization_id=1, layout="single", status="ready_for_review", intake_mode="manual"))
+        db.flush()
         db.add(UploadedFile(id=1, batch_id=1, original_name="f.pdf", storage_path="x", sha256="0" * 64))
         db.flush()
         db.add(Ticket(id=1, batch_id=1, file_id=1, source_page=1, position=0, crop_box=[0, 0, 1, 1], crop_path="x", crop_sha256="0" * 64,

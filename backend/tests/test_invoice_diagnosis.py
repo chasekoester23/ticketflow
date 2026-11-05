@@ -113,7 +113,7 @@ def test_duplicate_records_are_explained_exactly(client):
     from .test_records_at_scale import _set
     _set(2, ticket_number="10000")  # Two records, one number.
     for ticket_id in (1, 2):
-        assert client.post(f"/api/tickets/{ticket_id}/verify").status_code == 200
+        assert client.post(f"/api/tickets/{ticket_id}/verify", json={"confirm_duplicate": True}).status_code == 200
     line = _line(client, tons="15.00", tickets="10000\t15.00")
     diagnosis = line["diagnosis"]
     assert _item(diagnosis, "ambiguous")["tickets"] == ["10000"]

@@ -1,6 +1,6 @@
 """Rate lookup and cost calculation. Money is always Decimal; we never invent a price."""
 import re
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 
 from sqlalchemy import select
@@ -9,6 +9,12 @@ from sqlalchemy.orm import Session
 from ..models import Material, NameAlias, Supplier, SupplierRate, Ticket
 
 CENTS = Decimal("0.01")
+
+
+def to_cents(amount: Decimal) -> Decimal:
+    """Half a cent rounds up, as supplier invoices and spreadsheets do. Decimal's
+    default rounds it to even, which made false one-cent invoice differences."""
+    return amount.quantize(CENTS, rounding=ROUND_HALF_UP)
 
 
 @lru_cache(maxsize=4096)  # Pure, and called for every ticket on every list.
@@ -54,7 +60,7 @@ def cost_for(t: Ticket, price: Decimal | None) -> Decimal | None:
     """Cost only for a currently verified ticket with confirmed tonnage and a rate."""
     if t.status != "verified" or price is None or t.tonnage is None or not t.tonnage_confirmed:
         return None
-    return (t.tonnage * price).quantize(CENTS)
+    return to_cents(t.tonnage * price)
 
 
 def alias_suggestions(

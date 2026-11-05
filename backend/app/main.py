@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, Request
 from sqlalchemy import inspect
+from sqlalchemy.exc import DataError, IntegrityError, OperationalError
+from sqlalchemy.orm.exc import StaleDataError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -127,6 +129,38 @@ async def log_requests(request: Request, call_next):
     }))
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+# Database refusals become clear answers. In every case the request's transaction
+# is rolled back, so nothing was saved. The database's message is never shown or
+# logged, because it can quote the values involved.
+@app.exception_handler(StaleDataError)
+async def _changed_at_once(_request: Request, _exc: StaleDataError):
+    return JSONResponse({"detail": {"code": "record_changed", "message": "Someone else saved a change to this at the same moment. "
+                                    "Nothing was saved. The latest values are shown now: check them."}}, status_code=409)
+
+
+@app.exception_handler(IntegrityError)
+async def _refused_by_a_rule(_request: Request, _exc: IntegrityError):
+    return JSONResponse({"detail": {"code": "conflict", "message": "That conflicts with a record already saved, possibly at this "
+                                    "same moment. Nothing was saved. Refresh and check."}}, status_code=409)
+
+
+@app.exception_handler(DataError)
+async def _unusable_value(_request: Request, _exc: DataError):
+    return JSONResponse({"detail": "A value is too long or can't be stored in that field. Nothing was saved."}, status_code=422)
+
+
+@app.exception_handler(OverflowError)
+async def _number_out_of_range(_request: Request, _exc: OverflowError):
+    return JSONResponse({"detail": "That number is too large to be a real record."}, status_code=422)
+
+
+@app.exception_handler(OperationalError)
+async def _database_unavailable(_request: Request, exc: OperationalError):
+    request_log.warning(json.dumps({"event": "database_unavailable", "error": type(exc.orig).__name__}))
+    return JSONResponse({"detail": "The database is busy or unavailable. Nothing was saved. Try again in a moment."},
+                        status_code=503, headers={"Retry-After": "5"})
 
 
 app.add_middleware(

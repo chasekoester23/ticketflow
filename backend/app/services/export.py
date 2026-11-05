@@ -12,11 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Batch, Project, Ticket
+from .pricing import to_cents
 
 LEGACY_APPROVER = "Not recorded (approved before individual accounts)"
 STATUS_LABEL = {"verified": "Verified", "needs_review": "Needs review", "failed": "Extraction failed", "skipped": "Skipped", "flagged": "Flagged for review"}
 HEADER_FILL = PatternFill("solid", fgColor="1F2937")
-CENTS = Decimal("0.01")
 
 
 def _safe_excel_text(value: str | None) -> str | None:
@@ -37,7 +37,7 @@ def ticket_cost(t: Ticket, unit_price: Decimal | None) -> Decimal | None:
     """Exact decimal math, available only for currently verified tickets."""
     if t.status != "verified" or unit_price is None or t.tonnage is None or not t.tonnage_confirmed:
         return None
-    return (t.tonnage * unit_price).quantize(CENTS)
+    return to_cents(t.tonnage * unit_price)
 
 
 def _source_ref(t: Ticket) -> str:

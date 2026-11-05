@@ -20,7 +20,7 @@ import pymupdf as fitz
 
 from ..config import settings
 from . import invoice_layouts as layouts
-from .pricing import norm
+from .pricing import norm, to_cents
 
 # Only these spellings mean tons. "T" alone is ambiguous and is not accepted.
 TON_UNITS = {"TON", "TONS", "TN", "TNS"}
@@ -178,10 +178,10 @@ class TextLayerExtractor:
             result.lines.append(line)
             drafted_from_rows.append(line)
             for row in group.rows:
-                if row.rate is not None and (row.quantity * row.rate).quantize(Decimal("0.01")) != row.amount:
+                if row.rate is not None and to_cents(row.quantity * row.rate) != row.amount:
                     result.unread_rows.append(
                         f"Ticket {row.ticket}: {row.quantity} x {row.rate} is "
-                        f"{(row.quantity * row.rate).quantize(Decimal('0.01'))}, but this row shows {row.amount}.")
+                        f"{to_cents(row.quantity * row.rate)}, but this row shows {row.amount}.")
 
         if "supplier" not in header and supplier_names:
             texts = [" " + norm(text) + " " for text in all_text]

@@ -15,11 +15,12 @@ from io import StringIO
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..auth import current_organization_id
 from ..db import get_db
@@ -29,12 +30,13 @@ from ..models import (
     Project, Ticket, User, as_utc,
 )
 from ..services import billing_exceptions, invoice_bridge, ticket_evidence
+from ..services.locks import take_turn
 from ..services.accounts import names_by_id
 from ..services.invoice_context import LineContext
 from ..services.invoice_matching import (
     ParsedRef, TicketListError, check_tickets, format_ticket_list, parse_ticket_list, ticket_key,
 )
-from ..services.pricing import CENTS, cost_for, effective_price_for, norm
+from ..services.pricing import cost_for, effective_price_for, norm, to_cents
 
 router = APIRouter(prefix="/api/invoice-comparisons")
 
@@ -184,6 +186,8 @@ class Diagnosis(BaseModel):
 
 class InvoiceLineOut(BaseModel):
     id: int
+    # Send back in If-Match when correcting, so nobody overwrites a colleague's correction.
+    revision: str = ""
     project_id: int
     invoice_number: str
     supplier_name: str
@@ -262,6 +266,8 @@ def _validate_scope(db: Session, organization_id: int, body: InvoiceLineIn, *,
     if body.date_from > body.date_to:
         raise HTTPException(422, "Delivery date 'from' must be on or before 'to'")
     _project_or_404(db, organization_id, body.project_id)
+    # People saving lines for one scope take turns, so the second sees the first.
+    take_turn(db, "invoice-scope", organization_id, body.project_id, norm(body.supplier_name), norm(body.material_name))
     _scope_overlap(db, organization_id, body, exclude_id=exclude_id)
 
 
@@ -358,7 +364,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
         sum((c for c in costs if c is not None), Decimal(0))
         if verified and not unpriced else None
     )
-    billed_extension = (item.billed_tons * item.billed_unit_price).quantize(CENTS)
+    billed_extension = to_cents(item.billed_tons * item.billed_unit_price)
     arithmetic_difference = item.billed_subtotal - billed_extension
     quantity_difference = item.billed_tons - verified_tons
     subtotal_difference = (
@@ -466,7 +472,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
     )
 
     return InvoiceLineOut(
-        id=item.id, project_id=item.project_id,
+        id=item.id, revision=str(item.lock_version), project_id=item.project_id,
         source_document_id=source[0] if source else None, source_page=source[1] if source else None,
         invoice_number=item.invoice_number,
         supplier_name=item.supplier_name, material_name=item.material_name,
@@ -585,9 +591,12 @@ def get_comparison(line_id: int, db: Session = Depends(get_db),
 
 @router.put("/{line_id}", response_model=InvoiceLineOut)
 def correct_comparison(line_id: int, body: InvoiceLineIn, db: Session = Depends(get_db),
-                       user: User = Depends(require("invoices.manage"))):
+                       user: User = Depends(require("invoices.manage")), if_match: str | None = Header(None)):
     organization_id = user.organization_id
     item = _owned_or_404(db, organization_id, line_id)
+    if if_match is not None and if_match.strip().strip('"') != str(item.lock_version):
+        raise HTTPException(409, {"code": "line_changed", "message": "Someone else corrected this line while you had it open. "
+                                  "Nothing was saved. The latest figures are shown now."})
     _validate_scope(db, organization_id, body, exclude_id=line_id)
     parsed = _parse_tickets(body)
     changes = body.model_dump(exclude={"ticket_list"})
@@ -606,6 +615,8 @@ def correct_comparison(line_id: int, body: InvoiceLineIn, db: Session = Depends(
             old_value=old_list or "(totals only)", new_value=new_list or "(totals only)",
         ))
         _replace_refs(db, line_id, parsed)
+        # The ticket list lives in another table, but changing it is a change to this line.
+        flag_modified(item, "invoice_number")
     _assign(item, body)
     db.flush()
     # A link only stands while this line still lists and scopes that delivery.

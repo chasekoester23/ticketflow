@@ -95,7 +95,7 @@ export function ReviewForm({
   }, []);
 
   function fail(e: unknown): null {
-    if (e instanceof ApiError && e.code === "ticket_changed") onStale(e.message);
+    if (e instanceof ApiError && (e.code === "ticket_changed" || e.code === "record_changed")) onStale(e.message);
     else onError((e as Error).message);
     return null;
   }
@@ -129,7 +129,15 @@ export function ReviewForm({
     const saved = await save();
     if (!saved) return null;
     try {
-      const t = await ticketAction(ticket.id, name, saved.revision, noteText);
+      let t: Ticket;
+      try {
+        t = await ticketAction(ticket.id, name, saved.revision, noteText === undefined ? undefined : { note: noteText });
+      } catch (e) {
+        // Possibly the same delivery twice: a person decides, and it's recorded.
+        if (!(e instanceof ApiError) || e.code !== "possible_duplicate") throw e;
+        if (!window.confirm(`${e.message}\n\nApprove this ticket anyway? Both will count toward totals, and your decision is recorded.`)) return null;
+        t = await ticketAction(ticket.id, name, saved.revision, { confirm_duplicate: true });
+      }
       onChange(t);
       if (name === "verify") onAccepted(t.id);
       return t;
@@ -344,6 +352,7 @@ const HISTORY_FIELD: Record<string, string> = {
   status: "Status", verified_unit_price: "Locked unit price", ticket_number: "Ticket number",
   delivery_date: "Delivery date", material_type: "Material", tonnage: "Tons", supplier: "Supplier",
   job_location: "Job location", unit_price_override: "Rate override", flag_note: "Note",
+  duplicate_override: "Approved despite matching ticket",
 };
 
 /** Who changed what on this ticket. Loaded only when opened. */

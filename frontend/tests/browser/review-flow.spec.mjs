@@ -293,6 +293,31 @@ for (const [platform, leaves] of [["Win32", true], ["Linux x86_64", true], ["Mac
   });
 }
 
+test("a possible duplicate needs a deliberate decision, and declining changes nothing", async ({ page }) => {
+  const tickets = [ticket(101, { ticket_number: "10482", material_type: "Sand", supplier: "S", job_location: "J", delivery_date: "2026-10-15", tonnage: "20.000" }), ticket(102)];
+  const log = await mock(page, tickets);
+  const asks = [];
+  await page.route("**/api/tickets/101/verify", async (route) => {
+    const body = route.request().postDataJSON();
+    asks.push(body);
+    if (body?.confirm_duplicate) {
+      tickets[0].status = "verified";
+      return json(route, { ...tickets[0] });
+    }
+    return json(route, { detail: { code: "possible_duplicate", message: "S ticket 10482 is already approved (batch 3, page 1, ticket 2)." } }, 409);
+  });
+  await page.goto("/upload?batch=5&ticket=101");
+  page.once("dialog", (dialog) => { expect(dialog.message()).toContain("already approved"); dialog.dismiss(); });
+  await page.getByRole("button", { name: "Accept & next" }).click();
+  await expect.poll(() => asks.length).toBe(1);
+  await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
+  expect(log.verified).toEqual([]);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Accept & next" }).click();
+  await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
+  expect(asks.at(-1)).toEqual({ confirm_duplicate: true });
+});
+
 test("bad tons are caught before saving, and units are not converted", async ({ page }) => {
   const log = await mock(page, [ticket(101)]);
   await page.goto("/upload?batch=5&ticket=101");

@@ -95,6 +95,8 @@ def test_aliases_and_rates_never_cross_companies(client, monkeypatch):
     assert _alias(client, "supplier", READ["supplier"], supplier["id"]).status_code == 201
     with api_module.SessionLocal() as db:
         db.add(Organization(id=2, name="Other Fictional Contractor"))
+        db.flush()
+        db.add(User(id=2, organization_id=2, username="other", password_hash="fixture", role="owner"))
         db.commit()
     app.dependency_overrides[current_user] = lambda: User(
         id=2, organization_id=2, username="other", password_hash="fixture", active=True,

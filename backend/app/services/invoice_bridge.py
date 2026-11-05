@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from .pricing import CENTS
+from .pricing import to_cents
 
 _MAX_LISTED = 25
 _LABELS = {
@@ -94,7 +94,7 @@ def money_bridge(*, verified_rows: list, verified_subtotal: Decimal | None, bill
     if verified_subtotal is None:
         return None
     verified_tons = sum((t.tonnage or Decimal(0) for t in verified_rows), Decimal(0))
-    quantity_effect = ((billed_tons - verified_tons) * billed_rate).quantize(CENTS)
+    quantity_effect = to_cents((billed_tons - verified_tons) * billed_rate)
     by_rate: dict[Decimal, dict] = {}
     rate_effect = Decimal(0)
     for ticket in verified_rows:
@@ -102,13 +102,13 @@ def money_bridge(*, verified_rows: list, verified_subtotal: Decimal | None, bill
         if locked == billed_rate:
             continue
         tons = ticket.tonnage or Decimal(0)
-        effect = ((billed_rate - locked) * tons).quantize(CENTS)
+        effect = to_cents((billed_rate - locked) * tons)
         rate_effect += effect
         group = by_rate.setdefault(locked, {"locked_rate": locked, "tickets": 0, "tons": Decimal(0), "effect": Decimal(0)})
         group["tickets"] += 1
         group["tons"] += tons
         group["effect"] += effect
-    arithmetic = billed_subtotal - (billed_tons * billed_rate).quantize(CENTS)
+    arithmetic = billed_subtotal - to_cents(billed_tons * billed_rate)
     rounding = billed_subtotal - verified_subtotal - quantity_effect - rate_effect - arithmetic
     return {
         "start": verified_subtotal, "quantity_effect": quantity_effect, "rate_effect": rate_effect,
