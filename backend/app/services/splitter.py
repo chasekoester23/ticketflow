@@ -162,4 +162,9 @@ def assess_slot(image: Image.Image, *, ink_threshold: float = 0.002,
     if ink >= ink_threshold:
         return SlotAssessment(ink, "content")
     marks = sum(histogram[:235]) / total
-    return SlotAssessment(ink, "faint" if marks >= faint_threshold else "empty")
+    # Paper isn't always white. Also count anything clearly darker than this
+    # slot's own background, so a faint ticket on grey or tinted paper can't
+    # read as empty. A false alarm costs one click; a lost ticket costs far more.
+    background = max(range(256), key=histogram.__getitem__)
+    against_paper = sum(histogram[:max(0, background - 8)]) / total
+    return SlotAssessment(ink, "faint" if max(marks, against_paper) >= faint_threshold else "empty")

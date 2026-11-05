@@ -36,4 +36,8 @@ for _ in $(seq 1 120); do
   curl -sf "http://127.0.0.1:$API_PORT/health" >/dev/null && curl -sf -o /dev/null "http://127.0.0.1:$WEB_PORT/login" && break
   sleep 1
 done
-CI=1 npx playwright test --config "$FRONTEND_DIR/tests/e2e/playwright.config.mjs" --reporter=line
+CONFIG="$FRONTEND_DIR/tests/e2e/playwright.config.mjs"
+# The workflow first, on an empty database. Then the same stack with thousands of records.
+CI=1 npx playwright test --config "$CONFIG" --reporter=line demo.spec
+(cd "$BACKEND_DIR" && "$PYTHON" scripts/make_synthetic_dataset.py --tickets "${DEMO_TICKETS:-3000}")
+CI=1 npx playwright test --config "$CONFIG" --reporter=line scale.spec
