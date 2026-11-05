@@ -34,7 +34,6 @@ export default function ReportsPage() {
   return <div className="space-y-5">
     <div className="tf-page-heading">
       <div>
-        <p className="tf-eyebrow">PILOT / INTAKE, REVIEW AND RECONCILIATION</p>
         <h1 className="tf-page-title">Pilot report</h1>
         <p className="tf-page-description">Counts of what's on record and what still needs a person. Not a claim that every paper ticket was captured.</p>
       </div>

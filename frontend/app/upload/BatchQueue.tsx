@@ -44,22 +44,22 @@ export function BatchQueue() {
       : rows === null ? <p className="tf-empty" role="status">Loading uploads…</p>
       : rows.length === 0 ? <p className="tf-empty">{openOnly ? "Nothing is waiting on a person." : "Nothing uploaded yet. Your first upload starts below."}</p>
       : <div className="tf-table-wrap"><table className="tf-table">
-        <thead><tr><th>Batch</th><th>Project</th><th>Uploaded</th><th className="text-right">Tickets</th><th>Accepted</th><th>Next step</th><th><span className="sr-only">Open</span></th></tr></thead>
+        <thead><tr><th>Batch</th><th>Project</th><th>Next step</th><th className="tf-hide-narrow">Uploaded</th><th className="tf-hide-narrow text-right">Tickets</th><th className="tf-hide-narrow">Accepted</th><th><span className="sr-only">Open</span></th></tr></thead>
         <tbody>{rows.map((row) => {
           const step = nextStep(row);
           const resolved = row.verified + row.skipped;
           return <tr key={row.id}>
             <td className="whitespace-nowrap font-bold tabular-nums">#{row.id}</td>
-            <td className="min-w-[140px]">{row.project_code ? `${row.project_code} · ${row.project_name}` : <span className="text-[#a14c1c]">No project</span>}</td>
-            <td className="whitespace-nowrap">{when(row.created_at)}{row.created_by && <span className="block text-[11px] text-[#7a8796]">{row.created_by}</span>}</td>
-            <td className="text-right tabular-nums">{row.tickets}</td>
-            <td className="min-w-[110px]">
+            <td className="min-w-[120px]">{row.project_code ? `${row.project_code} · ${row.project_name}` : <span className="text-[#a14c1c]">No project</span>}</td>
+            <td><span className={`tf-status ${step.tone}`}>{step.text}</span></td>
+            <td className="tf-hide-narrow whitespace-nowrap">{when(row.created_at)}{row.created_by && <span className="block text-[11px] text-[#7a8796]">{row.created_by}</span>}</td>
+            <td className="tf-hide-narrow text-right tabular-nums">{row.tickets}</td>
+            <td className="tf-hide-narrow min-w-[110px]">
               <div className="tf-progress" role="progressbar" aria-label={`Batch ${row.id} resolved`} aria-valuenow={resolved} aria-valuemin={0} aria-valuemax={row.tickets || 0}>
                 <div style={{ width: `${row.tickets ? (resolved / row.tickets) * 100 : 0}%` }} />
               </div>
               <span className="mt-1 block text-[11px] tabular-nums text-[#7a8796]">{resolved} of {row.tickets}</span>
             </td>
-            <td><span className={`tf-status ${step.tone}`}>{step.text}</span></td>
             <td className="whitespace-nowrap text-right"><a href={`/upload?batch=${row.id}`} aria-label={`Open batch ${row.id}`}>Open →</a></td>
           </tr>;
         })}</tbody>

@@ -215,7 +215,7 @@ test("the project report separates approved from unapproved and marks unknown fi
   const totals = page.getByRole("region", { name: "Project totals" });
   await expect(totals).toContainText("164");
   await expect(totals).toContainText("1 approved with no locked price");
-  await expect(totals).toContainText("41 t");
+  await expect(totals).toContainText("41.00 t");
   await expect(page.getByText("Not an approval for payment.")).toBeVisible();
   const lines = page.getByRole("region", { name: "Invoice lines" });
   await expect(lines.getByRole("row").filter({ hasText: "EA-1107" })).toContainText("Unresolved");

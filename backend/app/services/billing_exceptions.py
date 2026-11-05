@@ -43,7 +43,9 @@ def find(db: Session, organization_id: int, items: list[InvoiceComparison]) -> l
     same_bill: dict[tuple, list[InvoiceComparison]] = defaultdict(list)
     same_number: dict[tuple, list[InvoiceComparison]] = defaultdict(list)
     for item in items:
-        same_bill[(item.supplier_key, item.material_key, item.billed_tons, item.billed_unit_price, item.billed_subtotal)].append(item)
+        # Same delivery window too. Fixed loads make equal amounts common across
+        # different months, and a false alarm on every invoice gets ignored.
+        same_bill[(item.supplier_key, item.material_key, item.date_from, item.date_to, item.billed_tons, item.billed_unit_price, item.billed_subtotal)].append(item)
         same_number[(item.supplier_key, item.material_key, item.invoice_number.strip().upper())].append(item)
     for group in same_bill.values():
         if len({item.invoice_number for item in group}) > 1:

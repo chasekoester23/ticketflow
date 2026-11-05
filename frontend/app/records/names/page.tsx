@@ -96,7 +96,6 @@ export default function NameCleanupPage() {
   return <div className="space-y-5">
     <div className="tf-page-heading">
       <div>
-        <p className="tf-eyebrow">DELIVERY RECORDS / NAME CLEANUP</p>
         <h1 className="tf-page-title">Name cleanup</h1>
         <p className="tf-page-description">Every spelling on your tickets. A ticket only gets a rate when its names match your list, so tidy these before approving.</p>
       </div>

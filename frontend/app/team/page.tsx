@@ -82,7 +82,7 @@ export default function TeamPage() {
 
   return <div className="space-y-5">
     <div className="tf-page-heading">
-      <div><p className="tf-eyebrow">COMPANY ADMINISTRATION</p><h1 className="tf-page-title">Team</h1>
+      <div><h1 className="tf-page-title">Team</h1>
         <p className="tf-page-description">Give each person their own sign-in. Approvals and corrections are recorded under the person who made them, so never share an account.</p></div>
       <span className="text-[12px] font-semibold text-[#5d6b7b]">{activeCount} active {activeCount === 1 ? "person" : "people"}</span>
     </div>

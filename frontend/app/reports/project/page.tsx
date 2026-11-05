@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Project, ProjectReport, ReportGroup, getProjectReport, listProjects, projectReportUrl } from "../../../lib/api";
 
 const money = (v: string | null) => v === null ? "Unresolved" : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const tons = (v: string) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 3 });
+const tons = (v: string) => Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 });
 const RESULT: Record<string, { label: string; tone: string }> = {
   matches: { label: "Figures match", tone: "tf-status-open" },
   discrepancy: { label: "Difference found", tone: "tf-status-error" },
@@ -62,7 +62,6 @@ export default function ProjectReportPage() {
   return <div className="space-y-5">
     <div className="tf-page-heading">
       <div>
-        <p className="tf-eyebrow">REPORTS / PROJECT</p>
         <h1 className="tf-page-title">Project report</h1>
         <p className="tf-page-description">Approved material by supplier and month, with invoice lines beside it. Not an approval for payment.</p>
       </div>
@@ -79,10 +78,10 @@ export default function ProjectReportPage() {
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
     {report && totals && <>
       <section className="tf-panel grid divide-y divide-[#e7eaee] sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4" aria-label="Project totals">
-        <Tile label="Approved tons" value={tons(totals.verified_tons)} note={`${totals.verified_tickets} of ${totals.tickets} tickets`} />
+        <Tile label="Approved tons" value={tons(totals.verified_tons)} note={`${totals.verified_tickets.toLocaleString()} of ${totals.tickets.toLocaleString()} tickets`} />
         <Tile label="Material cost" value={money(totals.cost)} note={totals.unpriced ? `${totals.unpriced} approved with no locked price` : "Tons × locked rate"} attention={totals.unpriced > 0} />
-        <Tile label="Not yet approved" value={tons(totals.pending_tons) + " t"} note={`${totals.pending_tickets} tickets, excluded from both`} attention={totals.pending_tickets > 0} />
-        <Tile label="Deliveries" value={report.first_delivery ? report.first_delivery.slice(0, 7) : "—"} note={report.last_delivery ? `${report.first_delivery} to ${report.last_delivery}` : "No dated tickets yet"} />
+        <Tile label="Not yet approved" value={tons(totals.pending_tons) + " t"} note={`${totals.pending_tickets.toLocaleString()} tickets, excluded from both`} attention={totals.pending_tickets > 0} />
+        <Tile label="Tickets on record" value={totals.tickets.toLocaleString()} note={report.last_delivery ? `Delivered ${report.first_delivery} to ${report.last_delivery}` : "No dated tickets yet"} />
       </section>
 
       <section className="tf-panel" aria-label="By supplier and material">

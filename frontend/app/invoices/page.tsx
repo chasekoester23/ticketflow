@@ -22,7 +22,7 @@ function money(value: string | null) {
   });
 }
 function tons(value: string) {
-  return Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 });
+  return Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 });
 }
 function signed(value: string) {
   return Number(value) > 0 ? "+" + value : value;
@@ -289,7 +289,6 @@ export default function InvoiceComparisonPage() {
   return <div className="space-y-5">
     <div className="tf-page-heading">
       <div>
-        <p className="tf-eyebrow">MATERIAL ACCOUNTING / RECONCILIATION</p>
         <h1 className="tf-page-title">Invoice comparison</h1>
         <p className="tf-page-description">
           Compare supplier invoice lines with verified material deliveries by project, supplier, material and delivery dates.
@@ -448,26 +447,25 @@ export default function InvoiceComparisonPage() {
       <div className="tf-table-wrap">
         <table className="tf-table">
           <thead><tr>
-            {["Invoice", "Project", "Supplier / material", "Dates", "Billed tons", "Verified tons", "Tons diff.", "Amount diff.", "Result", ""].map((h) => <th key={h}>{h}</th>)}
+            {["Invoice", "Result", "Supplier / material", "Dates", "Billed tons", "Verified tons", "Tons diff.", "Amount diff.", ""].map((h, i) => <th key={h} className={i >= 4 && i <= 7 ? "text-right" : ""}>{h}</th>)}
           </tr></thead>
           <tbody>{shownLines.map((row) => <tr key={row.id} aria-selected={selected === row.id} className={selected === row.id ? "bg-[#fff8f2]" : ""}>
-            <td className="font-semibold">{row.invoice_number}</td>
-            <td>{projects.find((p) => p.id === row.project_id)?.code ?? row.project_id}</td>
-            <td><span className="font-semibold">{row.supplier_name}</span><span className="block text-[11px] text-[#778493]">{row.material_name}</span></td>
-            <td className="whitespace-nowrap">{row.date_from} – {row.date_to}</td>
-            <td className="tabular-nums">{tons(row.billed_tons)}</td>
-            <td className="tabular-nums">{tons(row.verified_tons)}</td>
-            <td className="tabular-nums">{signed(row.quantity_difference)}</td>
-            <td className="tabular-nums">{row.subtotal_difference === null ? "Unresolved" : money(row.subtotal_difference)}</td>
+            <td className="max-w-[150px] [overflow-wrap:anywhere]"><span className="font-semibold">{row.invoice_number}</span><span className="block text-[11px] text-[#778493]">{projects.find((p) => p.id === row.project_id)?.code ?? row.project_id}</span></td>
             <td>
               <span className={"tf-status " + statusStyle(row.status)}>{statusLabel(row)}</span>
-              <span className="block text-[11px] text-[#778493]">
+              <span className="mt-0.5 block max-w-[150px] text-[11px] leading-4 text-[#778493]">
                 {row.comparison_mode === "itemized" ? "Tickets checked" : "Totals only — tickets not checked"}
               </span>
             </td>
-            <td className="whitespace-nowrap">
-              <button type="button" onClick={() => { setSelected(row.id); setHistory(null); }} className="tf-link">Details</button>
-              {canManage && <button type="button" onClick={() => edit(row)} className="tf-link ml-3">Correct</button>}
+            <td><span className="font-semibold">{row.supplier_name}</span><span className="block text-[11px] text-[#778493]">{row.material_name}</span></td>
+            <td className="whitespace-nowrap text-[11px]">{row.date_from}<span className="block">{row.date_to}</span></td>
+            <td className="text-right tabular-nums">{tons(row.billed_tons)}</td>
+            <td className="text-right tabular-nums">{tons(row.verified_tons)}</td>
+            <td className="text-right tabular-nums">{signed(row.quantity_difference)}</td>
+            <td className="text-right tabular-nums">{row.subtotal_difference === null ? "Unresolved" : money(row.subtotal_difference)}</td>
+            <td className="whitespace-nowrap text-right">
+              <button type="button" onClick={() => { setSelected(row.id); setHistory(null); }} className="tf-link block w-full text-right">Details</button>
+              {canManage && <button type="button" onClick={() => edit(row)} className="tf-link mt-1 block w-full text-right">Correct</button>}
             </td>
           </tr>)}</tbody>
         </table>
@@ -518,16 +516,16 @@ export default function InvoiceComparisonPage() {
           <p>{chosen.verified_count} verified · {chosen.pending_count} pending · {chosen.unclassified_count} not yet classified · {chosen.unpriced_count} unpriced</p>
         </div>
       </div>
+      {chosen.warnings.length > 0 && <div className="border-t border-[#f0d8ad] bg-[#fff9ed] px-5 py-3 text-[12px] text-[#754e20]">
+        <p className="font-bold">Every check that raised something</p>
+        <ul className="mt-1 list-disc space-y-1 pl-5">
+          {chosen.warnings.map((message) => <li key={message}>{message}</li>)}
+        </ul>
+      </div>}
       </details>
       {chosen.comparison_mode === "totals_only" && <div role="note" className="border-t border-[#e2e7ec] bg-[#f6f8fa] px-5 py-3 text-[12px] text-[#344352]">
         <p className="font-bold">{TOTALS_ONLY}</p>
         <p>Matching totals do not show that every ticket was billed correctly. Enter the ticket numbers from the invoice to check each delivery.</p>
-      </div>}
-      {chosen.warnings.length > 0 && <div className="border-y border-[#f0d8ad] bg-[#fff9ed] px-5 py-3 text-[12px] text-[#754e20]">
-        <p className="font-bold">Items to investigate</p>
-        <ul className="mt-1 list-disc space-y-1 pl-5">
-          {chosen.warnings.map((message) => <li key={message}>{message}</li>)}
-        </ul>
       </div>}
       {chosen.comparison_mode === "itemized" && <div className="px-5 pt-5">
         <p className="text-[12px] font-bold text-[#344352]">Ticket-by-ticket check</p>
@@ -553,20 +551,20 @@ export default function InvoiceComparisonPage() {
           </button>}
         </div>}
         <div className="tf-table-wrap"><table className="tf-table" aria-label="Ticket-by-ticket check">
-          <thead><tr><th>Line</th><th>Invoice ticket</th><th>Billed tons</th><th>Result</th><th>TicketFlow record</th><th>Verified tons</th><th>Difference</th><th>Evidence</th><th>Open</th></tr></thead>
+          <thead><tr><th>Line</th><th>Invoice ticket</th><th className="text-right">Billed tons</th><th>Result</th><th>TicketFlow record</th><th className="text-right">Verified tons</th><th className="text-right">Difference</th><th>Evidence</th></tr></thead>
           <tbody>{chosen.ticket_check.map((row, index) => <tr key={index}>
             <td className="tabular-nums">{row.line ?? "—"}</td>
             <td className="font-mono">{row.invoice_ticket_number ?? <span className="font-sans text-[#778493]">Not listed</span>}</td>
-            <td className="tabular-nums">{row.billed_tons ? tons(row.billed_tons) : "—"}</td>
+            <td className="text-right tabular-nums">{row.billed_tons ? tons(row.billed_tons) : "—"}</td>
             <td>
               <span className={"tf-status " + resultStyle(row)}>{RESULT_LABELS[row.result]}</span>
               {row.flags.map((flag) => <span key={flag} className="tf-status tf-status-error ml-1">{FLAG_LABELS[flag]}</span>)}
               {row.notes.map((note) => <span key={note} className="block max-w-[28rem] text-[11px] text-[#5d6b7a]">{note}</span>)}
             </td>
-            <td>{row.ticket ? <RecordSummary ticket={row.ticket}/> : row.candidates.length ?
-              row.candidates.map((c) => <span key={c.ticket_id} className="block"><RecordSummary ticket={c}/></span>) : "—"}</td>
-            <td className="tabular-nums">{row.verified_tons ? tons(row.verified_tons) : "—"}</td>
-            <td className="tabular-nums">{row.tons_difference ? signed(row.tons_difference) : "—"}</td>
+            <td className="min-w-[210px]">{row.ticket ? <><RecordSummary ticket={row.ticket}/><RecordLinks ticket={row.ticket}/></> : row.candidates.length ?
+              row.candidates.map((c) => <span key={c.ticket_id} className="block"><RecordSummary ticket={c}/><RecordLinks ticket={c}/></span>) : "—"}</td>
+            <td className="text-right tabular-nums">{row.verified_tons ? tons(row.verified_tons) : "—"}</td>
+            <td className="text-right tabular-nums">{row.tons_difference ? signed(row.tons_difference) : "—"}</td>
             <td className="whitespace-nowrap">
               {EVIDENCE_LABELS[row.evidence ?? "unmatched"]}
               {canManage && row.evidence === "invalidated" && row.result === "matched" && row.ticket && <button type="button" className="tf-link ml-2"
@@ -574,8 +572,6 @@ export default function InvoiceComparisonPage() {
               {canManage && row.link_id && <button type="button" className="tf-link ml-2"
                 onClick={() => void evidence(() => releaseTicketLink(chosen.id, row.link_id as number))}>Release</button>}
             </td>
-            <td>{row.ticket ? <RecordLinks ticket={row.ticket}/> :
-              row.candidates.map((c) => <span key={c.ticket_id} className="block"><RecordLinks ticket={c}/></span>)}</td>
           </tr>)}</tbody>
         </table></div>
       </div>}

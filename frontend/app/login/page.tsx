@@ -46,7 +46,6 @@ export default function LoginPage() {
           <span className="inline-block h-3 w-3 bg-[#e66b2d]" /> TICKETFLOW
         </span>
       </div>
-      <p className="tf-eyebrow">ACCOUNT ACCESS</p>
       <h1 className="mt-2 text-[26px] font-bold tracking-[-.025em] text-[#1a2835]">Sign in to TicketFlow</h1>
       <p className="mt-3 max-w-sm text-[13px] leading-6 text-[#6a7786]">
         Sign in to access your company’s delivery records and ticket review workspace.

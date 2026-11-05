@@ -347,7 +347,6 @@ export default function Home() {
     <div className="space-y-3 pb-6">
       {!batch && !opening && <div className="tf-page-heading">
         <div>
-          <p className="tf-eyebrow">DELIVERY DOCUMENTATION / TICKET INTAKE</p>
           <h1 className="tf-page-title">Ticket intake & review</h1>
           <p className="tf-page-description">Upload delivery scans, compare extracted information with the original, and approve each ticket.</p>
         </div>
@@ -355,9 +354,9 @@ export default function Home() {
       </div>}
 
       {configured === false && (!batch || showUpload) && (
-        <div role="alert" className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <p className="tf-notice" role="note">
           AI extraction is not configured. <strong>Manual entry works without an API key.</strong> Select “Manual entry” below, then run the local processing worker to prepare your scans. AI extraction requires a provider key in backend/.env.
-        </div>
+        </p>
       )}
       {error && (
         <div role="alert" className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">

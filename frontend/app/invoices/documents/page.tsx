@@ -159,7 +159,6 @@ export default function InvoiceDocumentsPage() {
   return <div className="space-y-5">
     <div className="tf-page-heading">
       <div>
-        <p className="tf-eyebrow">MATERIAL ACCOUNTING / INVOICE PDFS</p>
         <h1 className="tf-page-title">Invoice PDFs</h1>
         <p className="tf-page-description">Upload a supplier invoice, correct the draft lines beside the original, then confirm the ones to compare.</p>
       </div>
