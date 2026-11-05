@@ -1,6 +1,6 @@
 # TicketFlow pre-launch security status
 
-Last updated: 2026-11-05 (scan check, migration `20261105_10`).
+Last updated: 2026-11-05 (name aliases, migration `20261105_11`).
 
 TicketFlow handles confidential construction documents and money figures.
 This file records **what is actually implemented and tested** and **what is

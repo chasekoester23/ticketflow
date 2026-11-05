@@ -221,8 +221,9 @@ def list_tickets(batch_id: int, db: Session = Depends(get_db), organization_id: 
     index = dup_svc.load_index(db, organization_id)
     names = pricing_svc.catalog_names(db, organization_id)
     people = names_by_id(db, organization_id)
+    aliases = pricing_svc.alias_suggestions(db, organization_id, names)
     return [
-        _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names, people=people)
+        _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names, people=people, aliases=aliases)
         for ticket in db.scalars(q).all()
     ]
 
@@ -232,6 +233,7 @@ def _out(
     duplicate_index: dup_svc.DuplicateIndex | None = None,
     catalog: tuple[set[str], set[str]] | None = None,
     people: dict[int, str] | None = None,
+    aliases: dict[tuple[str, str], str] | None = None,
 ) -> TicketOut:
     """Ticket plus pricing and duplicates, reusing per-list data when supplied."""
     table = table if table is not None else pricing_svc.rate_table(db, organization_id)
@@ -251,6 +253,10 @@ def _out(
                     else dup_svc.find_duplicates(db, t, organization_id)),
         pricing_notes=notes,
         verified_by=_verified_by(db, t, organization_id, people),
+        suggestions=pricing_svc.suggestions_for(
+            t, aliases if aliases is not None else pricing_svc.alias_suggestions(db, organization_id)),
+        as_read={field: str(t.raw_extraction[field]) for field in EDITABLE
+                 if isinstance(t.raw_extraction, dict) and t.raw_extraction.get(field) not in (None, "")},
     ))
 
 

@@ -6,7 +6,9 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import false as sa_false
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -101,6 +103,33 @@ class SupplierRate(Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 4))
     supplier: Mapped[Supplier] = relationship()
     material: Mapped[Material] = relationship()
+
+
+class NameAlias(Base):
+    """"Means the same as": another spelling of a catalog supplier or material.
+
+    Only ever produces a suggestion a person may apply on review; it never
+    changes a stored ticket or a rate lookup. Removal stamps the row, so it is
+    also its own history. Names are kept as text so history survives a catalog
+    entry being deleted; an alias whose target has left the catalog suggests
+    nothing.
+    """
+    __tablename__ = "name_aliases"
+    __table_args__ = (
+        Index("uq_name_alias_active", "organization_id", "kind", "alias_key", unique=True,
+              sqlite_where=text("removed_at IS NULL"), postgresql_where=text("removed_at IS NULL")),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)  # supplier | material
+    alias_text: Mapped[str] = mapped_column(String(200), nullable=False)
+    alias_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    removed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class PricingEvent(Base):

@@ -140,6 +140,16 @@ The detection thresholds are cautious defaults, not calibrated on real scanner o
 
 Upgrading adds migration `20261105_10` (two new tables and one nullable column). The backend refuses to start until it has run: back up `backend/ticketflow.db`, then run `python -m alembic upgrade head`.
 
+## Other spellings of suppliers and materials
+
+Tickets from one quarry can spell its name several ways. Under **Suppliers & rates → Other spellings**, a manager can say that a spelling means a catalog entry. When a ticket uses that spelling exactly (ignoring case and punctuation), the review screen offers **Use your catalog name**.
+
+- **An alias only suggests.** A person applies it and saves, as an ordinary audited edit. It never changes a stored ticket, a rate lookup, or a locked price, and applying it to an approved ticket withdraws the approval as any edit does.
+- **Matching is exact, never fuzzy.** One spelling means one thing per company, and aliases never cross companies.
+- **What the reader returned stays visible.** The review form shows "Read from the ticket" beside any value that differs.
+
+Upgrading adds migration `20261105_11` (new `name_aliases` table only).
+
 ## Invoice comparison (Batch #16)
 
 The **Invoice comparison** page lets a project engineer manually enter one

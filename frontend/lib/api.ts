@@ -73,6 +73,8 @@ export type Ticket = {
   pricing_notes: string[];
   verified_by: string | null; // null when unverified or approved before individual accounts
   verified_at: string | null;
+  suggestions?: Record<string, string>; // catalog name for a known spelling; a person applies it
+  as_read?: Record<string, string>; // what the reader returned, separate from current values
 };
 export type HistoryEntry = { field: string; old: string | null; new: string | null; at: string; actor: string | null };
 
@@ -226,6 +228,19 @@ export type PricingEventRow = {
   old: string | null; new: string | null; // decimal strings, never parsed for money math
   at: string; actor: string | null;
 };
+export type NameAliasRow = {
+  id: number; kind: "supplier" | "material"; alias: string; target: string;
+  added_by: string | null; added_at: string; removed_by: string | null; removed_at: string | null;
+};
+export async function listAliases(): Promise<NameAliasRow[]> {
+  return (await check(await apiFetch(`${API}/api/name-aliases`))).json();
+}
+export async function addAlias(body: { kind: "supplier" | "material"; alias: string; target_id: number }) {
+  await check(await apiFetch(`${API}/api/name-aliases`, json("POST", body)));
+}
+export async function removeAlias(id: number) {
+  await check(await apiFetch(`${API}/api/name-aliases/${id}`, { method: "DELETE" }));
+}
 export async function getPricingHistory(): Promise<PricingEventRow[]> {
   return (await check(await apiFetch(`${API}/api/pricing/history`))).json();
 }

@@ -52,6 +52,10 @@ class TicketOut(BaseModel):
     # Current approver (None if unverified or approved before individual accounts).
     verified_by: str | None = None
     verified_at: datetime | None = None
+    # A known catalog name for a spelling on this ticket; a person applies it.
+    suggestions: dict[str, str] = {}
+    # What the reader returned, kept separate from the current values.
+    as_read: dict[str, str] = {}
 
     @field_validator("verified_at")
     @classmethod

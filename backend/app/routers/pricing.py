@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -9,8 +10,9 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
-from ..models import Material, PricingEvent, Supplier, SupplierRate, User, as_utc
+from ..models import Material, NameAlias, PricingEvent, Supplier, SupplierRate, User, as_utc, utcnow
 from ..services.accounts import names_by_id
+from ..services.pricing import norm
 
 router = APIRouter(prefix="/api")
 
@@ -29,6 +31,13 @@ class RateIn(BaseModel):
     supplier_id: int
     material_id: int
     unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=4)
+
+
+class AliasIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["supplier", "material"]
+    alias: str = Field(min_length=1, max_length=200)
+    target_id: int
 
 
 class RateOut(BaseModel):
@@ -70,8 +79,27 @@ def list_suppliers(db: Session = Depends(get_db), organization_id: int = Depends
     return [_dump(s, "id", "name", "contact") for s in db.scalars(select(Supplier).where(Supplier.organization_id == organization_id).order_by(Supplier.name))]
 
 
+def _end_aliases(db: Session, user: User, kind: str, target_key: str) -> None:
+    """A removed catalog entry takes its aliases with it; the rows stay as history."""
+    for alias in db.scalars(select(NameAlias).where(
+        NameAlias.organization_id == user.organization_id, NameAlias.kind == kind,
+        NameAlias.target_key == target_key, NameAlias.removed_at.is_(None),
+    )):
+        alias.removed_at, alias.removed_by_user_id = utcnow(), user.id
+
+
+def _name_is_an_alias(db: Session, organization_id: int, kind: str, name: str) -> bool:
+    """One spelling must not mean two things in the same company."""
+    return db.scalar(select(NameAlias.id).where(
+        NameAlias.organization_id == organization_id, NameAlias.kind == kind,
+        NameAlias.alias_key == norm(name), NameAlias.removed_at.is_(None),
+    ).limit(1)) is not None
+
+
 @router.post("/suppliers", status_code=201)
 def create_supplier(body: SupplierIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    if _name_is_an_alias(db, user.organization_id, "supplier", body.name):
+        raise HTTPException(409, "That name is already saved as another spelling of a supplier. Remove the spelling first.")
     s = Supplier(organization_id=user.organization_id, name=body.name.strip(), contact=body.contact)
     db.add(s)
     _event(db, user, "supplier_added", supplier=s.name)
@@ -92,6 +120,7 @@ def delete_supplier(sid: int, db: Session = Depends(get_db), user: User = Depend
     _remove_rates(db, user, db.scalars(select(SupplierRate).where(
         SupplierRate.supplier_id == sid, SupplierRate.organization_id == organization_id)))
     _event(db, user, "supplier_removed", supplier=s.name)
+    _end_aliases(db, user, "supplier", norm(s.name))
     db.delete(s)
     db.commit()
 
@@ -103,6 +132,8 @@ def list_materials(db: Session = Depends(get_db), organization_id: int = Depends
 
 @router.post("/materials", status_code=201)
 def create_material(body: MaterialIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    if _name_is_an_alias(db, user.organization_id, "material", body.name):
+        raise HTTPException(409, "That name is already saved as another spelling of a material. Remove the spelling first.")
     m = Material(organization_id=user.organization_id, name=body.name.strip(), unit=body.unit)
     db.add(m)
     _event(db, user, "material_added", material=m.name)
@@ -123,8 +154,55 @@ def delete_material(mid: int, db: Session = Depends(get_db), user: User = Depend
     _remove_rates(db, user, db.scalars(select(SupplierRate).where(
         SupplierRate.material_id == mid, SupplierRate.organization_id == organization_id)))
     _event(db, user, "material_removed", material=m.name)
+    _end_aliases(db, user, "material", norm(m.name))
     db.delete(m)
     db.commit()
+
+
+@router.get("/name-aliases")
+def list_aliases(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    people = names_by_id(db, organization_id)
+    rows = db.scalars(select(NameAlias).where(NameAlias.organization_id == organization_id).order_by(NameAlias.id.desc()))
+    return [{"id": a.id, "kind": a.kind, "alias": a.alias_text, "target": a.target_name,
+             "added_by": people.get(a.created_by_user_id), "added_at": as_utc(a.created_at),
+             "removed_by": people.get(a.removed_by_user_id), "removed_at": as_utc(a.removed_at)} for a in rows]
+
+
+@router.post("/name-aliases", status_code=201)
+def add_alias(body: AliasIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    organization_id = user.organization_id
+    model = Supplier if body.kind == "supplier" else Material
+    target = db.scalar(select(model).where(model.id == body.target_id, model.organization_id == organization_id))
+    if target is None:
+        raise HTTPException(404, f"{body.kind.title()} not found")
+    text, key = body.alias.strip(), norm(body.alias)
+    if not key:
+        raise HTTPException(422, "Enter the spelling as it appears on tickets.")
+    names = db.scalars(select(model.name).where(model.organization_id == organization_id))
+    if any(norm(name) == key for name in names):
+        raise HTTPException(409, f"That is already a {body.kind} name in your list, so no alias is needed.")
+    if _name_is_an_alias(db, organization_id, body.kind, text):
+        raise HTTPException(409, "That spelling is already saved. Remove it first to change what it means.")
+    alias = NameAlias(organization_id=organization_id, kind=body.kind, alias_text=text, alias_key=key,
+                      target_name=target.name, target_key=norm(target.name), created_by_user_id=user.id)
+    db.add(alias)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "That spelling is already saved.") from None
+    return {"id": alias.id, "kind": alias.kind, "alias": alias.alias_text, "target": alias.target_name}
+
+
+@router.delete("/name-aliases/{alias_id}", status_code=204)
+def remove_alias(alias_id: int, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    alias = db.scalar(select(NameAlias).where(
+        NameAlias.id == alias_id, NameAlias.organization_id == user.organization_id))
+    if alias is None:
+        raise HTTPException(404, "Alias not found")
+    if alias.removed_at is None:
+        alias.removed_at, alias.removed_by_user_id = utcnow(), user.id
+        db.commit()
 
 
 @router.get("/rates", response_model=list[RateOut])
