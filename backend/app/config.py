@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # network or AI) or manual (no drafting). No AI invoice reader exists yet.
     invoice_extractor: str = "text_layer"
 
+    # Opt-in pilot measurement of review time. Off unless explicitly enabled.
+    review_timing_enabled: bool = False
+
     max_upload_bytes: int = 25 * 1024 * 1024
     # Limit work before OCR: compressed PDFs/photos can otherwise allocate
     # enormous amounts of memory despite having a small uploaded file size.

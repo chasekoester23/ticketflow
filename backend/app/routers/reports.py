@@ -1,22 +1,29 @@
 """Cross-batch views: filtered delivery records, dashboard totals, filtered Excel export."""
-from collections import defaultdict
+import csv
+from collections import Counter, defaultdict
 from datetime import date
 from decimal import Decimal
+from io import StringIO
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
+from ..config import settings
 from ..db import get_db
-from ..models import Batch, Project, Ticket
+from ..models import AuditEvent, Batch, InvoiceComparison, Project, ReviewTiming, Ticket, User
+from ..permissions import require
 from ..schemas import TicketOut
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
+from ..services import pilot_report
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
-from .api import _out
+from .api import EDITABLE, _out
+from .invoices import _line_out
 
 router = APIRouter(prefix="/api")
 
@@ -106,7 +113,7 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
             if t.status == "verified" and t.tonnage_confirmed:
                 row[1] += t.tonnage or Decimal(0)
             row[2] += c or Decimal(0)
-        return [{"name": k, "tickets": v[0], "tons": v[1], "cost": v[2]} for k, v in sorted(g.items())]
+        return [{"name": k, "tickets": v[0], "tons": str(v[1]), "cost": str(v[2])} for k, v in sorted(g.items())]
 
     bq = select(Batch).where(Batch.organization_id == organization_id).order_by(Batch.id.desc()).limit(8)
     if project_id is not None:
@@ -119,9 +126,10 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
         "needs_review": sum(1 for t in ts if t.status in ("needs_review", "failed", "flagged")),
         "flagged": sum(1 for t in ts if t.status == "flagged"),
         "verified": sum(1 for t in ts if t.status == "verified"),
-        "total_tons": total_tons,
-        "pending_tons": pending_tons,
-        "total_cost": total_cost,
+        # Strings: FastAPI would send Decimals in a plain dict as lossy floats.
+        "total_tons": str(total_tons),
+        "pending_tons": str(pending_tons),
+        "total_cost": str(total_cost),
         "unpriced_tickets": sum(1 for t, p in zip(ts, prices)
                                 if t.status == "verified" and t.tonnage_confirmed and p is None),
         "pending_cost_tickets": len(pending),
@@ -132,3 +140,74 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
              "project": projects.get(b.project_id)} for b in db.scalars(bq)
         ],
     }
+
+
+def _pilot(db: Session, organization_id: int, project_id: int | None) -> dict:
+    query = select(InvoiceComparison).where(InvoiceComparison.organization_id == organization_id)
+    if project_id is not None:
+        query = query.where(InvoiceComparison.project_id == project_id)
+    statuses = Counter(_line_out(db, item, organization_id).status for item in db.scalars(query))
+    return pilot_report.build_report(db, organization_id, project_id, statuses)
+
+
+def _project_filter(db: Session, organization_id: int, project_id: int | None) -> None:
+    if project_id is not None and db.scalar(select(Project.id).where(
+        Project.id == project_id, Project.organization_id == organization_id,
+    )) is None:
+        raise HTTPException(404, "Project not found")
+
+
+@router.get("/reports/pilot")
+def pilot(project_id: int | None = None, db: Session = Depends(get_db),
+          organization_id: int = Depends(current_organization_id)):
+    _project_filter(db, organization_id, project_id)
+    return _pilot(db, organization_id, project_id)
+
+
+@router.get("/reports/pilot.csv")
+def pilot_csv(project_id: int | None = None, db: Session = Depends(get_db),
+              organization_id: int = Depends(current_organization_id)):
+    _project_filter(db, organization_id, project_id)
+    report = _pilot(db, organization_id, project_id)
+    output = StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["TicketFlow pilot report - counts of records, not an approval or a completeness claim"])
+    writer.writerow(["Unresolved items", report["unresolved_items"]])
+    for section in ("intake", "review", "reconciliation"):
+        writer.writerow([])
+        writer.writerow([section.title()])
+        for name, value in report[section].items():
+            if isinstance(value, dict):
+                for key, count in sorted(value.items()):
+                    writer.writerow([f"{name}: {key}", count])
+            else:
+                writer.writerow([name, value])
+    writer.writerow([])
+    writer.writerow(["Batches needing attention"])
+    for row in report["batches_needing_attention"]:
+        writer.writerow([f"Batch {row['batch_id']}", "; ".join(row["reasons"])])
+    return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": 'attachment; filename="ticketflow-pilot-report.csv"', "Cache-Control": "no-store"})
+
+
+class TimingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ticket_id: int
+    seconds: Decimal = Field(gt=0, le=3600, max_digits=8, decimal_places=1)
+
+
+@router.post("/review-timings", status_code=204)
+def record_timing(body: TimingIn, db: Session = Depends(get_db), user: User = Depends(require("tickets.edit"))):
+    """Opt-in: only stored when REVIEW_TIMING_ENABLED is on. The server decides
+    whether fields were corrected, from the audit trail."""
+    if not settings.review_timing_enabled:
+        raise HTTPException(404, "Review timing is not enabled.")
+    row = db.execute(select(Ticket.id, Batch.id, Batch.intake_mode).join(Batch, Batch.id == Ticket.batch_id).where(
+        Ticket.id == body.ticket_id, Batch.organization_id == user.organization_id)).first()
+    if row is None:
+        raise HTTPException(404, "Ticket not found")
+    corrected = len(db.scalars(select(AuditEvent.id).where(
+        AuditEvent.ticket_id == row[0], AuditEvent.field.in_(EDITABLE))).all())
+    db.add(ReviewTiming(organization_id=user.organization_id, batch_id=row[1], intake_mode=row[2],
+                        seconds=body.seconds, fields_corrected=corrected))
+    db.commit()

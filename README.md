@@ -179,6 +179,15 @@ The ticket-by-ticket check shows what looks true right now. **Confirm clean matc
 
 Upgrading adds migration `20261105_13` (one new table).
 
+## Pilot report and demo
+
+**Pilot report** in the sidebar counts what's on record and what still needs a person, across intake, review and invoices, with links to where to look and a CSV. It has no percent-complete figure, on purpose. `REVIEW_TIMING_ENABLED=true` adds median seconds per accepted ticket, off by default, storing no person's identity and no ticket contents.
+
+- [Fictional demo and script](docs/engineering/demo-quickstart.md), including `frontend/tests/e2e/run.sh`, which runs the whole workflow in a real browser on a temporary database.
+- [Pilot readiness](docs/engineering/pilot-readiness.md): what's green, amber and red, how to reproduce the tests, performance, and upgrade steps.
+
+Upgrading adds migration `20261105_14` (one new table).
+
 ## Invoice comparison (Batch #16)
 
 The **Invoice comparison** page lets a project engineer manually enter one

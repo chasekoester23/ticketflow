@@ -16,5 +16,7 @@ Generators are in `backend/tests/sample_data.py`.
 | Corrupt PDF | `b"%PDF-1.4 ..."` | Reported as failed, never as zero tickets | `test_scan_manifest` |
 | Mixed layouts and handwriting style | `scripts/make_practice_tickets.py` | Printable self-written kit | `test_practice_kit` |
 | Invoice and ticket match | `_deliveries` and `_line` helpers | Per-ticket reconciliation | `test_invoice_ticket_matching` |
+| Invoice PDF with a text layer | `make_invoice_pdf(...)` | Drafts, unit handling, credits, duplicates | `test_invoice_documents` |
+| Whole demo | `scripts/make_demo_kit.py` | Faint ticket plus an invoice with matching totals and a wrong ticket | `frontend/tests/e2e/demo.spec.mjs` |
 
 The faint fixture is drawn in light grey (RGB 205) on white. It shows the logic works. The `assess_slot` thresholds have **not** been calibrated on real scanner output; expect real blank areas with scanner noise to read as "faint" and need a person to confirm them.

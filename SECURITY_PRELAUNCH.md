@@ -1,6 +1,6 @@
 # TicketFlow pre-launch security status
 
-Last updated: 2026-11-05 (ticket evidence, migration `20261105_13`).
+Last updated: 2026-11-05 (pilot report and opt-in timing, migration `20261105_14`).
 
 TicketFlow handles confidential construction documents and money figures.
 This file records **what is actually implemented and tested** and **what is
@@ -36,6 +36,7 @@ documents on shared hosting yet.
 | API headers | `Cache-Control: private, no-store` on `/api`; `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` | `main.py` |
 | Page headers | Every frontend page sends `Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'`, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, a restrictive `Permissions-Policy`, and no `X-Powered-By` | `frontend/next.config.mjs` |
 | Exports | Spreadsheet-formula neutralization for user-controlled text in Excel (including approver names) and invoice CSV reports; numbers stay numeric | `services/export.py`, `routers/invoices.py` |
+| Pilot measurement | Review timing is off by default and stores no person or ticket contents | `routers/reports.py` |
 | Secrets | Keys only from environment / `.env` (git-ignored); never returned by the API | `config.py` |
 
 ## Required before a hosted customer pilot (priority order)

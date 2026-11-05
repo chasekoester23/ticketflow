@@ -22,6 +22,10 @@ manual-entry batches, and no ticket is approved until a person accepts it.
 
 Count the physical tickets before scanning and enter the number at upload. After processing, open **Scan check** and resolve every faint slot. Don't rely on totals until it reads "Matches your paper count". Record how many real blank areas were flagged as faint, so the thresholds can be judged on real scans.
 
+## Measure the pilot
+
+Set `REVIEW_TIMING_ENABLED=true` only if the company agrees. Record a baseline of how long tickets take today, before relying on the median in **Pilot report**. Review the report's unresolved items at the end of each batch. See `docs/engineering/pilot-readiness.md` for what isn't supported.
+
 ## Which tickets to collect
 
 1. Start with 5–10 permissioned tickets to inspect layout and cropping.

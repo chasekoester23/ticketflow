@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Manifest, ManifestSlot, buildManifest, confirmSlotBlank, markSlotTicket, pageImageUrl,
   rotateSlot, setExpectedCount, slotImageUrl,
@@ -34,6 +34,12 @@ export function ScanCheck({ manifest, onChanged, onOpenTicket, onError }: {
   const canConfirm = can("scans.confirm_blank");
   const canCount = can("tickets.upload");
   const { counts } = manifest;
+  // Opens by itself when a slot needs a decision, and stays open after one is
+  // made, so people don't lose their place.
+  const [open, setOpen] = useState(counts.suspected_blank > 0);
+  useEffect(() => {
+    if (counts.suspected_blank > 0) setOpen(true);
+  }, [counts.suspected_blank]);
   const status = STATUS[manifest.status];
 
   async function run(action: () => Promise<Manifest>) {
@@ -84,7 +90,7 @@ export function ScanCheck({ manifest, onChanged, onOpenTicket, onError }: {
         onClick={() => void run(() => buildManifest(manifest.batch_id))}>Build scan check</button>}
     </div>
 
-    <details open={counts.suspected_blank > 0 || undefined} className="border-t border-[#e2e7ec]">
+    <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)} className="border-t border-[#e2e7ec]">
       <summary className="cursor-pointer select-none px-4 py-2 text-[12px] font-semibold text-[#46566a]">Pages and slots</summary>
       {manifest.files.flatMap((file) => file.pages.map((page) => <div key={file.id + "-" + page.page}
         className="grid gap-4 border-t border-[#eef0f3] p-4 lg:grid-cols-[220px_minmax(0,1fr)]">

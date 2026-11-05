@@ -80,6 +80,9 @@ test("the scan check shows every slot, blockers, and lets a clerk mark a faint t
   await expect(faint.getByRole("button", { name: "Confirm blank" })).toHaveCount(0);
   await faint.getByRole("button", { name: "This is a ticket" }).click();
   await expect.poll(() => posts.map((p) => p.path)).toEqual(["/api/scan-slots/2/mark-ticket"]);
+  // Resolving the last faint slot must not collapse the section.
+  await expect(panel.getByText("0 faint", { exact: false })).toBeVisible();
+  await expect(panel.getByRole("article", { name: "Page 1 slot 1" }).getByRole("button", { name: "Open ticket" })).toBeVisible();
 
   // An approved ticket's image can't be rotated from here.
   const approved = panel.getByRole("article", { name: "Page 1 slot 4" });

@@ -200,7 +200,26 @@ const json = (method: string, body?: unknown): RequestInit => ({
   body: body === undefined ? undefined : JSON.stringify(body),
 });
 
-export async function getStatus(): Promise<{ extraction_configured: boolean; model: string }> {
+export type PilotReport = {
+  project_id: number | null; unresolved_items: number;
+  intake: Record<string, number>;
+  review: Record<string, number | string>;
+  reconciliation: Record<string, number | string | Record<string, number>>;
+  batches_needing_attention: { batch_id: number; reasons: string[] }[];
+  review_timing: {
+    enabled: boolean;
+    manual: { samples: number; median_seconds: string | null; with_corrections: number };
+    extract: { samples: number; median_seconds: string | null; with_corrections: number };
+  };
+};
+export async function getPilotReport(projectId?: string): Promise<PilotReport> {
+  return (await check(await apiFetch(`${API}/api/reports/pilot${projectId ? `?project_id=${projectId}` : ""}`))).json();
+}
+export const pilotReportCsvUrl = (projectId?: string) => `${API}/api/reports/pilot.csv${projectId ? `?project_id=${projectId}` : ""}`;
+export async function recordReviewTiming(ticketId: number, seconds: number) {
+  await check(await apiFetch(`${API}/api/review-timings`, json("POST", { ticket_id: ticketId, seconds })));
+}
+export async function getStatus(): Promise<{ extraction_configured: boolean; model: string; review_timing_enabled?: boolean }> {
   return (await check(await apiFetch(`${API}/api/status`))).json();
 }
 export async function listSuppliers(): Promise<Supplier[]> {
