@@ -19,7 +19,7 @@ from ..permissions import has_permission, require
 from ..schemas import BatchOut, TicketOut, TicketPatch
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
-from ..services import pipeline, jobqueue
+from ..services import pipeline, jobqueue, scan_manifest
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
 from ..services.extraction import ExtractionError, get_extractor
@@ -69,6 +69,7 @@ async def create_batch(
     layout: str = Form("single"),
     intake_mode: str = Form("extract"),
     project_id: int | None = Form(None),
+    expected_ticket_count: int | None = Form(None, ge=0, le=100_000),
     files: list[UploadFile] = File(...),
     user: User = Depends(require("tickets.upload")),
     db: Session = Depends(get_db),
@@ -130,7 +131,7 @@ async def create_batch(
 
     batch = Batch(layout=layout, intake_mode=intake_mode, status="uploaded",
                   project_id=project_id, organization_id=organization_id,
-                  created_by_user_id=user.id)
+                  created_by_user_id=user.id, expected_ticket_count=expected_ticket_count)
     upload_dir = None
     try:
         db.add(batch)
@@ -220,8 +221,9 @@ def list_tickets(batch_id: int, db: Session = Depends(get_db), organization_id: 
     index = dup_svc.load_index(db, organization_id)
     names = pricing_svc.catalog_names(db, organization_id)
     people = names_by_id(db, organization_id)
+    aliases = pricing_svc.alias_suggestions(db, organization_id, names)
     return [
-        _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names, people=people)
+        _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names, people=people, aliases=aliases)
         for ticket in db.scalars(q).all()
     ]
 
@@ -231,6 +233,7 @@ def _out(
     duplicate_index: dup_svc.DuplicateIndex | None = None,
     catalog: tuple[set[str], set[str]] | None = None,
     people: dict[int, str] | None = None,
+    aliases: dict[tuple[str, str], str] | None = None,
 ) -> TicketOut:
     """Ticket plus pricing and duplicates, reusing per-list data when supplied."""
     table = table if table is not None else pricing_svc.rate_table(db, organization_id)
@@ -250,6 +253,10 @@ def _out(
                     else dup_svc.find_duplicates(db, t, organization_id)),
         pricing_notes=notes,
         verified_by=_verified_by(db, t, organization_id, people),
+        suggestions=pricing_svc.suggestions_for(
+            t, aliases if aliases is not None else pricing_svc.alias_suggestions(db, organization_id)),
+        as_read={field: str(t.raw_extraction[field]) for field in EDITABLE
+                 if isinstance(t.raw_extraction, dict) and t.raw_extraction.get(field) not in (None, "")},
     ))
 
 
@@ -329,6 +336,8 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
             _withdraw_approval(t)
     if t.status == "failed" and changed:
         t.status, t.error = "needs_review", None  # manual entry recovers a failed extraction
+        db.flush()
+        scan_manifest.settle_statuses(db, db.get(Batch, t.batch_id))
     if changed:
         # Any edit invalidates a previously applied historical price; the
         # updated rate must be explicitly captured during re-verification.
@@ -431,6 +440,8 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db),
 @router.get("/tickets/{ticket_id}/image")
 def ticket_image(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     t = _ticket_or_404(db, ticket_id, organization_id)
+    if not Path(t.crop_path).is_file():
+        raise HTTPException(404, "The stored image for this ticket is missing.")
     return FileResponse(t.crop_path, media_type="image/png")
 
 

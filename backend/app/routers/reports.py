@@ -59,7 +59,8 @@ def records(
                           status=status, date_from=date_from, date_to=date_to)
     index = dup_svc.load_index(db, organization_id)
     names = pricing_svc.catalog_names(db, organization_id)
-    return [_out(db, t, organization_id, table, duplicate_index=index, catalog=names) for t in ts]
+    aliases = pricing_svc.alias_suggestions(db, organization_id, names)
+    return [_out(db, t, organization_id, table, duplicate_index=index, catalog=names, aliases=aliases) for t in ts]
 
 
 @router.get("/records/export.xlsx")

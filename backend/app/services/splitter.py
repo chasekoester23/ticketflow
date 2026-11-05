@@ -75,6 +75,28 @@ def render_pdf_pages(
         doc.close()
 
 
+def render_pdf_page(data: bytes, page_no: int, dpi: int = 100, *, max_page_pixels: int = 14_000_000) -> Image.Image:
+    """Render one 1-based page for preview, under the same size limit."""
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception as exc:
+        raise PdfError("Could not open PDF.") from exc
+    try:
+        if doc.needs_pass or not 1 <= page_no <= doc.page_count:
+            raise PdfError("That page is not available.")
+        page = doc[page_no - 1]
+        if math.ceil(page.rect.width * dpi / 72) * math.ceil(page.rect.height * dpi / 72) > max_page_pixels:
+            raise PdfError("PDF page is too large to preview.")
+        pix = page.get_pixmap(dpi=dpi, alpha=False)
+        return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    except PdfError:
+        raise
+    except Exception as exc:
+        raise PdfError("Could not render PDF page.") from exc
+    finally:
+        doc.close()
+
+
 def load_image(data: bytes, *, max_pixels: int = 14_000_000) -> Image.Image:
     """Reject decompression bombs using dimensions before decoding image data."""
     try:
@@ -117,3 +139,27 @@ def is_blank(image: Image.Image, threshold: float = 0.002) -> bool:
     gray = image.convert("L").resize((200, 200))
     dark = sum(gray.histogram()[:140])
     return dark / (200 * 200) < threshold
+
+
+@dataclass(frozen=True)
+class SlotAssessment:
+    ink: float  # fraction of clearly dark pixels (the is_blank measure)
+    detection: str  # content | faint | empty
+
+
+def assess_slot(image: Image.Image, *, ink_threshold: float = 0.002,
+                faint_threshold: float = 0.0015) -> SlotAssessment:
+    """Classify one slot without discarding anything.
+
+    "content" is exactly the old not-is_blank test. "faint" means it has
+    visible marks that are too light for that test: a person must decide.
+    "empty" means effectively no marks. These thresholds are deliberately
+    cautious and have NOT been calibrated on real scanner output.
+    """
+    histogram = image.convert("L").resize((200, 200)).histogram()
+    total = 200 * 200
+    ink = sum(histogram[:140]) / total
+    if ink >= ink_threshold:
+        return SlotAssessment(ink, "content")
+    marks = sum(histogram[:235]) / total
+    return SlotAssessment(ink, "faint" if marks >= faint_threshold else "empty")

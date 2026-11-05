@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Material, PricingEventRow, Rate, Supplier, createMaterial, createSupplier, deleteItem,
-  getPricingHistory, listMaterials, listRates, listSuppliers, saveRate,
+  Material, NameAliasRow, PricingEventRow, Rate, Supplier, addAlias, createMaterial, createSupplier, deleteItem,
+  getPricingHistory, listAliases, listMaterials, listRates, listSuppliers, removeAlias, saveRate,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
 
@@ -35,11 +35,14 @@ export default function PricingPage() {
   const [newMaterial, setNewMaterial] = useState("");
   const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "" });
   const [saving, setSaving] = useState(false);
+  const [aliases, setAliases] = useState<NameAliasRow[]>([]);
+  const [aliasForm, setAliasForm] = useState({ kind: "supplier" as "supplier" | "material", alias: "", target: "" });
 
   const load = useCallback(async () => {
     try {
       const [s, m, r, h] = await Promise.all([listSuppliers(), listMaterials(), listRates(), getPricingHistory()]);
       setSuppliers(s); setMaterials(m); setRates(r); setHistory(h);
+      listAliases().then(setAliases).catch(() => setAliases([]));
       setError(null);
     } catch (e) { setError((e as Error).message); }
   }, []);
@@ -154,6 +157,44 @@ export default function PricingPage() {
         </tr>)}</tbody>
       </table></div>
       {!rates.length && <p className="tf-empty">No unit prices configured. Add a supplier and material above, then save a rate.</p>}
+    </section>
+    <section className="tf-panel">
+      <div className="tf-panel-heading">
+        <div><h2 className="tf-panel-title">Other spellings</h2>
+          <p className="tf-panel-description">When a ticket uses one of these spellings, the review screen offers your catalog name. A person always applies it; saved tickets and locked prices never change on their own.</p></div>
+      </div>
+      {canManage && <form className="grid items-end gap-3 border-b border-[#e9edf0] p-4 sm:grid-cols-[140px_1fr_1fr_auto]"
+        onSubmit={(e) => { e.preventDefault(); void act(async () => {
+          await addAlias({ kind: aliasForm.kind, alias: aliasForm.alias, target_id: Number(aliasForm.target) });
+          setAliasForm({ ...aliasForm, alias: "", target: "" });
+        }); }}>
+        <label className="tf-field-label">Type
+          <select className="tf-field w-full" value={aliasForm.kind}
+            onChange={(e) => setAliasForm({ kind: e.target.value as "supplier" | "material", alias: aliasForm.alias, target: "" })}>
+            <option value="supplier">Supplier</option>
+            <option value="material">Material</option>
+          </select>
+        </label>
+        <label className="tf-field-label">Spelling on tickets
+          <input required maxLength={200} className="tf-field w-full" placeholder="Ex. Agg. North Yard" value={aliasForm.alias}
+            onChange={(e) => setAliasForm({ ...aliasForm, alias: e.target.value })} />
+        </label>
+        <label className="tf-field-label">Means
+          <select required className="tf-field w-full" value={aliasForm.target} onChange={(e) => setAliasForm({ ...aliasForm, target: e.target.value })}>
+            <option value="">Select from your list</option>
+            {(aliasForm.kind === "supplier" ? suppliers : materials).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </label>
+        <button type="submit" className="tf-secondary-button" disabled={saving || !aliasForm.alias.trim() || !aliasForm.target}>Save spelling</button>
+      </form>}
+      {aliases.some((a) => !a.removed_at) ? <div className="tf-table-wrap"><table className="tf-table" aria-label="Other spellings">
+        <thead><tr><th>Type</th><th>Spelling on tickets</th><th>Means</th><th>Added by</th><th className="text-right">Action</th></tr></thead>
+        <tbody>{aliases.filter((a) => !a.removed_at).map((a) => <tr key={a.id}>
+          <td className="capitalize">{a.kind}</td><td className="font-semibold">{a.alias}</td><td>{a.target}</td><td>{a.added_by ?? "—"}</td>
+          <td className="text-right">{canManage && <button disabled={saving} onClick={() => void act(() => removeAlias(a.id))}
+            className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}</td>
+        </tr>)}</tbody>
+      </table></div> : <p className="tf-empty">No other spellings saved.</p>}
     </section>
     <section className="tf-panel">
       <div className="tf-panel-heading">

@@ -6,8 +6,12 @@ import {
   Ticket,
   exportUrl,
   getBatch,
+  getManifest,
+  Manifest,
   getStatus,
+  listMaterials,
   listProjects,
+  listSuppliers,
   Project,
   getTicketHistory,
   getTickets,
@@ -19,6 +23,7 @@ import {
   uploadBatch,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
+import { ScanCheck } from "./ScanCheck";
 
 const STATUS_STYLE: Record<string, string> = {
   needs_review: "bg-amber-100 text-amber-800",
@@ -63,9 +68,20 @@ export default function Home() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
+  const [expectedTickets, setExpectedTickets] = useState("");
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [imageVersion, setImageVersion] = useState(0);
+  const [catalog, setCatalog] = useState<{ suppliers: string[]; materials: string[] }>({ suppliers: [], materials: [] });
 
   useEffect(() => {
     listProjects().then(setProjects).catch((e) => setError(e.message));
+  }, []);
+
+  // Typing help only: free text stays allowed, because the ticket may truly differ.
+  useEffect(() => {
+    Promise.all([listSuppliers(), listMaterials()])
+      .then(([s, m]) => setCatalog({ suppliers: s.map((x) => x.name), materials: m.map((x) => x.name) }))
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -76,6 +92,8 @@ export default function Home() {
     const [b, t] = await Promise.all([getBatch(id), getTickets(id)]);
     setBatch(b);
     setTickets(t);
+    // The scan check adds evidence; failing to load it must not stop review.
+    getManifest(id).then(setManifest).catch(() => setManifest(null));
     return { batch: b, tickets: t };
   }, []);
 
@@ -112,8 +130,10 @@ export default function Home() {
     setError(null);
     setBusy(true);
     try {
-      const b = await uploadBatch(files, layout, projectId ? Number(projectId) : undefined, intakeMode);
+      const b = await uploadBatch(files, layout, projectId ? Number(projectId) : undefined, intakeMode,
+        expectedTickets.trim() ? Number(expectedTickets) : undefined);
       setFiles([]);
+      setExpectedTickets("");
       setSelected(0);
       setFormDirty(false);
       setReviewFilter("pending");
@@ -236,7 +256,7 @@ export default function Home() {
 
       {configured === false && (
         <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          AI extraction is not configured. <strong>Manual entry works without an API key.</strong> Select “Manual entry” below, then run the local processing worker to prepare your scans. AI extraction requires ANTHROPIC_API_KEY in backend/.env.
+          AI extraction is not configured. <strong>Manual entry works without an API key.</strong> Select “Manual entry” below, then run the local processing worker to prepare your scans. AI extraction requires a provider key in backend/.env.
         </div>
       )}
       {error && (
@@ -326,6 +346,12 @@ export default function Home() {
                   <option value="single">One ticket per page</option>
                 </select>
               </label>
+              <label className="block text-sm font-medium text-slate-700">Paper tickets in this upload (optional)
+                <input inputMode="numeric" pattern="[0-9]*" value={expectedTickets}
+                  onChange={(e) => setExpectedTickets(e.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-slate-700 focus:outline-none" />
+                <span className="mt-1 block text-xs font-normal text-slate-500">Count the paper. TicketFlow checks it against the tickets it finds.</span>
+              </label>
             </div>
             <button type="button" disabled={!files.length || !projectId || busy} onClick={onUpload}
               className="tf-primary-button w-full disabled:opacity-40">
@@ -373,6 +399,18 @@ export default function Home() {
               {file.error && <span className="ml-1 text-red-700">({file.error})</span>}
             </li>)}
           </ul>
+          {manifest && manifest.batch_id === batch.id && (
+            <ScanCheck key={batch.id} manifest={manifest} onError={setError}
+              onChanged={(next) => {
+                setManifest(next);
+                setImageVersion((v) => v + 1);
+                refresh(batch.id).catch((e) => setError(e.message));
+              }}
+              onOpenTicket={(ticketId) => {
+                const index = tickets.findIndex((t) => t.id === ticketId);
+                if (index >= 0) selectTicket(index);
+              }} />
+          )}
         </section>
       )}
 
@@ -448,7 +486,7 @@ export default function Home() {
                   className="text-xs font-medium text-slate-700 underline-offset-2 hover:underline">Open full image</a>
               </div>
               <div className="flex min-h-[440px] max-h-[78vh] items-start justify-center overflow-auto bg-[#e6e9eb] p-5">
-                <img src={ticketImageUrl(current.id)} alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
+                <img src={ticketImageUrl(current.id) + (imageVersion ? "?v=" + imageVersion : "")} alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
                   className="h-auto max-h-none rounded-md border border-slate-200 bg-white shadow-sm"
                   style={{ width: zoom * 100 + "%", maxWidth: "none", transform: "rotate(" + rotation + "deg)" }} />
               </div>
@@ -467,6 +505,7 @@ export default function Home() {
               key={current.id + "-" + current.status + "-" + current.tonnage + "-" + current.ticket_number + "-" + current.unit_price + "-" + current.cost}
               ticket={current}
               manual={batch?.intake_mode === "manual"}
+              catalog={catalog}
               onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
               onAdvance={advance}
               onDirtyChange={setFormDirty}
@@ -528,11 +567,11 @@ export default function Home() {
   );
 }
 
-const FIELDS: { key: keyof Ticket; label: string; type?: string; flagWords: string[] }[] = [
-  { key: "ticket_number", label: "Ticket number", flagWords: ["Ticket number"] },
-  { key: "delivery_date", label: "Delivery date", type: "date", flagWords: ["Date"] },
+const FIELDS: { key: keyof Ticket; label: string; type?: string; flagWords: string[]; critical?: boolean }[] = [
+  { key: "ticket_number", label: "Ticket number", flagWords: ["Ticket number"], critical: true },
+  { key: "delivery_date", label: "Delivery date", type: "date", flagWords: ["Date"], critical: true },
   { key: "material_type", label: "Material", flagWords: ["Material"] },
-  { key: "tonnage", label: "Tonnage (tons)", type: "number", flagWords: ["Tonnage"] },
+  { key: "tonnage", label: "Tonnage (tons)", type: "number", flagWords: ["Tonnage"], critical: true },
   { key: "supplier", label: "Supplier", flagWords: ["Supplier"] },
   { key: "job_location", label: "Job location", flagWords: ["Job location"] },
 ];
@@ -540,6 +579,7 @@ const FIELDS: { key: keyof Ticket; label: string; type?: string; flagWords: stri
 function ReviewForm({
   ticket,
   manual,
+  catalog,
   onChange,
   onAdvance,
   onDirtyChange,
@@ -547,6 +587,7 @@ function ReviewForm({
 }: {
   ticket: Ticket;
   manual: boolean;
+  catalog: { suppliers: string[]; materials: string[] };
   onChange: (t: Ticket) => void;
   onAdvance: () => void;
   onDirtyChange: (dirty: boolean) => void;
@@ -644,9 +685,13 @@ function ReviewForm({
       )}
       {FIELDS.map((f) => (
         <div key={f.key}>
-          <label htmlFor={"review-" + f.key} className="mb-1 block text-xs font-medium text-slate-600">{f.label}</label>
+          <label htmlFor={"review-" + f.key} className={"mb-1 block text-xs text-slate-600 " + (f.critical ? "font-bold" : "font-medium")}>
+            {f.label}{f.critical && <span className="ml-1 font-normal text-slate-500">· check against the scan</span>}
+          </label>
           <input
             id={"review-" + f.key}
+            list={f.key === "supplier" ? "catalog-suppliers" : f.key === "material_type" ? "catalog-materials" : undefined}
+            aria-describedby={ticket.as_read?.[f.key] !== undefined && ticket.as_read[f.key] !== values[f.key] ? "as-read-" + f.key : undefined}
             type={f.type === "number" ? "text" : f.type ?? "text"}
             inputMode={f.type === "number" ? "decimal" : undefined}
             value={values[f.key]}
@@ -656,8 +701,19 @@ function ReviewForm({
               flaggedFor(f.flagWords) ? "border-amber-400 bg-amber-50" : "border-slate-300"
             }`}
           />
+          {ticket.as_read?.[f.key] !== undefined && ticket.as_read[f.key] !== values[f.key] && (
+            <p id={"as-read-" + f.key} className="mt-1 text-[11px] text-slate-500">Read from the ticket: {ticket.as_read[f.key]}</p>
+          )}
+          {canEdit && ticket.suggestions?.[f.key] && ticket.suggestions[f.key] !== values[f.key] && (
+            <button type="button" className="tf-link mt-1 text-[11px]"
+              onClick={() => setValues({ ...values, [f.key]: ticket.suggestions?.[f.key] ?? values[f.key] })}>
+              Use your catalog name: {ticket.suggestions[f.key]}
+            </button>
+          )}
         </div>
       ))}
+      <datalist id="catalog-suppliers">{catalog.suppliers.map((name) => <option key={name} value={name} />)}</datalist>
+      <datalist id="catalog-materials">{catalog.materials.map((name) => <option key={name} value={name} />)}</datalist>
       <div className="rounded border border-[#e2e7eb] bg-[#f7f8f9] p-3 text-sm">
         {ticket.status === "verified" && ticket.price_snapshot_state === "priced" && (
           <p className="mb-2 text-emerald-800">Unit price locked at verification. Later changes to supplier rates will not change this ticket.</p>

@@ -6,7 +6,9 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import false as sa_false
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -103,6 +105,33 @@ class SupplierRate(Base):
     material: Mapped[Material] = relationship()
 
 
+class NameAlias(Base):
+    """"Means the same as": another spelling of a catalog supplier or material.
+
+    Only ever produces a suggestion a person may apply on review; it never
+    changes a stored ticket or a rate lookup. Removal stamps the row, so it is
+    also its own history. Names are kept as text so history survives a catalog
+    entry being deleted; an alias whose target has left the catalog suggests
+    nothing.
+    """
+    __tablename__ = "name_aliases"
+    __table_args__ = (
+        Index("uq_name_alias_active", "organization_id", "kind", "alias_key", unique=True,
+              sqlite_where=text("removed_at IS NULL"), postgresql_where=text("removed_at IS NULL")),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)  # supplier | material
+    alias_text: Mapped[str] = mapped_column(String(200), nullable=False)
+    alias_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    removed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PricingEvent(Base):
     """Immutable history of supplier, material and unit-rate changes.
 
@@ -148,6 +177,8 @@ class Batch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     # NULL for uploads made before individual accounts existed.
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # How many paper tickets the person says are in this batch. NULL = not stated.
+    expected_ticket_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     files: Mapped[list["UploadedFile"]] = relationship(back_populates="batch", cascade="all, delete-orphan")
 
 
@@ -225,6 +256,44 @@ class Ticket(Base):
     file: Mapped[UploadedFile] = relationship(back_populates="tickets")
 
 
+class ScanSlot(Base):
+    """One physical position on one scanned page, ticket or not.
+
+    Joined to Ticket by (file_id, page, position), so ticket data is never
+    duplicated here. crop_sha256 identifies the unrotated crop.
+    """
+    __tablename__ = "scan_slots"
+    __table_args__ = (UniqueConstraint("file_id", "page", "position", name="uq_scan_slot_position"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True, nullable=False)
+    file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"), index=True, nullable=False)
+    page: Mapped[int] = mapped_column(Integer, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    crop_box: Mapped[list] = mapped_column(JSON, nullable=False)
+    crop_path: Mapped[str] = mapped_column(String(500), nullable=False)  # internal; never returned
+    crop_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    ink_fraction: Mapped[float] = mapped_column(Float, nullable=False)  # image measure, never money
+    detection: Mapped[str] = mapped_column(String(20), nullable=False)  # content | faint | empty
+    # A person's decision: real_ticket | confirmed_blank | NULL (undecided).
+    decision: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    decided_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rotation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0, 90, 180, 270 clockwise
+
+
+class ScanEvent(Base):
+    """Immutable history of people's decisions about scans."""
+    __tablename__ = "scan_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True, nullable=False)
+    slot_id: Mapped[int | None] = mapped_column(ForeignKey("scan_slots.id"), index=True, nullable=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -262,6 +331,109 @@ class InvoiceComparison(Base):
     billed_subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+class InvoiceTicketRef(Base):
+    """One delivery ticket number listed on a supplier invoice line.
+
+    ticket_number keeps exactly what was entered (leading zeros included);
+    ticket_key is the match key (case and surrounding spaces ignored only).
+    A line with no rows is a totals-only comparison. The list is replaced as
+    a whole on correction, and every change is recorded in
+    invoice_comparison_events.
+    """
+    __tablename__ = "invoice_ticket_refs"
+    __table_args__ = (UniqueConstraint("comparison_id", "position", name="uq_invoice_ticket_ref_position"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    comparison_id: Mapped[int] = mapped_column(
+        ForeignKey("invoice_comparisons.id"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    ticket_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    ticket_key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    billed_tons: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+
+
+class InvoiceTicketLink(Base):
+    """A person's confirmation that a verified ticket is billed in full by one
+    invoice line. Released links stay as history. The partial unique index means
+    a ticket can have only one active link, enforced by the database. Partial
+    allocation is deliberately unsupported."""
+    __tablename__ = "invoice_ticket_links"
+    __table_args__ = (
+        Index("uq_invoice_ticket_link_active", "ticket_id", unique=True,
+              sqlite_where=text("released_at IS NULL"), postgresql_where=text("released_at IS NULL")),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    comparison_id: Mapped[int] = mapped_column(ForeignKey("invoice_comparisons.id"), index=True, nullable=False)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False)
+    listed_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    # What the person saw: a later change to the ticket invalidates the link.
+    verified_tons: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    ticket_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    released_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    release_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
+class InvoiceDocument(Base):
+    """An uploaded supplier invoice PDF. Separate from comparisons: nothing here
+    counts until a manager confirms a draft line."""
+    __tablename__ = "invoice_documents"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(500), nullable=False)  # internal; never returned
+    sha256: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    page_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    # needs_review | unsupported | failed | voided
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    extractor: Mapped[str] = mapped_column(String(30), nullable=False)  # manual | text_layer
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unread_rows: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class InvoiceDraftLine(Base):
+    """Editable draft of one invoice line. NULL stays NULL until a person fills
+    it in. A confirmed line is locked and points at the comparison it created."""
+    __tablename__ = "invoice_draft_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("invoice_documents.id"), index=True, nullable=False)
+    page: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # the row as read; never edited
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="pending_review")  # pending_review|confirmed|rejected
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    invoice_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    supplier_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    material_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    billed_quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    billed_unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    billed_subtotal: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    date_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ticket_list: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    comparison_id: Mapped[int | None] = mapped_column(ForeignKey("invoice_comparisons.id"), index=True, nullable=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class InvoiceDocumentEvent(Base):
+    """Immutable history of what people did to an invoice document."""
+    __tablename__ = "invoice_document_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("invoice_documents.id"), index=True, nullable=False)
+    line_id: Mapped[int | None] = mapped_column(ForeignKey("invoice_draft_lines.id"), nullable=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
 class InvoiceComparisonEvent(Base):

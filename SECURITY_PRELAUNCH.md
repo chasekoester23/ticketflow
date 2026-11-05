@@ -1,6 +1,6 @@
 # TicketFlow pre-launch security status
 
-Last updated: 2026-11-03 (pilot hardening release, migration `20261103_08`).
+Last updated: 2026-11-05 (ticket evidence, migration `20261105_13`).
 
 TicketFlow handles confidential construction documents and money figures.
 This file records **what is actually implemented and tested** and **what is
@@ -24,11 +24,13 @@ documents on shared hosting yet.
 | CSRF | Custom `X-TicketFlow-Request` header required on mutating `/api` requests; `Origin` checked against `CORS_ORIGINS` | `main.py` |
 | Host header | Requests with an unexpected `Host` are rejected. Local defaults: `localhost`, `127.0.0.1`, `testserver`. Deployments must list exact API hostnames in JSON `TRUSTED_HOSTS`; wildcards are refused at startup | `config.py`, `main.py` |
 | Company isolation | Company ID always from the signed-in user, never from the request; cross-company IDs return 404; two-company regression tests | all routers; `tests/test_organization_isolation.py` |
-| Authorization | Named permissions per role (owner / manager / clerk / viewer), enforced server-side; a test fails if any mutating API route lacks a permission | `app/permissions.py`; `tests/test_team_accounts.py` |
+| Authorization | Named permissions per role (owner / manager / clerk / viewer), enforced server-side; tests fail if any mutating API route lacks a permission or any API route answers an anonymous request. The route list is built from our own routers and checked against the OpenAPI schema | `app/permissions.py`; `tests/test_team_accounts.py` |
 | Accountability | Ticket edits and approvals, uploads, invoice-line changes, team changes **and supplier/material/rate changes** record the acting person; older history is explicitly unattributed, never guessed. Excel exports include who approved each ticket and when | `models.py`, `routers/*.py`, `services/export.py` |
 | Onboarding | Owner-issued temporary passwords (about 120 bits, shown once); the API is blocked until the person sets their own password | `routers/team.py` |
 | Lockout safety | A company always keeps one active owner; owners cannot deactivate or demote themselves; terminal-only recovery script, audited | `services/accounts.py`, `scripts/reset_password.py` |
 | Uploads | Extension allow-list, magic-byte check; limits on file count, per-file bytes, total batch bytes and file-name length; whole selection rejected if any file is invalid; random internal file names | `routers/api.py`, `config.py` |
+| Scan images | Slot and page images require sign-in and are company-scoped; cross-company IDs return 404; internal paths are never returned | `routers/scans.py` |
+| Invoice PDFs | PDF only, magic-byte check, size and page limits, encrypted files refused; stored 0600 with random names; originals served only through company-scoped routes. Reading stays on this machine | `routers/invoice_documents.py` |
 | Scan processing | PDF page count, per-page rendered pixels, total rendered pixels and image dimensions are bounded **before** heavy decoding; exceeding a limit is a visible failure, never an empty "success" | `services/splitter.py`, `services/pipeline.py` |
 | File privacy | New uploads and ticket crops are written with mode 0600 in 0700 per-batch directories (not retroactive for older files) | `routers/api.py`, `services/pipeline.py` |
 | API headers | `Cache-Control: private, no-store` on `/api`; `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` | `main.py` |
@@ -80,8 +82,18 @@ documents on shared hosting yet.
 
 - Quantities count only after explicit human approval; nothing is approved
   automatically.
+- Every scanned slot is kept on record. Unclassified faint slots, failed files
+  and paper-count mismatches keep a project's invoice comparisons incomplete.
 - Unresolved quantities, missing rates and unclassified tickets are shown,
   never hidden or replaced with zero.
+- Invoice ticket numbers are matched only exactly and only to one verified,
+  complete delivery in the invoice line's scope; ambiguous numbers are never
+  matched. A totals-only comparison is always labelled as not checking
+  individual tickets.
+- A drafted invoice line counts for nothing until a manager confirms it. Units
+  are never converted, and credits are blocked rather than entered.
+- A delivery can be linked to at most one invoice line, enforced by a database
+  index. Partial allocation is not supported.
 - Arithmetic agreement between an invoice and tickets is not proof of invoice
   authenticity and is never an approval to pay.
 

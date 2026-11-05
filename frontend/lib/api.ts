@@ -15,7 +15,7 @@ export type Role = "owner" | "manager" | "clerk" | "viewer";
 export type Permission =
   | "records.read" | "tickets.upload" | "tickets.edit" | "tickets.flag" | "tickets.verify"
   | "tickets.skip" | "tickets.price_override" | "projects.manage" | "pricing.manage"
-  | "invoices.manage" | "team.manage";
+  | "invoices.manage" | "team.manage" | "scans.resolve" | "scans.confirm_blank";
 export type Account = {
   id: number;
   username: string;
@@ -73,6 +73,8 @@ export type Ticket = {
   pricing_notes: string[];
   verified_by: string | null; // null when unverified or approved before individual accounts
   verified_at: string | null;
+  suggestions?: Record<string, string>; // catalog name for a known spelling; a person applies it
+  as_read?: Record<string, string>; // what the reader returned, separate from current values
 };
 export type HistoryEntry = { field: string; old: string | null; new: string | null; at: string; actor: string | null };
 
@@ -106,13 +108,59 @@ async function check(res: Response) {
   return res;
 }
 
-export async function uploadBatch(files: File[], layout: string, projectId?: number, intakeMode: "extract" | "manual" = "extract"): Promise<Batch> {
+export async function uploadBatch(files: File[], layout: string, projectId?: number, intakeMode: "extract" | "manual" = "extract", expectedTickets?: number): Promise<Batch> {
   const form = new FormData();
+  if (expectedTickets !== undefined) form.append("expected_ticket_count", String(expectedTickets));
   form.append("layout", layout);
   form.append("intake_mode", intakeMode);
   if (projectId !== undefined) form.append("project_id", String(projectId));
   files.forEach((f) => form.append("files", f));
   return (await check(await apiFetch(`${API}/api/batches`, { method: "POST", body: form }))).json();
+}
+
+// Scan check: every physical slot on every page, ticket or not.
+export type ManifestSlot = {
+  id: number; position: number;
+  state: "ticket" | "suspected_blank" | "empty" | "confirmed_blank";
+  detection: "content" | "faint" | "empty"; decision: string | null; rotation: number;
+  crop_box: number[]; crop_sha256: string;
+  ticket_id: number | null; ticket_number: string | null; ticket_status: string | null;
+};
+export type Manifest = {
+  batch_id: number; layout: string;
+  status: "processing" | "needs_attention" | "count_not_confirmed" | "count_matches";
+  expected_ticket_count: number | null;
+  counts: {
+    files: number; failed_files: number; legacy_files: number; pages: number; slots: number;
+    records: number; suspected_blank: number; empty: number; confirmed_blank: number;
+    needs_review: number; flagged: number; verified: number; failed_tickets: number; skipped: number;
+  };
+  blockers: string[];
+  files: {
+    id: number; original_name: string; sha256: string; status: string; error: string | null;
+    legacy: boolean; pages: { page: number; slots: ManifestSlot[] }[];
+  }[];
+};
+export const slotImageUrl = (id: number) => `${API}/api/scan-slots/${id}/image`;
+export const pageImageUrl = (fileId: number, page: number) => `${API}/api/files/${fileId}/pages/${page}/image`;
+export async function getManifest(batchId: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/batches/${batchId}/manifest`))).json();
+}
+export async function setExpectedCount(batchId: number, expected: number | null): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/batches/${batchId}/expected-count`,
+    json("PUT", { expected_ticket_count: expected })))).json();
+}
+export async function buildManifest(batchId: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/batches/${batchId}/manifest/rebuild`, { method: "POST" }))).json();
+}
+export async function markSlotTicket(slotId: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/scan-slots/${slotId}/mark-ticket`, { method: "POST" }))).json();
+}
+export async function confirmSlotBlank(slotId: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/scan-slots/${slotId}/confirm-blank`, { method: "POST" }))).json();
+}
+export async function rotateSlot(slotId: number, rotation: number): Promise<Manifest> {
+  return (await check(await apiFetch(`${API}/api/scan-slots/${slotId}/rotate`, json("POST", { rotation })))).json();
 }
 
 export async function getBatch(id: number): Promise<Batch> {
@@ -180,6 +228,19 @@ export type PricingEventRow = {
   old: string | null; new: string | null; // decimal strings, never parsed for money math
   at: string; actor: string | null;
 };
+export type NameAliasRow = {
+  id: number; kind: "supplier" | "material"; alias: string; target: string;
+  added_by: string | null; added_at: string; removed_by: string | null; removed_at: string | null;
+};
+export async function listAliases(): Promise<NameAliasRow[]> {
+  return (await check(await apiFetch(`${API}/api/name-aliases`))).json();
+}
+export async function addAlias(body: { kind: "supplier" | "material"; alias: string; target_id: number }) {
+  await check(await apiFetch(`${API}/api/name-aliases`, json("POST", body)));
+}
+export async function removeAlias(id: number) {
+  await check(await apiFetch(`${API}/api/name-aliases/${id}`, { method: "DELETE" }));
+}
 export async function getPricingHistory(): Promise<PricingEventRow[]> {
   return (await check(await apiFetch(`${API}/api/pricing/history`))).json();
 }
@@ -232,6 +293,35 @@ export type InvoiceLineInput = {
   billed_tons: string;
   billed_unit_price: string;
   billed_subtotal: string;
+  // Optional: the invoice's ticket numbers, one per row, each optionally
+  // followed by billed tons (pasted from Excel). Empty = totals-only.
+  ticket_list: string;
+};
+export type CheckedTicket = {
+  ticket_id: number; batch_id: number; ticket_number: string | null;
+  delivery_date: string | null; supplier: string | null; material: string | null;
+  tons: string | null; review_status: string; project: string | null;
+};
+export type TicketCheckResult =
+  | "matched" | "tons_differ" | "not_found" | "outside_scope"
+  | "ambiguous" | "needs_review" | "not_on_invoice";
+export type TicketCheckRow = {
+  result: TicketCheckResult;
+  line: number | null; // null = a delivery the invoice does not list
+  invoice_ticket_number: string | null;
+  billed_tons: string | null;
+  ticket: CheckedTicket | null;
+  candidates: CheckedTicket[];
+  verified_tons: string | null;
+  tons_difference: string | null;
+  flags: ("duplicate_on_invoice" | "on_another_invoice")[];
+  notes: string[];
+  evidence?: "unmatched" | "candidate" | "confirmed" | "conflicting" | "invalidated";
+  link_id?: number | null;
+};
+export type EvidenceSummary = {
+  listed_tickets: number; confirmed: number; candidates: number; conflicting: number;
+  invalidated: number; unmatched: number; confirmed_tons: string;
 };
 export type InvoiceTicketMatch = {
   ticket_id: number; batch_id: number; ticket_number: string | null;
@@ -252,10 +342,61 @@ export type InvoiceLineComparison = InvoiceLineInput & {
   unpriced_count: number;
   rate_mismatch_count: number;
   status: "matches" | "discrepancy" | "incomplete" | "no_verified_tickets";
+  comparison_mode: "itemized" | "totals_only";
   warnings: string[];
   tickets: InvoiceTicketMatch[];
+  ticket_check: TicketCheckRow[];
+  ticket_check_counts: Record<string, number>;
+  itemized_billed_tons: string | null;
+  evidence?: EvidenceSummary | null;
+  source_document_id?: number | null;
+  source_page?: number | null;
   created_at: string;
 };
+// Uploaded invoice PDFs and their drafts. A draft counts for nothing until confirmed.
+export type InvoiceDraftLine = {
+  id: number; page: number; source_text: string | null; state: "pending_review" | "confirmed" | "rejected";
+  project_id: number | null; invoice_number: string | null; supplier_name: string | null; material_name: string | null;
+  billed_quantity: string | null; unit: string | null; billed_unit_price: string | null; billed_subtotal: string | null;
+  date_from: string | null; date_to: string | null; ticket_list: string;
+  comparison_id: number | null; blockers: string[]; warnings: string[];
+};
+export type InvoiceDocument = {
+  id: number; project_id: number | null; original_name: string; sha256: string; page_count: number;
+  status: "needs_review" | "unsupported" | "failed" | "voided"; extractor: string; message: string | null;
+  unread_rows: string[]; created_at: string; lines: InvoiceDraftLine[];
+};
+const DOCS = `${API}/api/invoice-documents`;
+export const invoicePageUrl = (id: number, page: number) => `${DOCS}/${id}/pages/${page}/image`;
+export const invoiceOriginalUrl = (id: number) => `${DOCS}/${id}/original`;
+export async function listInvoiceDocuments(): Promise<InvoiceDocument[]> {
+  return (await check(await apiFetch(DOCS))).json();
+}
+export async function getInvoiceDocument(id: number): Promise<InvoiceDocument> {
+  return (await check(await apiFetch(`${DOCS}/${id}`))).json();
+}
+export async function uploadInvoiceDocument(file: File, projectId?: number): Promise<InvoiceDocument> {
+  const form = new FormData();
+  form.append("file", file);
+  if (projectId !== undefined) form.append("project_id", String(projectId));
+  return (await check(await apiFetch(DOCS, { method: "POST", body: form }))).json();
+}
+export async function addDraftLine(id: number, page: number) {
+  await check(await apiFetch(`${DOCS}/${id}/lines?page=${page}`, { method: "POST" }));
+}
+export async function saveDraftLine(id: number, lineId: number, body: Record<string, string | number | null>) {
+  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}`, json("PATCH", body)));
+}
+export async function confirmDraftLine(id: number, lineId: number) {
+  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/confirm`, { method: "POST" }));
+}
+export async function rejectDraftLine(id: number, lineId: number) {
+  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/reject`, { method: "POST" }));
+}
+export async function voidInvoiceDocument(id: number) {
+  await check(await apiFetch(`${DOCS}/${id}/void`, { method: "POST" }));
+}
+
 export async function getInvoiceComparisons(): Promise<InvoiceLineComparison[]> {
   return (await check(await apiFetch(API + "/api/invoice-comparisons"))).json();
 }
@@ -267,6 +408,14 @@ export async function saveInvoiceComparison(
     API + "/api/invoice-comparisons" + suffix,
     json(id !== undefined ? "PUT" : "POST", body),
   ))).json();
+}
+export async function confirmTicketLinks(id: number, ticketIds: number[]): Promise<InvoiceLineComparison> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/ticket-links",
+    json("POST", { ticket_ids: ticketIds })))).json();
+}
+export async function releaseTicketLink(id: number, linkId: number): Promise<InvoiceLineComparison> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/ticket-links/" + linkId + "/release",
+    { method: "POST" }))).json();
 }
 export async function getInvoiceHistory(id: number): Promise<HistoryEntry[]> {
   return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/audit"))).json();

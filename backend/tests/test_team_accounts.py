@@ -3,12 +3,12 @@
 Every request here uses REAL session cookies (the conftest owner override is
 removed), real FastAPI routes, synthetic tickets and no paid AI provider.
 """
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from alembic import command
-from fastapi.routing import APIRoute
 from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.orm import sessionmaker
 
@@ -17,6 +17,7 @@ from app.auth import COOKIE_NAME, current_user, password_hash
 from app.main import app
 from app.models import AccountEvent, AuditEvent, LoginSession, Organization, Ticket, User
 from app.permissions import PERMISSIONS, ROLES, has_permission, permissions_for
+from app.route_inventory import MUTATING, SELF_SERVICE, all_routes, openapi_paths
 from app.routers import api as api_module
 from app.services import accounts
 from scripts import reset_password as reset_script
@@ -93,25 +94,31 @@ def db_session():
 
 def test_every_mutating_api_route_declares_a_permission():
     """A new endpoint that changes data cannot ship without an explicit permission."""
-    exempt = {"/api/auth/login", "/api/auth/logout", "/api/auth/password"}
-
-    def permissions_in(dependant):
-        found = []
-        for dep in dependant.dependencies:
-            if getattr(dep.call, "permission", None):
-                found.append(dep.call.permission)
-            found.extend(permissions_in(dep))
-        return found
-
-    unguarded = []
-    for route in app.routes:
-        if not isinstance(route, APIRoute) or not route.path.startswith("/api/"):
-            continue
-        if not route.methods & {"POST", "PUT", "PATCH", "DELETE"} or route.path in exempt:
-            continue
-        if not permissions_in(route.dependant):
-            unguarded.append(f"{sorted(route.methods)} {route.path}")
+    routes = all_routes()
+    # This test once passed vacuously when a FastAPI upgrade changed how
+    # app.routes is structured. Prove the walk really sees the application.
+    assert {(r.method, r.path) for r in routes} == openapi_paths()
+    assert len(routes) > 30
+    unguarded = [f"{r.method} {r.path}" for r in routes
+                 if r.method in MUTATING and r.path not in SELF_SERVICE and not r.permissions]
     assert unguarded == []
+    guarded = {r.path: r.permissions for r in routes if r.method == "POST"}
+    assert guarded["/api/tickets/{ticket_id}/verify"] == ("tickets.verify",)
+
+
+def test_every_api_route_rejects_anonymous_requests(client):
+    """Reads are protected too; only the sign-in endpoints are public."""
+    public = {"/api/auth/login", "/api/auth/logout"}
+    app.dependency_overrides.pop(current_user, None)
+    leaked = []
+    for route in all_routes():
+        if route.path in public:
+            continue
+        url = re.sub(r"{[^}]+}", "1", route.path)
+        response = client.request(route.method, url, json={})
+        if response.status_code != 401:
+            leaked.append(f"{route.method} {route.path} -> {response.status_code}")
+    assert leaked == []
 
 
 def test_role_table_and_unknown_permissions_fail_closed():

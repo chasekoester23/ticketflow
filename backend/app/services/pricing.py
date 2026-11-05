@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Material, Supplier, SupplierRate, Ticket
+from ..models import Material, NameAlias, Supplier, SupplierRate, Ticket
 
 CENTS = Decimal("0.01")
 
@@ -53,6 +53,28 @@ def cost_for(t: Ticket, price: Decimal | None) -> Decimal | None:
     if t.status != "verified" or price is None or t.tonnage is None or not t.tonnage_confirmed:
         return None
     return (t.tonnage * price).quantize(CENTS)
+
+
+def alias_suggestions(
+    db: Session, organization_id: int, catalog: tuple[set[str], set[str]] | None = None,
+) -> dict[tuple[str, str], str]:
+    """{(kind, alias key): catalog name} for active aliases whose target still
+    exists. One query per list, however many tickets are displayed."""
+    catalog = catalog if catalog is not None else catalog_names(db, organization_id)
+    current = {"supplier": catalog[0], "material": catalog[1]}
+    rows = db.execute(select(NameAlias.kind, NameAlias.alias_key, NameAlias.target_key, NameAlias.target_name).where(
+        NameAlias.organization_id == organization_id, NameAlias.removed_at.is_(None)))
+    return {(kind, key): name for kind, key, target, name in rows if target in current.get(kind, ())}
+
+
+def suggestions_for(t: Ticket, aliases: dict[tuple[str, str], str]) -> dict[str, str]:
+    """Exact alias matches only: never fuzzy, and only ever a suggestion."""
+    found = {}
+    for field, kind, value in (("supplier", "supplier", t.supplier), ("material_type", "material", t.material_type)):
+        name = aliases.get((kind, norm(value))) if value else None
+        if name:
+            found[field] = name
+    return found
 
 
 def catalog_names(db: Session, organization_id: int) -> tuple[set[str], set[str]]:

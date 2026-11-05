@@ -7,6 +7,8 @@ const PERMISSIONS = {
   "tickets.verify": ["owner", "manager"],
   "tickets.skip": ["owner", "manager"],
   "tickets.price_override": ["owner", "manager"],
+  "scans.resolve": ["owner", "manager", "clerk"],
+  "scans.confirm_blank": ["owner", "manager"],
   "projects.manage": ["owner", "manager"],
   "pricing.manage": ["owner", "manager"],
   "invoices.manage": ["owner", "manager"],

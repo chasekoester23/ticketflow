@@ -124,6 +124,61 @@ company's owner). Existing audit history, verified tickets, batches and
 invoice comparisons keep an empty "who" field. If the backend says *"Team
 accounts migration required"*, step 4 has not run against that database yet.
 
+## Scan check: account for every paper ticket
+
+A ticket that never becomes a record is worse than a misread one, because totals look complete without it. After processing, the batch panel on **Ticket intake** shows a **Scan check**: each original page beside all of its slots, with counts of pages, slots, tickets on record, faint, empty and confirmed-blank slots.
+
+- **Nothing is discarded.** Every slot is kept with its image, including blank-looking ones.
+- **Faint slots block a clean result** until a person chooses **This is a ticket** or **Confirm blank**. They also keep invoice comparisons for that project at "Incomplete", as do failed files and count mismatches.
+- **Enter the paper count** at upload or later. The result reads "Matches your paper count" only when you entered a count and it matches. Without one it says the count isn't confirmed.
+- **Marking a slot** creates an unapproved, empty record. In AI batches it makes no AI call: it stays unread until someone uses Retry, or types it in. Neighbouring tickets aren't touched.
+- **Rotate 90°** writes a derived image and keeps the original. Approved tickets refuse it until the approval is withdrawn, and the check for identical scans still applies.
+- **Who can do what:** clerks can mark tickets, rotate and enter counts. Only managers and owners can confirm blank, since that rules a slot out of the count. Decisions are recorded with the person's name.
+- **Older batches** show **Build scan check**, which reads the stored scan and adds slot records without changing any ticket.
+
+The detection thresholds are cautious defaults, not calibrated on real scanner output. Expect to confirm some blank areas by hand.
+
+Upgrading adds migration `20261105_10` (two new tables and one nullable column). The backend refuses to start until it has run: back up `backend/ticketflow.db`, then run `python -m alembic upgrade head`.
+
+## Other spellings of suppliers and materials
+
+Tickets from one quarry can spell its name several ways. Under **Suppliers & rates → Other spellings**, a manager can say that a spelling means a catalog entry. When a ticket uses that spelling exactly (ignoring case and punctuation), the review screen offers **Use your catalog name**.
+
+- **An alias only suggests.** A person applies it and saves, as an ordinary audited edit. It never changes a stored ticket, a rate lookup, or a locked price, and applying it to an approved ticket withdraws the approval as any edit does.
+- **Matching is exact, never fuzzy.** One spelling means one thing per company, and aliases never cross companies.
+- **What the reader returned stays visible.** The review form shows "Read from the ticket" beside any value that differs.
+
+Upgrading adds migration `20261105_11` (new `name_aliases` table only).
+
+## Invoice PDFs: drafts beside the original
+
+**Invoice comparison → Invoice PDFs** lets a manager upload a supplier invoice and correct draft lines beside the original page. Nothing counts until someone clicks **Confirm line**, which creates a normal comparison through the same code as typed entry, with the same checks and the same math. Typed entry still works as before.
+
+- **What reads the PDF:** the file's own text layer, on this machine. No AI and no network. There is no AI invoice reader yet: writing one needs an API budget and permission to send invoices to a provider. `INVOICE_EXTRACTOR=manual` turns drafting off entirely.
+- **Scanned PDFs** have no text layer, so they're flagged and entered by hand beside the original.
+- **The reader is deliberately strict.** It only drafts rows with a material, quantity, a recognized unit, rate and amount, plus clearly labelled invoice number, supplier and delivery period. It has been tested on our fictional layout only: expect real invoices to need hand entry or layout-specific work.
+- **Nothing is folded in silently.** Freight, tax, totals and other money rows are listed as "not used", and never join a material subtotal.
+- **Units are never converted.** A line billed in cubic yards can't be confirmed, because comparison works in tons only.
+- **Credits are blocked.** Credit memos and negative amounts are flagged, and nothing is drafted.
+- **Duplicates:** the same file can't be uploaded twice, and an invoice number with the same supplier and material can't be confirmed twice. The overlapping-date rule still applies.
+- **Wrong file?** Void it. The file and its history are kept, but voiding is refused once a line has created a comparison.
+- **History:** every edit, confirmation and rejection is recorded with the person's name. A comparison made this way links back to its original page.
+
+Upgrading adds migration `20261105_12` (three new tables only).
+
+## Confirming ticket evidence on an invoice
+
+The ticket-by-ticket check shows what looks true right now. **Confirm clean matches** records that a manager agrees a delivery is billed in full by that invoice line.
+
+- **One ticket, one active link.** The database enforces this, including under simultaneous requests.
+- **Only clean matches qualify:** one verified delivery, in scope, tons equal or not entered, no flags. A link is all or nothing for the tickets you submit.
+- **Partial billing isn't supported.** A ticket billed at different tons than verified can't be linked. See [the specification](docs/engineering/invoice-ticket-evidence-spec.md) for why.
+- **Links can stop holding.** If the delivery changes afterward (approval withdrawn, tons, number, supplier, material or date), the link reads "No longer holds" and the comparison goes back to Incomplete until someone re-confirms or releases it. Re-approving doesn't restore it automatically.
+- **Links never change** a ticket, an approval or a locked price, and don't approve anything. The overlapping-date rule still applies.
+- **The summary is separate from the figures,** for example "1 of 2 invoice tickets confirmed by a person". Links and releases are in the correction history and the CSV report.
+
+Upgrading adds migration `20261105_13` (one new table).
+
 ## Invoice comparison (Batch #16)
 
 The **Invoice comparison** page lets a project engineer manually enter one
@@ -149,7 +204,7 @@ supplier/material and date range.
   rejected** because allocation across partial or overlapping invoices is
   not implemented. Check billing periods before entry.
 - First version is **manual invoice entry only**. It does not extract invoice
-  PDFs, allocate partial loads, match by ticket number, reconcile tax/freight,
+  PDFs, allocate partial loads, reconcile tax/freight,
   post entries to accounting, or use Gemini. No external cost or credentials.
 - From an invoice comparison's details, **Download CSV report** exports a
   point-in-time summary of amounts, open review warnings, and the supporting
@@ -159,6 +214,46 @@ supplier/material and date range.
   neutralize spreadsheet-formula characters from invoice/ticket text.
   **CSV exports are investigation aids, not approvals for payment**; always
   re-open a fresh report after changing ticket approvals.
+
+### Checking individual tickets on an invoice
+
+Equal totals do not prove the right tickets were billed. When the invoice
+lists its delivery tickets, paste them into **Ticket numbers listed on this
+invoice**: copy two columns from Excel, ticket number then billed tons (tons
+optional). A header row and blank rows are fine. An unreadable row rejects
+the whole list with its line number, so nothing is dropped silently.
+
+Each invoice ticket is checked against the company's delivery records:
+
+| Result | Meaning |
+|---|---|
+| Matched | Exactly one verified, complete delivery with this number, in this project, supplier, material and date range; billed tons equal verified tons (if entered) |
+| Tons differ | Matched, but billed tons are not the verified tons |
+| Not in TicketFlow | No delivery has this number. A number differing only in leading zeros is shown as a hint, never counted |
+| Outside this invoice line | The delivery exists but is recorded for another project, supplier, material or date |
+| Several records — not matched | More than one delivery could have this number; resolve the duplicate first |
+| Not verified or incomplete | The delivery still needs review, or lacks a supplier, material, date or tons |
+| Delivered, not on invoice | A delivery in this line's scope that the invoice does not list |
+
+Rows are also flagged when a number is **repeated on this invoice** or is
+**also on another saved invoice** from the same supplier (possible double
+billing). If every ticket has billed tons, their sum is checked against the
+invoice line's billed tons.
+
+Matching rules are deliberately conservative: numbers compare exactly,
+ignoring only letter case and surrounding spaces; **leading zeros count**.
+Nothing is matched by guesswork, and no ticket value is changed. Every
+matched or missing delivery links to its scan and to its review history.
+
+Lines without a ticket list keep the original totals comparison and are
+labelled **"Totals-only comparison — individual tickets not checked."**
+Their best possible result reads "Totals match", never "Tickets match".
+Changing a line's ticket list is recorded in its correction history with the
+full previous list. The CSV report states the comparison type and, for
+itemized lines, includes the ticket-by-ticket check.
+
+Upgrading adds migration `20261104_09` (new `invoice_ticket_refs` table only).
+Existing invoice comparisons become totals-only comparisons, with unchanged figures.
 
 **For an existing local Mac installation:** after the PR is reviewed and
 merged, stop the backend/worker, pull \`main\` in the **inner** TicketFlow clone,
