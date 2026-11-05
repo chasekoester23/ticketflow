@@ -16,6 +16,7 @@ import {
   getTicketHistory,
   getTickets,
   patchTicket,
+  recordReviewTiming,
   type HistoryEntry,
   retryBatch,
   ticketAction,
@@ -71,6 +72,8 @@ export default function Home() {
   const [expectedTickets, setExpectedTickets] = useState("");
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [imageVersion, setImageVersion] = useState(0);
+  const [timingEnabled, setTimingEnabled] = useState(false);
+  const openedAt = useRef<Record<number, number>>({});
   const [catalog, setCatalog] = useState<{ suppliers: string[]; materials: string[] }>({ suppliers: [], materials: [] });
 
   useEffect(() => {
@@ -85,7 +88,10 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    getStatus().then((s) => setConfigured(s.extraction_configured)).catch(() => setConfigured(null));
+    getStatus().then((s) => {
+      setConfigured(s.extraction_configured);
+      setTimingEnabled(Boolean(s.review_timing_enabled));
+    }).catch(() => setConfigured(null));
   }, []);
 
   const refresh = useCallback(async (id: number) => {
@@ -96,6 +102,15 @@ export default function Home() {
     getManifest(id).then(setManifest).catch(() => setManifest(null));
     return { batch: b, tickets: t };
   }, []);
+
+  // Edits and approvals happen in the review form, so keep the scan check in
+  // step with them. A stale count here would defeat its purpose.
+  const batchId = batch?.id;
+  const ticketStates = tickets.map((t) => `${t.id}:${t.status}:${t.ticket_number ?? ""}`).join("|");
+  useEffect(() => {
+    if (batchId === undefined || !ticketStates) return;
+    getManifest(batchId).then(setManifest).catch(() => undefined);
+  }, [batchId, ticketStates]);
 
   // Deep-link directly to one record in a batch, when supplied by Records.
   useEffect(() => {
@@ -162,6 +177,17 @@ export default function Home() {
   }
 
   const current = tickets[selected];
+  useEffect(() => {
+    if (current && openedAt.current[current.id] === undefined) openedAt.current[current.id] = Date.now();
+  }, [current]);
+  // Opt-in pilot measurement. It can never block or fail an approval.
+  function onAccepted(ticketId: number) {
+    const started = openedAt.current[ticketId];
+    if (!timingEnabled || started === undefined) return;
+    const seconds = Math.min(3600, Math.max(0.1, Math.round((Date.now() - started) / 100) / 10));
+    delete openedAt.current[ticketId];
+    recordReviewTiming(ticketId, seconds).catch(() => undefined);
+  }
   const pending = (t: Ticket) => t.status === "needs_review" || t.status === "failed";
   const counts = {
     review: tickets.filter(pending).length,
@@ -508,6 +534,7 @@ export default function Home() {
               catalog={catalog}
               onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
               onAdvance={advance}
+              onAccepted={onAccepted}
               onDirtyChange={setFormDirty}
               onError={setError}
             />
@@ -582,6 +609,7 @@ function ReviewForm({
   catalog,
   onChange,
   onAdvance,
+  onAccepted,
   onDirtyChange,
   onError,
 }: {
@@ -590,6 +618,7 @@ function ReviewForm({
   catalog: { suppliers: string[]; materials: string[] };
   onChange: (t: Ticket) => void;
   onAdvance: () => void;
+  onAccepted: (ticketId: number) => void;
   onDirtyChange: (dirty: boolean) => void;
   onError: (m: string | null) => void;
 }) {
@@ -771,7 +800,7 @@ function ReviewForm({
           onClick={() =>
             run(async () => {
               const saved = await save();
-              return saved ? ticketAction(ticket.id, "verify").then((t) => (onChange(t), t)).catch((e) => (onError(e.message), null)) : null;
+              return saved ? ticketAction(ticket.id, "verify").then((t) => (onChange(t), onAccepted(t.id), t)).catch((e) => (onError(e.message), null)) : null;
             }, true)
           }
           className="min-w-40 flex-1 rounded bg-[#dc6c30] px-4 py-3 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"

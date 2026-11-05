@@ -294,6 +294,19 @@ class ScanEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
+class ReviewTiming(Base):
+    """Opt-in pilot measurement: how long a ticket took to accept, and whether
+    it needed correcting. Deliberately has no person and no ticket contents."""
+    __tablename__ = "review_timings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), nullable=False)
+    intake_mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    seconds: Mapped[Decimal] = mapped_column(Numeric(8, 1), nullable=False)
+    fields_corrected: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -225,11 +225,12 @@ def project_intake_issues(db: Session, organization_id: int, project_id: int) ->
 
     Any of these could hide a delivery from an invoice comparison.
     """
-    batches = list(db.scalars(select(Batch).where(
-        Batch.organization_id == organization_id, Batch.project_id == project_id)))
+    # A fixed number of queries, because this runs for every invoice line shown.
+    batches = db.execute(select(Batch.id, Batch.expected_ticket_count).where(
+        Batch.organization_id == organization_id, Batch.project_id == project_id)).all()
     if not batches:
         return []
-    ids = [b.id for b in batches]
+    ids = [row[0] for row in batches]
     open_slots = set(db.execute(
         select(ScanSlot.file_id, ScanSlot.page, ScanSlot.position).where(
             ScanSlot.batch_id.in_(ids), ScanSlot.detection == "faint", ScanSlot.decision.is_(None))
@@ -239,10 +240,16 @@ def project_intake_issues(db: Session, organization_id: int, project_id: int) ->
             select(Ticket.file_id, Ticket.source_page, Ticket.position).where(Ticket.batch_id.in_(ids))
         ).all())
         open_slots -= ticketed
-    failed = sum(1 for b in batches for f in b.files if f.status == "failed")
-    short = [b.id for b in batches if b.expected_ticket_count is not None and
-             b.expected_ticket_count != len(db.scalars(select(Ticket.id).where(
-                 Ticket.batch_id == b.id, Ticket.status != "skipped")).all())]
+    failed = db.scalar(select(func.count()).select_from(UploadedFile).where(
+        UploadedFile.batch_id.in_(ids), UploadedFile.status == "failed"))
+    expected = {batch_id: count for batch_id, count in batches if count is not None}
+    short: list[int] = []
+    if expected:
+        records = dict(db.execute(
+            select(Ticket.batch_id, func.count()).where(Ticket.batch_id.in_(expected), Ticket.status != "skipped")
+            .group_by(Ticket.batch_id)
+        ).all())
+        short = [batch_id for batch_id, count in expected.items() if records.get(batch_id, 0) != count]
     issues = []
     if open_slots:
         issues.append(f"{len(open_slots)} faint scan slot(s) in this project have not been classified; "

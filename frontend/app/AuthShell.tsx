@@ -33,6 +33,7 @@ const links: { href: string; label: string; icon: IconName; requires?: Permissio
   { href: "/records", label: "Delivery records", icon: "records" },
   { href: "/invoices", label: "Invoice comparison", icon: "invoices" },
   { href: "/pricing", label: "Suppliers & rates", icon: "rates" },
+  { href: "/reports", label: "Pilot report", icon: "records" },
   { href: "/team", label: "Team", icon: "team", requires: "team.manage" },
 ];
 const pageTitles: Record<string, string> = { "/account": "Account settings" };

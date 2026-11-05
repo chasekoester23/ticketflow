@@ -474,6 +474,36 @@ def test_failed_file_and_count_mismatch_keep_an_invoice_incomplete(client):
     assert any("did not finish processing" in w for w in broken["warnings"])
 
 
+def test_intake_check_query_count_does_not_grow_with_batches(client):
+    from sqlalchemy import event
+
+    from app.services import scan_manifest
+
+    project = _priced_project(client)
+
+    def queries() -> int:
+        engine = api_module.SessionLocal.kw["bind"]
+        statements = []
+
+        def counter(_conn, _cursor, statement, _params, _context, _executemany):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", counter)
+        try:
+            with api_module.SessionLocal() as db:
+                scan_manifest.project_intake_issues(db, 1, project)
+        finally:
+            event.remove(engine, "before_cursor_execute", counter)
+        return len(statements)
+
+    _upload(client, make_pdf([make_page(["faint", A, None, None])]), project_id=str(project), expected_ticket_count="2")
+    few = queries()
+    for number in range(5):
+        _upload(client, make_pdf([make_page(["faint", dict(A, ticket_number=str(70000 + number)), None, None])]),
+                project_id=str(project), expected_ticket_count="2")
+    assert queries() == few
+
+
 # ---------------------------------------------------------------- isolation
 
 def test_another_company_cannot_see_or_change_any_scan_data(client):
