@@ -34,7 +34,14 @@ async def lifespan(app: FastAPI):
     ):
         raise RuntimeError("Set SESSION_SECURE_COOKIE=true before using a non-localhost frontend.")
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(engine)  # new local installs only; never alters existing tables
+    if engine.dialect.name == "sqlite":
+        Base.metadata.create_all(engine)  # new local installs only; never alters existing tables
+    else:
+        # A server database changes only through migrations: never implicitly at startup.
+        current, expected = system_health.schema_revisions(engine)
+        if current != expected:
+            raise RuntimeError(f"Database is at {current or 'no version'}, but this code needs {expected}. "
+                               "Back up, then run 'cd backend && python -m alembic upgrade head'.")
     columns = {c["name"] for c in inspect(engine).get_columns("tickets")}
     required = {"price_snapshot_state", "applied_unit_price", "applied_price_source"}
     if not required.issubset(columns):

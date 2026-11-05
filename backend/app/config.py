@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = f"sqlite:///{BASE_DIR / 'ticketflow.db'}"
+    # PostgreSQL only. SQLite has one connection per request and no such limits.
+    database_pool_size: int = 10
+    database_pool_overflow: int = 10
+    database_lock_timeout_ms: int = 10_000
+    database_statement_timeout_ms: int = 120_000
     storage_dir: Path = BASE_DIR / "storage"
     # Where scripts/backup.py writes, and where the system page looks.
     backup_dir: Path = BASE_DIR / "backups"

@@ -6,6 +6,9 @@ Existing verified tickets cannot be assigned a historic price from current rates
 The migration therefore leaves their snapshot_state NULL ('legacy'). New ORM
 inserts default to 'pending'; the explicit verification workflow fills snapshots.
 """
+import importlib.util
+from pathlib import Path
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -19,9 +22,12 @@ def upgrade() -> None:
     bind = op.get_bind()
     # The original app used create_all() without Alembic. This baseline
     # establishes the tables on fresh installs and keeps existing data intact.
-    from app.db import Base
-    from app import models  # noqa: F401
-    Base.metadata.create_all(bind=bind, checkfirst=True)
+    # It uses a frozen copy of the schema, never the current models, so a fresh
+    # database gets the same result whenever it's created.
+    spec = importlib.util.spec_from_file_location("ticketflow_frozen_schema", Path(__file__).parents[1] / "frozen_schema.py")
+    frozen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(frozen)
+    frozen.metadata.create_all(bind=bind, checkfirst=True)
     cols = {c["name"] for c in sa.inspect(bind).get_columns("tickets")}
     additions = [
         sa.Column("price_snapshot_state", sa.String(20), nullable=True),

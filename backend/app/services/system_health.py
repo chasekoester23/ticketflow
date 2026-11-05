@@ -50,6 +50,14 @@ def expected_revision() -> str | None:
         return None
 
 
+def schema_revisions(engine) -> tuple[str | None, str | None]:
+    """(what the database is at, what this code needs)."""
+    with engine.connect() as connection:
+        current = (connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
+                   if inspect(connection).has_table("alembic_version") else None)
+    return current, expected_revision()
+
+
 def current_revision(db: Session) -> str | None:
     if not inspect(db.get_bind()).has_table("alembic_version"):
         return None
