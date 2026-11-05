@@ -82,7 +82,9 @@ export function ReviewForm({
   useLayoutEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
 
   // Put the cursor where work starts, unless the person is typing somewhere else.
-  useEffect(() => {
+  // Before paint: once a ticket is on screen the cursor is settled, so the next
+  // key press can't land in a field the person didn't choose.
+  useLayoutEffect(() => {
     if (!canEdit) return;
     const active = document.activeElement;
     if (active && active !== document.body && !form.current?.contains(active) && active.closest("input, textarea, select, [role=dialog]")) return;

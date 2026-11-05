@@ -248,6 +248,51 @@ test("the shortcut list opens from the keyboard and closes with escape", async (
   await expect(dialog).toHaveCount(0);
 });
 
+test("a key pressed in the same moment as typing still sees the unsaved work", async ({ page }) => {
+  await mock(page, [ticket(101), ticket(102)]);
+  await page.goto("/upload?batch=5&ticket=101");
+  await expect(page.getByLabel("Ticket number")).toBeFocused();
+  let asked = 0;
+  page.on("dialog", (dialog) => { asked += 1; dialog.dismiss(); });
+  // No time for anything to happen between typing and the key: the worst case
+  // for a slow machine, made certain instead of left to chance.
+  await page.evaluate(() => {
+    const field = document.getElementById("review-ticket_number");
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(field, "10482");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", altKey: true, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByLabel("Ticket number")).toHaveValue("10482");
+  await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
+  expect(asked).toBe(1);
+});
+
+test("keys right after a ticket opens go to shortcuts, not into a field", async ({ page }) => {
+  await mock(page, [ticket(101, { status: "verified", ticket_number: "1" }), ticket(102), ticket(103)]);
+  await page.goto("/upload?batch=5");
+  await expect(page.getByText("Ticket 2 of 3")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("j");
+  await expect(page.getByText("Ticket 3 of 3")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("k");
+  await expect(page.getByText("Ticket 2 of 3")).toBeVisible();
+  await expect(page.getByLabel("Ticket number")).toHaveValue("");
+});
+
+for (const [platform, leaves] of [["Win32", true], ["Linux x86_64", true], ["MacIntel", false]]) {
+  test(`Alt+Left while typing on ${platform} ${leaves ? "moves between tickets instead of leaving the page" : "stays with the cursor"}`, async ({ page }) => {
+    await page.addInitScript((value) => Object.defineProperty(navigator, "platform", { get: () => value }), platform);
+    await mock(page, [ticket(101), ticket(102)]);
+    await page.goto("/upload?batch=5&ticket=102");
+    await expect(page.getByLabel("Ticket number")).toBeFocused();
+    const prevented = await page.evaluate(() => !document.getElementById("review-ticket_number").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true })));
+    expect(prevented).toBe(leaves); // A prevented default is what stops the browser going Back.
+    await expect(page.getByText(leaves ? "Ticket 1 of 2" : "Ticket 2 of 2")).toBeVisible();
+  });
+}
+
 test("bad tons are caught before saving, and units are not converted", async ({ page }) => {
   const log = await mock(page, [ticket(101)]);
   await page.goto("/upload?batch=5&ticket=101");

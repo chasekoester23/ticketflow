@@ -31,7 +31,9 @@ cd "$BACKEND_DIR"
 "$PYTHON" scripts/run_worker.py >"$WORK/worker.log" 2>&1 & PIDS+=($!)
 
 cd "$FRONTEND_DIR"
-node node_modules/next/dist/bin/next dev -p "$WEB_PORT" >"$WORK/web.log" 2>&1 & PIDS+=($!)
+# The production build, because that's what people will use.
+node node_modules/next/dist/bin/next build >"$WORK/build.log" 2>&1 || { tail -40 "$WORK/build.log"; exit 1; }
+node node_modules/next/dist/bin/next start -p "$WEB_PORT" >"$WORK/web.log" 2>&1 & PIDS+=($!)
 for _ in $(seq 1 120); do
   curl -sf "http://127.0.0.1:$API_PORT/health" >/dev/null && curl -sf -o /dev/null "http://127.0.0.1:$WEB_PORT/login" && break
   sleep 1

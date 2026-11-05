@@ -2,11 +2,12 @@ name: Backend tests
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - "backend/**"
       - ".github/workflows/backend-tests.yml"
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
     paths:
       - "backend/**"
       - ".github/workflows/backend-tests.yml"
@@ -21,8 +22,8 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip

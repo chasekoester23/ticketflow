@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Batch,
   Ticket,
@@ -38,13 +38,16 @@ const isTyping = (target: EventTarget | null) => {
   return Boolean(element?.isContentEditable || element?.closest?.("input, textarea, select, [contenteditable], [role=dialog]"));
 };
 const pendingStatus = (t: Ticket) => t.status === "needs_review" || t.status === "failed";
+// On Windows and Linux, Alt+Left is the browser's Back button. On a Mac it moves
+// the cursor by a word, which people use while correcting a value.
+const altArrowsGoBack = () => !/Mac|iPhone|iPad/.test(navigator.platform);
 
 const SHORTCUTS: [string, string][] = [
   ["⌘/Ctrl + Enter", "Accept (or save) and go to the next ticket"],
   ["Enter", "Next field, then the Accept button"],
   ["Alt + D", "Material, supplier and job: same as previous ticket"],
   ["Alt + ↑ / ↓", "Previous or next ticket, even while typing"],
-  ["J / K, Alt + ← / →", "Next or previous ticket, outside a field"],
+  ["J / K, Alt + ← / →", "Next or previous ticket"],
   ["+ / −  ·  0", "Zoom the scan in or out  ·  fit to width"],
   ["R", "Rotate the view (the stored scan isn't changed)"],
   ["/", "Search the ticket queue"],
@@ -61,6 +64,13 @@ export default function Home() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState(0);
   const [formDirty, setFormDirty] = useState(false);
+  // What the keyboard handler reads. Set before the browser can deliver another
+  // key, so a fast key press can never act on the previous ticket or miss unsaved work.
+  const dirtyNow = useRef(false);
+  const reportDirty = useCallback((dirty: boolean) => {
+    dirtyNow.current = dirty;
+    setFormDirty(dirty);
+  }, []);
   const [reviewFilter, setReviewFilter] = useState<"pending" | "flagged" | "all">("pending");
   const [queueSearch, setQueueSearch] = useState("");
   const [queueOpen, setQueueOpen] = useState(true);
@@ -150,9 +160,9 @@ export default function Home() {
   }, [batch, refresh]);
 
   async function onUploaded(uploaded: Batch) {
-    if (formDirty && !window.confirm("You have unsaved ticket corrections. Discard them and open the new upload?")) return;
+    if (dirtyNow.current && !window.confirm("You have unsaved ticket corrections. Discard them and open the new upload?")) return;
     setSelected(0);
-    setFormDirty(false);
+    reportDirty(false);
     setReviewFilter("pending");
     setQueueSearch("");
     setShowUpload(false);
@@ -214,10 +224,10 @@ export default function Home() {
   // Someone else changed this ticket. Show them the latest values rather than
   // quietly applying the person's stale view on top.
   const onStale = useCallback((message: string) => {
-    setFormDirty(false);
+    reportDirty(false);
     setNotice(message);
     if (batchId !== undefined) refresh(batchId).catch((e) => setError(e.message));
-  }, [batchId, refresh]);
+  }, [batchId, refresh, reportDirty]);
 
   const counts = {
     review: tickets.filter(pendingStatus).length,
@@ -238,36 +248,44 @@ export default function Home() {
 
   function selectTicket(index: number) {
     if (index === selected) return;
-    if (formDirty && !window.confirm(DISCARD)) return;
+    if (dirtyNow.current && !window.confirm(DISCARD)) return;
     setSelected(index);
-    setFormDirty(false);
+    reportDirty(false);
   }
 
+  // One listener for the life of the page, reading the current state from here.
+  // Re-subscribing on every change left moments when a key saw the old ticket.
+  const keyState = useRef({ selected, count: tickets.length, help });
+  useLayoutEffect(() => {
+    keyState.current = { selected, count: tickets.length, help };
+  });
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.ctrlKey || event.metaKey) return;
+      const { selected, count, help } = keyState.current;
       if (event.key === "Escape") {
         if (help) setHelp(false);
         else if (isTyping(event.target)) (event.target as HTMLElement).blur();
         return;
       }
-      if (!tickets.length) return;
+      if (!count) return;
       const typing = isTyping(event.target);
       const move = (step: number) => {
         event.preventDefault();
         const next = selected + step;
-        if (next < 0 || next >= tickets.length) return;
-        if (formDirty && !window.confirm(DISCARD)) return;
+        if (next < 0 || next >= count) return;
+        if (dirtyNow.current && !window.confirm(DISCARD)) return;
         setSelected(next);
-        setFormDirty(false);
+        reportDirty(false);
       };
       if (event.altKey) {
         // Alt+↑/↓ means nothing in a one-line field, so they work while typing.
-        // Alt+←/→ move by word there, so those never steal from typing.
+        // Alt+←/→ only give way to typing on a Mac, where they move by word.
+        // Elsewhere they'd leave the page, so they always move between tickets.
         if (event.key === "ArrowDown") move(1);
         else if (event.key === "ArrowUp") move(-1);
-        else if (!typing && event.key === "ArrowRight") move(1);
-        else if (!typing && event.key === "ArrowLeft") move(-1);
+        else if ((!typing || altArrowsGoBack()) && event.key === "ArrowRight") move(1);
+        else if ((!typing || altArrowsGoBack()) && event.key === "ArrowLeft") move(-1);
         return;
       }
       if (typing) return;
@@ -286,12 +304,12 @@ export default function Home() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, tickets.length, formDirty, help]);
+  }, [reportDirty]);
 
   // Complete the pending queue first, then automatically revisit flagged tickets.
   // A ticket is never auto-accepted; only the explicit Accept action verifies.
   function advance() {
-    setFormDirty(false);
+    reportDirty(false);
     const findNext = (predicate: (ticket: Ticket) => boolean): number => {
       const later = tickets.findIndex((t, i) => i > selected && predicate(t));
       return later >= 0 ? later : tickets.findIndex((t, i) => i < selected && predicate(t));
@@ -379,7 +397,7 @@ export default function Home() {
         <section className="tf-panel px-4 py-3" aria-live="polite">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
-              <a href="/upload" className="tf-link" onClick={(event) => { if (formDirty && !window.confirm(DISCARD)) event.preventDefault(); }}>← All uploads</a>
+              <a href="/upload" className="tf-link" onClick={(event) => { if (dirtyNow.current && !window.confirm(DISCARD)) event.preventDefault(); }}>← All uploads</a>
               <h1 className="mt-0.5 text-[15px] font-bold text-[#1d2b38]">
                 Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}
                 {project && <span className="ml-2 font-medium text-[#657182]">{project.code} · {project.name}</span>}
@@ -545,7 +563,7 @@ export default function Home() {
             onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
             onAdvance={advance}
             onAccepted={onAccepted}
-            onDirtyChange={setFormDirty}
+            onDirtyChange={reportDirty}
             onError={setError}
             onStale={onStale}
           />

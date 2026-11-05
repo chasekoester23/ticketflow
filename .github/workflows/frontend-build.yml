@@ -2,11 +2,12 @@ name: Frontend build
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-build.yml"
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-build.yml"
@@ -21,8 +22,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
