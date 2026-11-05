@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  confirmTicketLinks, downloadInvoiceComparisonReport, getInvoiceComparisons, releaseTicketLink, getInvoiceHistory, InvoiceLineComparison,
-  InvoiceLineInput, listMaterials, listProjects, listSuppliers, Material,
+  confirmTicketLinks, downloadInvoiceComparisonReport, getInvoiceComparisons, getInvoiceOverview, releaseTicketLink, getInvoiceHistory,
+  InvoiceDiagnosis, InvoiceLineComparison, InvoiceLineInput, InvoiceOverview, listMaterials, listProjects, listSuppliers, Material,
   Project, saveInvoiceComparison, Supplier, CheckedTicket, TicketCheckRow, ticketImageUrl,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
@@ -90,6 +90,56 @@ function RecordSummary({ ticket }: { ticket: CheckedTicket }) {
   </span>;
 }
 
+const signedMoney = (value: string) => (Number(value) > 0 ? "+" : "") + money(value);
+
+/** Why this result, in figures that add up exactly to what was billed. */
+function WhyThisResult({ diagnosis, status }: { diagnosis: InvoiceDiagnosis; status: InvoiceLineComparison["status"] }) {
+  const { tons: bridge, money: cost } = diagnosis;
+  return <section aria-label="Why this result" className="border-b border-[#e2e7ec] p-5">
+    <p className={"text-[14px] font-bold " + (status === "matches" ? "text-[#216c43]" : status === "discrepancy" ? "text-[#a73631]" : "text-[#995a18]")} data-testid="diagnosis-headline">{diagnosis.headline}</p>
+    <div className="mt-4 grid gap-5 lg:grid-cols-2">
+      {bridge && <div>
+        <p className="mb-1.5 text-[12px] font-bold text-[#344352]">From approved tons to billed tons</p>
+        <table className="tf-table" aria-label="From approved tons to billed tons"><tbody>
+          <tr><td>Approved tons in this line&apos;s scope</td><td className="text-right font-semibold tabular-nums">{tons(bridge.start)}</td></tr>
+          {bridge.items.map((item) => <tr key={item.kind}>
+            <td>{item.label} <span className="text-[#7a8796]">({item.count})</span>
+              {item.tickets.length > 0 && <span className="block font-mono text-[11px] text-[#657182]">{item.tickets.join(", ")}{item.count > item.tickets.length && " …"}</span>}
+            </td>
+            <td className="whitespace-nowrap text-right font-semibold tabular-nums text-[#a14c1c]">{signed(item.tons)}</td>
+          </tr>)}
+          {bridge.complete && Number(bridge.unexplained) !== 0 && <tr>
+            <td>Not explained by the ticket list <span className="block text-[11px] text-[#657182]">The line&apos;s billed tons differ from the sum of its own tickets.</span></td>
+            <td className="whitespace-nowrap text-right font-semibold tabular-nums text-[#a73631]">{signed(bridge.unexplained as string)}</td>
+          </tr>}
+          <tr className="border-t-2 border-[#cfd6de]"><td className="font-bold">Billed tons</td><td className="text-right font-bold tabular-nums">{tons(bridge.billed)}</td></tr>
+        </tbody></table>
+        {!bridge.complete && <p className="mt-1.5 text-[11px] text-[#995a18]">{bridge.rows_without_tons} ticket(s) have no billed tons on this invoice, so the tons can&apos;t be broken down exactly.</p>}
+      </div>}
+      <div>
+        <p className="mb-1.5 text-[12px] font-bold text-[#344352]">From approved cost to billed subtotal</p>
+        {cost ? <table className="tf-table" aria-label="From approved cost to billed subtotal"><tbody>
+          <tr><td>Approved cost at locked rates</td><td className="text-right font-semibold tabular-nums">{money(cost.start)}</td></tr>
+          {Number(cost.quantity_effect) !== 0 && <tr><td>Billed tons differ from approved tons</td><td className="text-right font-semibold tabular-nums text-[#a14c1c]">{signedMoney(cost.quantity_effect)}</td></tr>}
+          {cost.rate_groups.map((group) => <tr key={group.locked_rate}>
+            <td>Invoice rate differs from locked {money(group.locked_rate)} <span className="block text-[11px] text-[#657182]">{group.tickets} ticket(s), {tons(group.tons)} tons</span></td>
+            <td className="text-right font-semibold tabular-nums text-[#a14c1c]">{signedMoney(group.effect)}</td>
+          </tr>)}
+          {Number(cost.arithmetic_effect) !== 0 && <tr><td>Invoice&apos;s own math <span className="block text-[11px] text-[#657182]">Subtotal differs from tons × rate on the invoice.</span></td><td className="text-right font-semibold tabular-nums text-[#a73631]">{signedMoney(cost.arithmetic_effect)}</td></tr>}
+          {Number(cost.rounding) !== 0 && <tr><td>Rounding <span className="block text-[11px] text-[#657182]">Each ticket&apos;s cost is rounded to the cent.</span></td><td className="text-right font-semibold tabular-nums">{signedMoney(cost.rounding)}</td></tr>}
+          <tr className="border-t-2 border-[#cfd6de]"><td className="font-bold">Billed material subtotal</td><td className="text-right font-bold tabular-nums">{money(cost.billed)}</td></tr>
+        </tbody></table> : <p className="text-[12px] text-[#995a18]">Unresolved. {diagnosis.money_unresolved_reason}</p>}
+      </div>
+    </div>
+    {diagnosis.next_steps.length > 0 && <div className="mt-4">
+      <p className="mb-1 text-[12px] font-bold text-[#344352]">What to do next</p>
+      <ol className="list-decimal space-y-1 pl-5 text-[12px] text-[#354454]">
+        {diagnosis.next_steps.map((step) => <li key={step.text}>{step.href ? <a className="tf-link" href={step.href}>{step.text}</a> : step.text}</li>)}
+      </ol>
+    </div>}
+  </section>;
+}
+
 export default function InvoiceComparisonPage() {
   const canManage = useAccount().can("invoices.manage");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -104,11 +154,21 @@ export default function InvoiceComparisonPage() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [overview, setOverview] = useState<InvoiceOverview | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [resultFilter, setResultFilter] = useState<"all" | "open" | "discrepancy" | "incomplete" | "matches">("all");
+  const [lineSearch, setLineSearch] = useState("");
+  const detail = useRef<HTMLElement>(null);
 
+  const loadOverview = useCallback(() => {
+    // A summary on top of the list: failing to load it must not stop anything.
+    getInvoiceOverview().then(setOverview).catch(() => setOverview(null));
+  }, []);
   const reload = useCallback(async () => {
     const data = await getInvoiceComparisons();
     setLines(data);
-  }, []);
+    loadOverview();
+  }, [loadOverview]);
 
   useEffect(() => {
     Promise.all([
@@ -117,7 +177,13 @@ export default function InvoiceComparisonPage() {
       setProjects(p); setSuppliers(s); setMaterials(m); setLines(rows);
     }).catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
-  }, []);
+    loadOverview();
+  }, [loadOverview]);
+
+  // Details sit below the list, so bring them into view when opened.
+  useEffect(() => {
+    if (selected !== null) detail.current?.scrollIntoView?.({ block: "start", behavior: "auto" });
+  }, [selected]);
 
   function field<K extends keyof typeof EMPTY>(key: K, value: (typeof EMPTY)[K]) {
     setForm((old) => ({ ...old, [key]: value }));
@@ -127,6 +193,7 @@ export default function InvoiceComparisonPage() {
     setEditing(null);
     setForm({ ...EMPTY });
     setError(null);
+    setShowForm(false);
   }
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
@@ -149,6 +216,7 @@ export default function InvoiceComparisonPage() {
 
   function edit(row: InvoiceLineComparison) {
     setEditing(row.id);
+    setShowForm(true);
     setForm({
       project_id: row.project_id,
       invoice_number: row.invoice_number,
@@ -204,6 +272,15 @@ export default function InvoiceComparisonPage() {
   }
 
   const chosen = lines.find((line) => line.id === selected) ?? null;
+  const search = lineSearch.trim().toLowerCase();
+  const shownLines = lines.filter((line) => {
+    if (resultFilter === "open" && line.status === "matches") return false;
+    if (resultFilter === "discrepancy" && line.status !== "discrepancy") return false;
+    if (resultFilter === "incomplete" && line.status !== "incomplete" && line.status !== "no_verified_tickets") return false;
+    if (resultFilter === "matches" && line.status !== "matches") return false;
+    return !search || [line.invoice_number, line.supplier_name, line.material_name].some((value) => value.toLowerCase().includes(search));
+  });
+  const formOpen = showForm || editing !== null || (!loading && lines.length === 0);
   const pastedRows = form.ticket_list.split(/\r?\n/).filter((line) => line.trim()).length;
   const required = form.project_id !== "" && form.invoice_number.trim() &&
     form.supplier_name.trim() && form.material_name.trim() && form.date_from &&
@@ -225,21 +302,58 @@ export default function InvoiceComparisonPage() {
     </div>
 
     <p className="rounded border border-[#e2e7ec] bg-white px-4 py-3 text-[12px] leading-5 text-[#47576a]">
-      <strong>Comparison only — not approval for payment.</strong> Enter the material line as shown on
-      the original supplier invoice. Exclude tax, freight and unrelated charges from the material subtotal.
-      Add the invoice's ticket numbers to check each delivery individually; without them only totals are compared.
-      Invoice PDFs are not read automatically.
+      <strong>Comparison only — not approval for payment.</strong> Each line is compared with approved deliveries
+      using the rates locked when they were approved. Tax, freight and other charges stay out of the material subtotal.
+      Without the invoice&apos;s ticket numbers, only totals are compared.
     </p>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
     {!canManage && <p className="tf-notice" role="note">Invoice lines are recorded and corrected by managers and owners. You can review comparisons and download reports.</p>}
 
-    {canManage && <section className="tf-panel">
+    {overview && overview.lines > 0 && <section className="tf-panel" aria-label="Invoice overview">
+      <div className="grid divide-y divide-[#e7eaee] sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
+        <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Billed material</p>
+          <p className="mt-1.5 text-[22px] font-bold tabular-nums text-[#192632]">{money(overview.billed)}</p><p className="mt-1 text-[11px] text-[#7b8794]">{overview.lines} lines</p></div>
+        <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Approved cost</p>
+          <p className="mt-1.5 text-[22px] font-bold tabular-nums text-[#192632]">{money(overview.verified)}</p>
+          <p className="mt-1 text-[11px] text-[#7b8794]">{overview.lines_unresolved ? overview.lines_unresolved + " line(s) unresolved and left out" : "At locked rates"}</p></div>
+        <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Differences found</p>
+          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + (overview.by_status.discrepancy ? "text-[#a73631]" : "text-[#192632]")}>{overview.by_status.discrepancy ?? 0}</p><p className="mt-1 text-[11px] text-[#7b8794]">Lines to take up with a supplier</p></div>
+        <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Can&apos;t settle yet</p>
+          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + ((overview.by_status.incomplete || overview.by_status.no_verified_tickets) ? "text-[#b85c2b]" : "text-[#192632]")}>{(overview.by_status.incomplete ?? 0) + (overview.by_status.no_verified_tickets ?? 0)}</p><p className="mt-1 text-[11px] text-[#7b8794]">Waiting on deliveries or review</p></div>
+      </div>
+      {overview.by_supplier.length > 1 && <details className="border-t border-[#e7eaee]">
+        <summary className="cursor-pointer select-none px-5 py-2 text-[12px] font-semibold text-[#46566a]">By supplier</summary>
+        <div className="tf-table-wrap"><table className="tf-table" aria-label="Invoices by supplier">
+          <thead><tr><th>Supplier</th><th className="text-right">Lines</th><th className="text-right">Billed</th><th className="text-right">Approved cost</th><th className="text-right">Still open</th></tr></thead>
+          <tbody>{overview.by_supplier.map((group) => <tr key={group.supplier}>
+            <td className="font-semibold">{group.supplier}</td><td className="text-right tabular-nums">{group.lines}</td><td className="text-right tabular-nums">{money(group.billed)}</td>
+            <td className="text-right tabular-nums">{money(group.verified)}{group.lines_unresolved > 0 && <span className="block text-[10px] font-bold text-[#a14c1c]">{group.lines_unresolved} unresolved</span>}</td>
+            <td className="text-right tabular-nums">{group.open}</td>
+          </tr>)}</tbody>
+        </table></div>
+      </details>}
+      {overview.exceptions.length > 0 && <div className="border-t border-[#f0d8ad] bg-[#fff9ed] px-5 py-3" role="note" aria-label="Billing patterns to check">
+        <p className="text-[12px] font-bold text-[#754e20]">Billing patterns worth a question ({overview.exceptions.length})</p>
+        <ul className="mt-1 space-y-1.5 text-[12px] text-[#754e20]">
+          {overview.exceptions.slice(0, 10).map((item) => <li key={item.kind + item.title + item.line_ids.join()}>
+            <strong>{item.title}.</strong> {item.detail}
+            {item.line_ids.slice(0, 4).map((id) => {
+              const line = lines.find((row) => row.id === id);
+              return line && <button key={id} type="button" className="tf-link ml-2" onClick={() => { setSelected(id); setHistory(null); }}>Open {line.invoice_number}</button>;
+            })}
+          </li>)}
+        </ul>
+      </div>}
+    </section>}
+
+    {canManage && !formOpen && <div><button type="button" className="tf-primary-button" onClick={() => setShowForm(true)}><span aria-hidden="true">+</span> Record an invoice line</button></div>}
+    {canManage && formOpen && <section className="tf-panel">
       <div className="tf-panel-heading">
         <div>
           <h2 className="tf-panel-title">{editing === null ? "Record an invoice material line" : "Correct invoice line #" + editing}</h2>
-          <p className="tf-panel-description">Manual entry. No Gemini calls, invoice uploads or payment actions.</p>
+          <p className="tf-panel-description">Typed by a person. To draft from a PDF, use <a className="tf-link" href="/invoices/documents">Invoice PDFs</a>.</p>
         </div>
-        {editing !== null && <button type="button" className="tf-secondary-button" onClick={reset}>Cancel editing</button>}
+        {(editing !== null || lines.length > 0) && <button type="button" className="tf-secondary-button" onClick={reset}>{editing !== null ? "Cancel editing" : "Close"}</button>}
       </div>
       <form onSubmit={(e) => void save(e)} className="grid items-end gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">
         <label className="tf-field-label">Project
@@ -316,19 +430,27 @@ export default function InvoiceComparisonPage() {
     </section>}
 
     <section className="tf-panel">
-      <div className="tf-panel-heading">
+      <div className="tf-panel-heading flex-wrap">
         <div>
           <h2 className="tf-panel-title">Saved invoice comparisons</h2>
           <p className="tf-panel-description">Matches use verified ticket quantities and locked historical prices only.</p>
         </div>
-        <span className="tf-status">{lines.length} material lines</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="sr-only" htmlFor="line-search">Search invoice lines</label>
+          <input id="line-search" type="search" className="tf-field !min-h-0 !py-1.5 !text-xs" placeholder="Invoice, supplier, material…" value={lineSearch} onChange={(e) => setLineSearch(e.target.value)} />
+          <div className="tf-segmented" role="group" aria-label="Filter invoice lines">
+            {([["all", "All"], ["open", "Open"], ["discrepancy", "Differences"], ["incomplete", "Can't settle"], ["matches", "Match"]] as const).map(([key, label]) =>
+              <button type="button" key={key} aria-pressed={resultFilter === key} onClick={() => setResultFilter(key)}>{label}</button>)}
+          </div>
+          <span className="tf-status">{shownLines.length === lines.length ? lines.length : `${shownLines.length} of ${lines.length}`} material lines</span>
+        </div>
       </div>
       <div className="tf-table-wrap">
         <table className="tf-table">
           <thead><tr>
             {["Invoice", "Project", "Supplier / material", "Dates", "Billed tons", "Verified tons", "Tons diff.", "Amount diff.", "Result", ""].map((h) => <th key={h}>{h}</th>)}
           </tr></thead>
-          <tbody>{lines.map((row) => <tr key={row.id}>
+          <tbody>{shownLines.map((row) => <tr key={row.id} aria-selected={selected === row.id} className={selected === row.id ? "bg-[#fff8f2]" : ""}>
             <td className="font-semibold">{row.invoice_number}</td>
             <td>{projects.find((p) => p.id === row.project_id)?.code ?? row.project_id}</td>
             <td><span className="font-semibold">{row.supplier_name}</span><span className="block text-[11px] text-[#778493]">{row.material_name}</span></td>
@@ -350,11 +472,12 @@ export default function InvoiceComparisonPage() {
           </tr>)}</tbody>
         </table>
         {!loading && !lines.length && <p className="tf-empty">No invoice lines entered yet. Add one above to compare it with approved tickets.</p>}
+        {!loading && lines.length > 0 && !shownLines.length && <p className="tf-empty">No invoice lines match this view.</p>}
         {loading && <p className="tf-empty">Loading invoice comparisons…</p>}
       </div>
     </section>
 
-    {chosen && <section className="tf-panel">
+    {chosen && <section ref={detail} className="tf-panel scroll-mt-2">
       <div className="tf-panel-heading">
         <div>
           <h2 className="tf-panel-title">Invoice {chosen.invoice_number} · {chosen.material_name}</h2>
@@ -374,6 +497,9 @@ export default function InvoiceComparisonPage() {
           </button>
         </div>
       </div>
+      {chosen.diagnosis && <WhyThisResult diagnosis={chosen.diagnosis} status={chosen.status} />}
+      <details className="border-b border-[#e2e7ec]">
+      <summary className="cursor-pointer select-none px-5 py-2 text-[12px] font-semibold text-[#46566a]">All figures on this line</summary>
       <div className="grid gap-5 p-5 md:grid-cols-2">
         <div className="space-y-2 text-[13px]">
           <p className="font-bold text-[#344352]">Supplier invoice line</p>
@@ -392,6 +518,7 @@ export default function InvoiceComparisonPage() {
           <p>{chosen.verified_count} verified · {chosen.pending_count} pending · {chosen.unclassified_count} not yet classified · {chosen.unpriced_count} unpriced</p>
         </div>
       </div>
+      </details>
       {chosen.comparison_mode === "totals_only" && <div role="note" className="border-t border-[#e2e7ec] bg-[#f6f8fa] px-5 py-3 text-[12px] text-[#344352]">
         <p className="font-bold">{TOTALS_ONLY}</p>
         <p>Matching totals do not show that every ticket was billed correctly. Enter the ticket numbers from the invoice to check each delivery.</p>

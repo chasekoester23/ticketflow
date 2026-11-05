@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
 import pymupdf as fitz
 
 from ..config import settings
+from . import invoice_layouts as layouts
+from .pricing import norm
 
 # Only these spellings mean tons. "T" alone is ambiguous and is not accepted.
 TON_UNITS = {"TON", "TONS", "TN", "TNS"}
@@ -28,12 +30,18 @@ _ROW = re.compile(
     rf"^(?P<material>.+?)\s+(?P<qty>{_NUMBER})\s+(?P<unit>[A-Za-z]+)\s+(?P<rate>{_NUMBER})\s+(?P<amount>{_NUMBER})$"
 )
 _TICKET_ROW = re.compile(r"^(?:Ticket|Tkt)\b\s*(?:No\.?|#)?\s*:?\s*(?P<number>[A-Za-z0-9-]*\d[A-Za-z0-9-]*)(?:\s+(?P<tons>\d[\d,]*\.\d+))?\b.*$", re.IGNORECASE)
+_DATE_TEXT = r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2}|[A-Za-z]{3,9}\.? \d{1,2},? \d{4}"
 _LABELS = {
-    "invoice_number": re.compile(r"^Invoice\s*(?:No\.?|Number|#)\s*:?\s*(\S+)", re.IGNORECASE),
-    "supplier": re.compile(r"^(?:Supplier|Vendor|Remit\s+To)\s*:\s*(.+)$", re.IGNORECASE),
-    "period": re.compile(r"^(?:Delivery\s+Period|Service\s+Period|Deliveries)\s*:\s*(\S+)\s*(?:-|–|to|through)\s*(\S+)", re.IGNORECASE),
+    "invoice_number": re.compile(
+        r"\b(?:Invoice|Inv\.?)\s*(?:No\.?|Number|Num\.?|#)\s*:?\s*(\S+)|^Invoice\s*:\s*(\S+)",
+        re.IGNORECASE),
+    "supplier": re.compile(r"^(?:Supplier|Vendor|Remit\s+To|Sold\s+By|Bill\s+From|From)\s*:\s*(.+)$", re.IGNORECASE),
+    "period": re.compile(
+        rf"^(?:Delivery\s+Period|Service\s+Period|Billing\s+Period|Period|Deliveries|For\s+Deliveries|Delivery\s+Dates|Dates)\s*:?\s*(?:from\s+)?({_DATE_TEXT})\s*(?:-|–|to|through|thru)\s*({_DATE_TEXT})",
+        re.IGNORECASE),
 }
 _CREDIT = re.compile(r"\bcredit\s+(?:memo|note)\b", re.IGNORECASE)
+_PAREN_NEGATIVE = re.compile(r"\(\$?\d[\d,]*\.\d{2}\)")
 _IGNORED_ROW = re.compile(r"^(?:description|material|item|product)\b.*\b(?:qty|quantity)\b", re.IGNORECASE)
 
 
@@ -67,7 +75,7 @@ class DraftResult:
 class InvoiceExtractor(Protocol):
     name: str
 
-    def extract(self, data: bytes) -> DraftResult: ...
+    def extract(self, data: bytes, supplier_names: tuple[str, ...] = ()) -> DraftResult: ...
 
 
 def _decimal(text: str) -> Decimal | None:
@@ -77,84 +85,117 @@ def _decimal(text: str) -> Decimal | None:
         return None
 
 
-def _date(text: str) -> date | None:
-    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y", "%m-%d-%Y"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    return None
-
-
-def _page_rows(page) -> list[str]:
-    """Rebuild visual rows from word positions: table cells arrive as separate
-    text blocks, so plain text extraction would scatter a row across lines."""
-    words = page.get_text("words")
-    rows: list[tuple[float, list[tuple[float, str]]]] = []
-    for x0, y0, _x1, y1, text, *_rest in sorted(words, key=lambda w: (w[1], w[0])):
-        middle = (y0 + y1) / 2
-        for row in rows:
-            if abs(row[0] - middle) < 3:
-                row[1].append((x0, text))
-                break
-        else:
-            rows.append((middle, [(x0, text)]))
-    return [" ".join(t for _, t in sorted(cells)) for _, cells in rows]
-
-
 class TextLayerExtractor:
     """Strict, offline reader for PDFs that contain real text."""
     name = "text_layer"
 
-    def extract(self, data: bytes) -> DraftResult:
+    def extract(self, data: bytes, supplier_names: tuple[str, ...] = ()) -> DraftResult:
+        """``supplier_names``: the company's catalog. If the invoice doesn't label
+        its supplier, a letterhead holding exactly one of these names supplies it."""
         try:
             doc = fitz.open(stream=data, filetype="pdf")
         except Exception as exc:
             raise InvoiceExtractionError("Could not open this PDF.") from exc
         try:
-            pages = [_page_rows(page) for page in doc]
+            pages = [layouts.page_rows(page) for page in doc]
         finally:
             doc.close()
-        all_rows = [row for rows in pages for row in rows]
-        if not any(all_rows):
+        all_text = [row.text for rows in pages for row in rows]
+        if not any(all_text):
             return DraftResult(unsupported_reason="This PDF has no readable text, so it looks scanned. "
                                                   "Enter its lines by hand beside the original.")
-        if any(_CREDIT.search(row) for row in all_rows):
+        if any(_CREDIT.search(text) for text in all_text):
             return DraftResult(unsupported_reason="This looks like a credit memo. Credits aren't supported "
                                                   "here, so nothing was drafted.")
         header: dict[str, str] = {}
         result = DraftResult()
         tickets: list[str] = []
+        table_rows: list[layouts.TableRow] = []
         period: tuple[date | None, date | None] = (None, None)
+        columns: list[layouts.Column] | None = None
         for page_no, rows in enumerate(pages, start=1):
             for row in rows:
                 labelled = False
-                for name, pattern in _LABELS.items():
-                    match = pattern.match(row)
-                    if match:
-                        labelled = True
-                        if name == "period":
-                            period = (_date(match.group(1)), _date(match.group(2)))
-                        else:
-                            header.setdefault(name, match.group(1).strip())
-                        break
-                if labelled or _IGNORED_ROW.match(row):
+                for segment in row.segments():
+                    for name, pattern in _LABELS.items():
+                        match = pattern.search(segment)
+                        if match:
+                            labelled = True
+                            if name == "period":
+                                period = (layouts.parse_date(match.group(1)), layouts.parse_date(match.group(2)))
+                            else:
+                                header.setdefault(name, next(g for g in match.groups() if g).strip())
+                            break
+                if labelled:
                     continue
-                ticket = _TICKET_ROW.match(row)
+                found_columns = layouts.find_columns(row)
+                if found_columns:
+                    columns = found_columns  # Carries to the next page, for continued tables.
+                    continue
+                if _IGNORED_ROW.match(row.text):
+                    continue
+                ticket = _TICKET_ROW.match(row.text)
                 if ticket:
                     tickets.append(ticket.group("number") + (f"\t{ticket.group('tons')}" if ticket.group("tons") else ""))
                     continue
-                line = self._material_row(row, page_no)
+                if layouts.NOT_MATERIAL.search(row.text):
+                    # Freight, tax, totals: shown as not used, never folded into a subtotal.
+                    if layouts.MONEY_ON_ROW.search(row.text):
+                        result.unread_rows.append(row.text[:200])
+                    continue
+                parsed = layouts.parse_table_row(row, columns, page_no) if columns else None
+                if parsed is not None:
+                    table_rows.append(parsed)
+                    continue
+                line = self._material_row(row.text, page_no)
                 if isinstance(line, DraftLineData):
                     result.lines.append(line)
                 elif line == "unread":
-                    result.unread_rows.append(row[:200])
+                    result.unread_rows.append(row.text[:200])
+
+        for parsed in table_rows:
+            if parsed.quantity < 0 or parsed.amount < 0 or _PAREN_NEGATIVE.search(parsed.text):
+                return DraftResult(unsupported_reason="This invoice has negative amounts. Credits aren't supported "
+                                                      "here, so nothing was drafted.")
+        summary_rows = [row for row in table_rows if not row.ticket]
+        ticket_rows = [row for row in table_rows if row.ticket]
+        for parsed in summary_rows:
+            result.lines.append(DraftLineData(
+                page=parsed.page, source_text=parsed.text, material_name=parsed.material,
+                billed_quantity=parsed.quantity, unit=parsed.unit, billed_unit_price=parsed.rate,
+                billed_subtotal=parsed.amount,
+            ))
+        drafted_from_rows: list[DraftLineData] = []
+        for group in layouts.group_ticket_rows(ticket_rows):
+            first, last = group.date_range()
+            line = DraftLineData(
+                page=group.rows[0].page,
+                source_text=f"{len(group.rows)} ticket row(s), first: {group.rows[0].text}"[:500],
+                material_name=group.material, billed_quantity=group.quantity, unit=group.unit,
+                billed_unit_price=group.rate, billed_subtotal=group.amount, ticket_list=group.ticket_list(),
+                date_from=first, date_to=last,
+            )
+            result.lines.append(line)
+            drafted_from_rows.append(line)
+            for row in group.rows:
+                if row.rate is not None and (row.quantity * row.rate).quantize(Decimal("0.01")) != row.amount:
+                    result.unread_rows.append(
+                        f"Ticket {row.ticket}: {row.quantity} x {row.rate} is "
+                        f"{(row.quantity * row.rate).quantize(Decimal('0.01'))}, but this row shows {row.amount}.")
+
+        if "supplier" not in header and supplier_names:
+            texts = [" " + norm(text) + " " for text in all_text]
+            named = [name for name in supplier_names if norm(name) and any(f" {norm(name)} " in text for text in texts)]
+            if len(named) == 1:
+                header["supplier"] = named[0]
         for line in result.lines:
             line.invoice_number = header.get("invoice_number")
             line.supplier_name = header.get("supplier")
-            line.date_from, line.date_to = period
+            # A stated period wins. Ticket rows otherwise give their own dates.
+            if period != (None, None) or line not in drafted_from_rows:
+                line.date_from, line.date_to = period
         # Tickets can only be tied to a line when there's exactly one line.
-        if tickets and len(result.lines) == 1:
+        if tickets and len(result.lines) == 1 and not result.lines[0].ticket_list:
             result.lines[0].ticket_list = "\n".join(tickets)
         elif tickets:
             result.unread_rows.append(
@@ -177,9 +218,9 @@ class TextLayerExtractor:
                     unit="ton" if unit in TON_UNITS else unit.lower(),
                     billed_unit_price=_decimal(match.group("rate")), billed_subtotal=_decimal(match.group("amount")),
                 )
-        # Freight, tax, totals: any other row with money on it is shown as not
-        # used, never folded into a material subtotal.
-        return "unread" if re.search(r"\$\s?\d|\d\.\d{2}\b", row) else None
+        # Any other row with money on it is shown as not used, never folded into
+        # a material subtotal.
+        return "unread" if layouts.MONEY_ON_ROW.search(row) else None
 
 
 def get_invoice_extractor() -> InvoiceExtractor | None:

@@ -168,3 +168,102 @@ test("correcting an itemized line puts its ticket list back in the paste box", a
   await expect(page.getByLabel("Ticket numbers listed on this invoice (optional)"))
     .toHaveValue("010482\t24.500\n10490\t22.100");
 });
+
+const DIAGNOSED = line({
+  status: "discrepancy", comparison_mode: "itemized", quantity_difference: "0.000", subtotal_difference: "45.00",
+  diagnosis: {
+    headline: "The totals agree, but individual tickets don't.",
+    tons: {
+      start: "46.600", billed: "46.600", complete: true, rows_without_tons: 0, unexplained: "0.000",
+      items: [
+        { kind: "not_found", label: "Billed on tickets with no delivery record", tons: "22.100", count: 1, tickets: ["10490"] },
+        { kind: "not_on_invoice", label: "Verified deliveries this invoice doesn't list", tons: "-22.100", count: 1, tickets: ["10483"] },
+      ],
+    },
+    money: {
+      start: "1353.00", quantity_effect: "0.00", rate_effect: "45.00", arithmetic_effect: "0.00", rounding: "0.00", billed: "1398.00",
+      rate_groups: [{ locked_rate: "29.0000", tickets: 2, tons: "46.600", effect: "45.00" }],
+    },
+    money_unresolved_reason: null,
+    next_steps: [
+      { text: "Find the paper for 10490, or ask the supplier for a copy.", href: null },
+      { text: "Review 2 delivery record(s) that could belong to this line.", href: "/records?project_id=1&status=needs_review" },
+    ],
+  },
+});
+const OVERVIEW = {
+  lines: 2, by_status: { discrepancy: 1, incomplete: 1 }, billed: "2796.00", verified: "1353.00", lines_unresolved: 1,
+  by_supplier: [
+    { supplier: "Example Aggregates", lines: 1, billed: "1398.00", verified: "1353.00", lines_unresolved: 0, open: 1 },
+    { supplier: "Sample Stone Co", lines: 1, billed: "1398.00", verified: "0", lines_unresolved: 1, open: 1 },
+  ],
+  exceptions: [{ kind: "ticket_on_two_invoices", title: "Ticket 10482 is on 2 invoice lines", detail: "Example Aggregates: EA-2026-1107, EA-2026-1200. It may be billed twice.", line_ids: [9] }],
+};
+
+async function mockDiagnosis(page, role = "viewer") {
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (path === "/api/auth/me") return json(route, profile(role));
+    if (path === "/api/projects") return json(route, [{ id: 1, code: "24-115", name: "Fictional Road Job", job_location: null, description: null, status: "active" }]);
+    if (path === "/api/suppliers" || path === "/api/materials") return json(route, []);
+    if (path === "/api/invoice-comparisons/overview") return json(route, OVERVIEW);
+    if (path === "/api/invoice-comparisons") return json(route, [DIAGNOSED, line({ id: 10, invoice_number: "SS-7", supplier_name: "Sample Stone Co", status: "incomplete" })]);
+    return json(route, { detail: "Not found" }, 404);
+  });
+}
+
+test("details lead with why, in figures that land exactly on the bill", async ({ page }) => {
+  await mockDiagnosis(page);
+  await page.goto("/invoices");
+  await page.getByRole("row").filter({ hasText: "EA-2026-1107" }).getByRole("button", { name: "Details" }).click();
+  await expect(page.getByTestId("diagnosis-headline")).toHaveText("The totals agree, but individual tickets don't.");
+  const bridge = page.getByRole("table", { name: "From approved tons to billed tons" });
+  await expect(bridge.getByRole("row").filter({ hasText: "no delivery record" })).toContainText("10490");
+  await expect(bridge.getByRole("row").filter({ hasText: "no delivery record" })).toContainText("+22.100");
+  await expect(bridge.getByRole("row").filter({ hasText: "doesn't list" })).toContainText("-22.100");
+  await expect(bridge.getByRole("row").filter({ hasText: "Billed tons" })).toContainText("46.6");
+  await expect(bridge).not.toContainText("Not explained");
+  const cost = page.getByRole("table", { name: "From approved cost to billed subtotal" });
+  await expect(cost.getByRole("row").filter({ hasText: "locked $29.00" })).toContainText("+$45.00");
+  await expect(page.getByText("Find the paper for 10490")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Review 2 delivery record/ })).toHaveAttribute("href", "/records?project_id=1&status=needs_review");
+});
+
+test("the overview totals what's known, says what's left out, and links billing patterns to their line", async ({ page }) => {
+  await mockDiagnosis(page);
+  await page.goto("/invoices");
+  const overview = page.getByRole("region", { name: "Invoice overview" });
+  await expect(overview).toContainText("$2,796.00");
+  await expect(overview).toContainText("1 line(s) unresolved and left out");
+  const patterns = page.getByRole("note", { name: "Billing patterns to check" });
+  await expect(patterns).toContainText("Ticket 10482 is on 2 invoice lines");
+  await expect(patterns).toContainText("It may be billed twice.");
+  await patterns.getByRole("button", { name: "Open EA-2026-1107" }).click();
+  await expect(page.getByTestId("diagnosis-headline")).toBeVisible();
+});
+
+test("the line list filters by result and searches, without losing the count", async ({ page }) => {
+  await mockDiagnosis(page);
+  await page.goto("/invoices");
+  await expect(page.getByText("2 material lines")).toBeVisible();
+  await page.getByRole("button", { name: "Differences" }).click();
+  await expect(page.getByText("1 of 2 material lines")).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "SS-7" })).toHaveCount(0);
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Search invoice lines" }).fill("sample stone");
+  await expect(page.getByRole("row").filter({ hasText: "EA-2026-1107" })).toHaveCount(0);
+  await expect(page.getByRole("row").filter({ hasText: "SS-7" })).toBeVisible();
+});
+
+test("the entry form stays out of the way once lines exist, for managers only", async ({ page }) => {
+  await mockDiagnosis(page, "manager");
+  await page.goto("/invoices");
+  await expect(page.getByRole("row").filter({ hasText: "EA-2026-1107" })).toBeVisible();
+  await expect(page.getByLabel("Invoice number")).toHaveCount(0);
+  await page.getByRole("button", { name: "Record an invoice line" }).click();
+  await expect(page.getByLabel("Invoice number")).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByLabel("Invoice number")).toHaveCount(0);
+});

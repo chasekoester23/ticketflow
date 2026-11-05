@@ -444,8 +444,29 @@ export type InvoiceTicketMatch = {
   tons: string | null; confirmed_price: string | null;
   review_status: string; scope_match: "exact" | "unclassified";
 };
+export type TonsBridge = {
+  start: string; billed: string; complete: boolean; rows_without_tons: number; unexplained: string | null;
+  items: { kind: string; label: string; tons: string; count: number; tickets: string[] }[];
+};
+export type MoneyBridge = {
+  start: string; quantity_effect: string; rate_effect: string; arithmetic_effect: string; rounding: string; billed: string;
+  rate_groups: { locked_rate: string; tickets: number; tons: string; effect: string }[];
+};
+export type InvoiceDiagnosis = {
+  headline: string; tons: TonsBridge | null; money: MoneyBridge | null; money_unresolved_reason: string | null;
+  next_steps: { text: string; href: string | null }[];
+};
+export type InvoiceOverview = {
+  lines: number; by_status: Record<string, number>; billed: string; verified: string; lines_unresolved: number;
+  by_supplier: { supplier: string; lines: number; billed: string; verified: string; lines_unresolved: number; open: number }[];
+  exceptions: { kind: string; title: string; detail: string; line_ids: number[] }[];
+};
+export async function getInvoiceOverview(): Promise<InvoiceOverview> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons/overview"))).json();
+}
 export type InvoiceLineComparison = InvoiceLineInput & {
   id: number;
+  diagnosis?: InvoiceDiagnosis | null;
   billed_extension: string;
   invoice_arithmetic_difference: string;
   verified_tons: string;
