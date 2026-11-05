@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  downloadInvoiceComparisonReport, getInvoiceComparisons, getInvoiceHistory, InvoiceLineComparison,
+  confirmTicketLinks, downloadInvoiceComparisonReport, getInvoiceComparisons, releaseTicketLink, getInvoiceHistory, InvoiceLineComparison,
   InvoiceLineInput, listMaterials, listProjects, listSuppliers, Material,
   Project, saveInvoiceComparison, Supplier, CheckedTicket, TicketCheckRow, ticketImageUrl,
 } from "../../lib/api";
@@ -48,6 +48,13 @@ const RESULT_LABELS: Record<TicketCheckRow["result"], string> = {
   ambiguous: "Several records — not matched",
   needs_review: "Not verified or incomplete",
   not_on_invoice: "Delivered, not on invoice",
+};
+const EVIDENCE_LABELS: Record<NonNullable<TicketCheckRow["evidence"]>, string> = {
+  unmatched: "—",
+  candidate: "Not confirmed",
+  confirmed: "Confirmed",
+  conflicting: "Conflict",
+  invalidated: "No longer holds",
 };
 const FLAG_LABELS = {
   duplicate_on_invoice: "Repeated on this invoice",
@@ -167,6 +174,17 @@ export default function InvoiceComparisonPage() {
         + " · " + new Date(event.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
       ) : ["No corrections recorded."]);
       setSelected(id);
+    } catch (exc) {
+      setError((exc as Error).message);
+    }
+  }
+
+  async function evidence(action: () => Promise<InvoiceLineComparison>) {
+    setError(null);
+    try {
+      await action();
+      await reload();
+      setHistory(null);
     } catch (exc) {
       setError((exc as Error).message);
     }
@@ -393,8 +411,22 @@ export default function InvoiceComparisonPage() {
             .map(([key, label]) => " · " + chosen.ticket_check_counts[key] + " " + label.toLowerCase()).join("")}
           {chosen.itemized_billed_tons !== null && <> · itemized tons {tons(chosen.itemized_billed_tons)}</>}
         </p>
+        {chosen.evidence && <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded border border-[#e2e7ec] bg-[#f6f8fa] px-3 py-2 text-[12px] text-[#344352]">
+          <p data-testid="evidence-summary">
+            <strong>{chosen.evidence.confirmed} of {chosen.evidence.listed_tickets} invoice tickets confirmed by a person</strong>
+            {" "}({tons(chosen.evidence.confirmed_tons)} tons).
+            {chosen.evidence.candidates > 0 && <> {chosen.evidence.candidates} clean match{chosen.evidence.candidates === 1 ? "" : "es"} not yet confirmed.</>}
+            {chosen.evidence.invalidated > 0 && <> {chosen.evidence.invalidated} no longer hold.</>}
+            {chosen.evidence.conflicting > 0 && <> {chosen.evidence.conflicting} in conflict.</>}
+          </p>
+          {canManage && chosen.evidence.candidates > 0 && <button type="button" className="tf-secondary-button"
+            onClick={() => void evidence(() => confirmTicketLinks(chosen.id, chosen.ticket_check
+              .filter((r) => r.evidence === "candidate" && r.ticket).map((r) => r.ticket!.ticket_id)))}>
+            Confirm {chosen.evidence.candidates} clean match{chosen.evidence.candidates === 1 ? "" : "es"}
+          </button>}
+        </div>}
         <div className="tf-table-wrap"><table className="tf-table" aria-label="Ticket-by-ticket check">
-          <thead><tr><th>Line</th><th>Invoice ticket</th><th>Billed tons</th><th>Result</th><th>TicketFlow record</th><th>Verified tons</th><th>Difference</th><th>Open</th></tr></thead>
+          <thead><tr><th>Line</th><th>Invoice ticket</th><th>Billed tons</th><th>Result</th><th>TicketFlow record</th><th>Verified tons</th><th>Difference</th><th>Evidence</th><th>Open</th></tr></thead>
           <tbody>{chosen.ticket_check.map((row, index) => <tr key={index}>
             <td className="tabular-nums">{row.line ?? "—"}</td>
             <td className="font-mono">{row.invoice_ticket_number ?? <span className="font-sans text-[#778493]">Not listed</span>}</td>
@@ -408,6 +440,13 @@ export default function InvoiceComparisonPage() {
               row.candidates.map((c) => <span key={c.ticket_id} className="block"><RecordSummary ticket={c}/></span>) : "—"}</td>
             <td className="tabular-nums">{row.verified_tons ? tons(row.verified_tons) : "—"}</td>
             <td className="tabular-nums">{row.tons_difference ? signed(row.tons_difference) : "—"}</td>
+            <td className="whitespace-nowrap">
+              {EVIDENCE_LABELS[row.evidence ?? "unmatched"]}
+              {canManage && row.evidence === "invalidated" && row.result === "matched" && row.ticket && <button type="button" className="tf-link ml-2"
+                onClick={() => void evidence(() => confirmTicketLinks(chosen.id, [row.ticket!.ticket_id]))}>Re-confirm</button>}
+              {canManage && row.link_id && <button type="button" className="tf-link ml-2"
+                onClick={() => void evidence(() => releaseTicketLink(chosen.id, row.link_id as number))}>Release</button>}
+            </td>
             <td>{row.ticket ? <RecordLinks ticket={row.ticket}/> :
               row.candidates.map((c) => <span key={c.ticket_id} className="block"><RecordLinks ticket={c}/></span>)}</td>
           </tr>)}</tbody>

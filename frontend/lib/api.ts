@@ -316,6 +316,12 @@ export type TicketCheckRow = {
   tons_difference: string | null;
   flags: ("duplicate_on_invoice" | "on_another_invoice")[];
   notes: string[];
+  evidence?: "unmatched" | "candidate" | "confirmed" | "conflicting" | "invalidated";
+  link_id?: number | null;
+};
+export type EvidenceSummary = {
+  listed_tickets: number; confirmed: number; candidates: number; conflicting: number;
+  invalidated: number; unmatched: number; confirmed_tons: string;
 };
 export type InvoiceTicketMatch = {
   ticket_id: number; batch_id: number; ticket_number: string | null;
@@ -342,6 +348,7 @@ export type InvoiceLineComparison = InvoiceLineInput & {
   ticket_check: TicketCheckRow[];
   ticket_check_counts: Record<string, number>;
   itemized_billed_tons: string | null;
+  evidence?: EvidenceSummary | null;
   source_document_id?: number | null;
   source_page?: number | null;
   created_at: string;
@@ -401,6 +408,14 @@ export async function saveInvoiceComparison(
     API + "/api/invoice-comparisons" + suffix,
     json(id !== undefined ? "PUT" : "POST", body),
   ))).json();
+}
+export async function confirmTicketLinks(id: number, ticketIds: number[]): Promise<InvoiceLineComparison> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/ticket-links",
+    json("POST", { ticket_ids: ticketIds })))).json();
+}
+export async function releaseTicketLink(id: number, linkId: number): Promise<InvoiceLineComparison> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/ticket-links/" + linkId + "/release",
+    { method: "POST" }))).json();
 }
 export async function getInvoiceHistory(id: number): Promise<HistoryEntry[]> {
   return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/audit"))).json();

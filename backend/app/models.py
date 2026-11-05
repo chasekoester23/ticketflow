@@ -354,6 +354,30 @@ class InvoiceTicketRef(Base):
     billed_tons: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
 
 
+class InvoiceTicketLink(Base):
+    """A person's confirmation that a verified ticket is billed in full by one
+    invoice line. Released links stay as history. The partial unique index means
+    a ticket can have only one active link, enforced by the database. Partial
+    allocation is deliberately unsupported."""
+    __tablename__ = "invoice_ticket_links"
+    __table_args__ = (
+        Index("uq_invoice_ticket_link_active", "ticket_id", unique=True,
+              sqlite_where=text("released_at IS NULL"), postgresql_where=text("released_at IS NULL")),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    comparison_id: Mapped[int] = mapped_column(ForeignKey("invoice_comparisons.id"), index=True, nullable=False)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), nullable=False)
+    listed_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    # What the person saw: a later change to the ticket invalidates the link.
+    verified_tons: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    ticket_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    released_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    release_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
 class InvoiceDocument(Base):
     """An uploaded supplier invoice PDF. Separate from comparisons: nothing here
     counts until a manager confirms a draft line."""

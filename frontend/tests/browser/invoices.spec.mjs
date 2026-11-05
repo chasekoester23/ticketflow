@@ -125,6 +125,42 @@ test("a totals-only line is labelled as not checking individual tickets", async 
   await expect(row.getByRole("button", { name: "Correct" })).toHaveCount(0);
 });
 
+test("a manager confirms clean matches; people's confirmation is reported separately", async ({ page }) => {
+  const calls = [];
+  const row = { ...ITEMIZED.ticket_check[0], evidence: "candidate", link_id: null };
+  const before = { ...ITEMIZED, ticket_check: [row], evidence: { listed_tickets: 2, confirmed: 0, candidates: 1, conflicting: 0, invalidated: 0, unmatched: 1, confirmed_tons: "0" } };
+  const after = { ...before, ticket_check: [{ ...row, evidence: "confirmed", link_id: 4 }], evidence: { ...before.evidence, confirmed: 1, candidates: 0, confirmed_tons: "24.500" } };
+  let current = before;
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (path === "/api/auth/me") return json(route, profile("manager"));
+    if (path === "/api/projects") return json(route, []);
+    if (path === "/api/suppliers" || path === "/api/materials") return json(route, []);
+    if (path === "/api/invoice-comparisons") return json(route, [current]);
+    if (request.method() === "POST") {
+      calls.push({ path, body: request.postData() });
+      current = path.endsWith("/release") ? before : after;
+      return json(route, current);
+    }
+    return json(route, { detail: "Not found" }, 404);
+  });
+  await page.goto("/invoices");
+  await page.getByRole("button", { name: "Details" }).click();
+  const summary = page.getByTestId("evidence-summary");
+  await expect(summary).toContainText("0 of 2 invoice tickets confirmed by a person");
+  await page.getByRole("button", { name: "Confirm 1 clean match" }).click();
+  await expect(summary).toContainText("1 of 2 invoice tickets confirmed by a person");
+  expect(calls[0].path).toBe("/api/invoice-comparisons/9/ticket-links");
+  expect(JSON.parse(calls[0].body)).toEqual({ ticket_ids: [11] });
+  const table = page.getByRole("table", { name: "Ticket-by-ticket check" });
+  await expect(table.getByRole("row").filter({ hasText: "010482" })).toContainText("Confirmed");
+  await table.getByRole("button", { name: "Release" }).click();
+  await expect(summary).toContainText("0 of 2 invoice tickets confirmed by a person");
+  expect(calls[1].path).toBe("/api/invoice-comparisons/9/ticket-links/4/release");
+});
+
 test("correcting an itemized line puts its ticket list back in the paste box", async ({ page }) => {
   await mockInvoices(page, "owner", [ITEMIZED]);
   await page.goto("/invoices");

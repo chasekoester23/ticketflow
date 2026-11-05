@@ -1,6 +1,6 @@
 # TicketFlow pre-launch security status
 
-Last updated: 2026-11-05 (invoice PDFs, migration `20261105_12`).
+Last updated: 2026-11-05 (ticket evidence, migration `20261105_13`).
 
 TicketFlow handles confidential construction documents and money figures.
 This file records **what is actually implemented and tested** and **what is
@@ -92,6 +92,8 @@ documents on shared hosting yet.
   individual tickets.
 - A drafted invoice line counts for nothing until a manager confirms it. Units
   are never converted, and credits are blocked rather than entered.
+- A delivery can be linked to at most one invoice line, enforced by a database
+  index. Partial allocation is not supported.
 - Arithmetic agreement between an invoice and tickets is not proof of invoice
   authenticity and is never an approval to pay.
 

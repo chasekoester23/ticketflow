@@ -9,7 +9,7 @@ checked one by one (services/invoice_matching.py). A line without them is a
 totals-only comparison and is always labelled as such.
 """
 import csv
-from datetime import date
+from datetime import date, datetime
 from io import StringIO
 from decimal import Decimal
 from typing import Literal
@@ -24,10 +24,10 @@ from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
 from ..models import (
-    Batch, InvoiceComparison, InvoiceComparisonEvent, InvoiceDraftLine, InvoiceTicketRef, Project, Ticket,
-    User, as_utc,
+    Batch, InvoiceComparison, InvoiceComparisonEvent, InvoiceDraftLine, InvoiceTicketLink, InvoiceTicketRef,
+    Project, Ticket, User, as_utc,
 )
-from ..services import scan_manifest
+from ..services import scan_manifest, ticket_evidence
 from ..services.accounts import names_by_id
 from ..services.invoice_matching import (
     ParsedRef, TicketListError, check_tickets, format_ticket_list, parse_ticket_list, ticket_key,
@@ -100,6 +100,36 @@ class TicketCheckRow(BaseModel):
     tons_difference: Decimal | None
     flags: list[Literal["duplicate_on_invoice", "on_another_invoice"]]
     notes: list[str]
+    # unmatched | candidate | confirmed | conflicting | invalidated
+    evidence: str = "unmatched"
+    link_id: int | None = None
+
+
+class TicketLinkOut(BaseModel):
+    id: int
+    ticket_id: int
+    batch_id: int
+    listed_number: str
+    verified_tons: Decimal
+    state: Literal["confirmed", "invalidated"]
+    reasons: list[str]
+    confirmed_by: str | None
+    confirmed_at: datetime
+
+
+class EvidenceSummary(BaseModel):
+    listed_tickets: int
+    confirmed: int
+    candidates: int
+    conflicting: int
+    invalidated: int
+    unmatched: int
+    confirmed_tons: Decimal
+
+
+class TicketLinksIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ticket_ids: list[int] = Field(min_length=1, max_length=2000)
 
 
 class InvoiceLineOut(BaseModel):
@@ -132,6 +162,8 @@ class InvoiceLineOut(BaseModel):
     ticket_check: list[TicketCheckRow]
     ticket_check_counts: dict[str, int]
     itemized_billed_tons: Decimal | None
+    ticket_links: list[TicketLinkOut] = []
+    evidence: EvidenceSummary | None = None
     # The uploaded invoice this line was confirmed from, if any.
     source_document_id: int | None = None
     source_page: int | None = None
@@ -299,6 +331,35 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
     refs = _refs(db, item.id)
     check = check_tickets(db, organization_id, item, refs, all_tickets) if refs else None
 
+    # Links people confirmed, checked against the delivery as it is now.
+    links = ticket_evidence.active_links(db, item.id)
+    linked_tickets = {t.id: t for t in db.scalars(select(Ticket).where(
+        Ticket.id.in_([link.ticket_id for link in links])))} if links else {}
+    people = names_by_id(db, organization_id) if links else {}
+    link_changes = {link.id: ticket_evidence.changes_since_link(link, linked_tickets[link.ticket_id], item)
+                    for link in links}
+    links_by_ticket = {link.ticket_id: link for link in links}
+    row_tickets = {row.ticket.ticket_id for row in check.rows if row.ticket} if check else set()
+    held_elsewhere = ticket_evidence.links_elsewhere(db, item.id, row_tickets)
+    rows_out: list[TicketCheckRow] = []
+    for row in (check.rows if check else []):
+        out = TicketCheckRow.model_validate(row)
+        link = links_by_ticket.get(row.ticket.ticket_id) if row.ticket else None
+        elsewhere = held_elsewhere.get(row.ticket.ticket_id) if row.ticket else None
+        if link is not None:
+            out.link_id = link.id
+            out.evidence = "invalidated" if link_changes[link.id] else "confirmed"
+            if link_changes[link.id]:
+                out.notes.append("Linked earlier, but " + ", ".join(link_changes[link.id]) + ".")
+        elif elsewhere:
+            out.evidence = "conflicting"
+            out.notes.append(f"Already linked to invoice {elsewhere}.")
+        elif row.result in ("ambiguous", "tons_differ") or row.flags:
+            out.evidence = "conflicting"
+        elif row.result == "matched":
+            out.evidence = "candidate"
+        rows_out.append(out)
+
     # Tickets that never became records can't appear in any total above.
     intake_issues = scan_manifest.project_intake_issues(db, organization_id, item.project_id)
 
@@ -325,13 +386,20 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
     if check:
         warnings.extend(check.warnings)
     warnings.extend(intake_issues)
+    invalidated = [link for link in links if link_changes[link.id]]
+    if invalidated:
+        warnings.append(f"{len(invalidated)} confirmed ticket link(s) no longer hold because the delivery "
+                        "changed. Re-confirm or release them.")
+    newly_conflicting = sum(1 for row in rows_out if row.ticket and row.ticket.ticket_id in held_elsewhere)
+    if newly_conflicting:
+        warnings.append(f"{newly_conflicting} ticket(s) on this line are already linked to another invoice line.")
 
     if not verified:
         status = "no_verified_tickets"
-    elif pending or unclassified or unpriced or intake_issues or (check and check.incomplete):
+    elif pending or unclassified or unpriced or intake_issues or invalidated or (check and check.incomplete):
         status = "incomplete"
     elif (quantity_difference or arithmetic_difference or subtotal_difference or rate_mismatch
-          or (check and check.discrepancy)):
+          or newly_conflicting or (check and check.discrepancy)):
         status = "discrepancy"
     else:
         status = "matches"
@@ -356,7 +424,22 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int) -> Inv
         unpriced_count=len(unpriced), rate_mismatch_count=len(rate_mismatch),
         status=status, comparison_mode="itemized" if check else "totals_only",
         warnings=warnings,
-        ticket_check=[TicketCheckRow.model_validate(row) for row in check.rows] if check else [],
+        ticket_check=rows_out,
+        ticket_links=[TicketLinkOut(
+            id=link.id, ticket_id=link.ticket_id, batch_id=linked_tickets[link.ticket_id].batch_id,
+            listed_number=link.listed_number, verified_tons=link.verified_tons,
+            state="invalidated" if link_changes[link.id] else "confirmed", reasons=link_changes[link.id],
+            confirmed_by=people.get(link.confirmed_by_user_id), confirmed_at=as_utc(link.confirmed_at),
+        ) for link in links],
+        evidence=EvidenceSummary(
+            listed_tickets=sum(1 for row in rows_out if row.line is not None),
+            confirmed=sum(1 for row in rows_out if row.evidence == "confirmed"),
+            candidates=sum(1 for row in rows_out if row.evidence == "candidate"),
+            conflicting=sum(1 for row in rows_out if row.evidence == "conflicting"),
+            invalidated=sum(1 for row in rows_out if row.evidence == "invalidated"),
+            unmatched=sum(1 for row in rows_out if row.evidence == "unmatched"),
+            confirmed_tons=sum((link.verified_tons for link in links if not link_changes[link.id]), Decimal(0)),
+        ) if check else None,
         ticket_check_counts=check.counts if check else {},
         itemized_billed_tons=check.itemized_billed_tons if check else None,
         tickets=[
@@ -433,7 +516,68 @@ def correct_comparison(line_id: int, body: InvoiceLineIn, db: Session = Depends(
         ))
         _replace_refs(db, line_id, parsed)
     _assign(item, body)
+    db.flush()
+    # A link only stands while this line still lists and scopes that delivery.
+    result = _line_out(db, item, organization_id)
+    listed = {row.ticket.ticket_id for row in result.ticket_check if row.line is not None and row.ticket}
+    released = False
+    for link in ticket_evidence.active_links(db, line_id):
+        if link.ticket_id not in listed:
+            ticket_evidence.release(db, link, user.id, "invoice line corrected")
+            released = True
     db.commit()
+    return _line_out(db, item, organization_id) if released else result
+
+
+@router.post("/{line_id}/ticket-links", response_model=InvoiceLineOut)
+def confirm_ticket_links(line_id: int, body: TicketLinksIn, db: Session = Depends(get_db),
+                         user: User = Depends(require("invoices.manage"))):
+    """A manager confirms deliveries are billed in full by this line. All or
+    nothing. Only clean matches qualify, so partial billing can't be linked."""
+    organization_id = user.organization_id
+    item = _owned_or_404(db, organization_id, line_id)
+    rows = {row.ticket.ticket_id: row for row in _line_out(db, item, organization_id).ticket_check
+            if row.ticket and row.line is not None}
+    refused, wanted, stale = [], [], []
+    for ticket_id in dict.fromkeys(body.ticket_ids):
+        row = rows.get(ticket_id)
+        if row is None:
+            refused.append(f"#{ticket_id}: not listed on this invoice line")
+        elif row.evidence == "confirmed":
+            continue  # already linked: repeating is harmless
+        elif row.result == "matched" and not row.flags and row.evidence in ("candidate", "invalidated"):
+            wanted.append(row)
+            if row.evidence == "invalidated":
+                stale.append(row.link_id)
+        else:
+            refused.append(f"{row.invoice_ticket_number}: not a clean match ({row.evidence})")
+    if refused:
+        raise HTTPException(409, "Nothing was linked. " + "; ".join(refused[:10]) + ".")
+    for link in ticket_evidence.active_links(db, line_id):
+        if link.id in stale:
+            ticket_evidence.release(db, link, user.id, "re-confirmed by a person")
+    db.flush()
+    tickets = {t.id: t for t in db.scalars(select(Ticket).where(Ticket.id.in_([r.ticket.ticket_id for r in wanted])))}
+    try:
+        ticket_evidence.claim(db, line_id, [(tickets[r.ticket.ticket_id], r.invoice_ticket_number) for r in wanted], user.id)
+    except ticket_evidence.ClaimConflict as exc:
+        raise HTTPException(409, str(exc)) from None
+    db.commit()
+    return _line_out(db, item, organization_id)
+
+
+@router.post("/{line_id}/ticket-links/{link_id}/release", response_model=InvoiceLineOut)
+def release_ticket_link(line_id: int, link_id: int, db: Session = Depends(get_db),
+                        user: User = Depends(require("invoices.manage"))):
+    organization_id = user.organization_id
+    item = _owned_or_404(db, organization_id, line_id)
+    link = db.scalar(select(InvoiceTicketLink).where(
+        InvoiceTicketLink.id == link_id, InvoiceTicketLink.comparison_id == line_id))
+    if link is None:
+        raise HTTPException(404, "Ticket link not found")
+    if link.released_at is None:
+        ticket_evidence.release(db, link, user.id, "released by a person")
+        db.commit()
     return _line_out(db, item, organization_id)
 
 
@@ -543,6 +687,14 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
             str(ticket.tons) if ticket.tons is not None else "UNRESOLVED",
             str(ticket.confirmed_price) if ticket.confirmed_price is not None else "UNRESOLVED",
         ])
+    if result.ticket_links:
+        writer.writerow([])
+        writer.writerow(["Ticket evidence confirmed by people"])
+        writer.writerow(["Ticket number", "TicketFlow ticket ID", "Tons when confirmed", "State", "Confirmed by", "Confirmed at (UTC)", "Reasons"])
+        for link in result.ticket_links:
+            writer.writerow([_csv_text(link.listed_number), link.ticket_id, str(link.verified_tons), link.state,
+                             _csv_text(link.confirmed_by or "Not recorded"), link.confirmed_at.isoformat(),
+                             _csv_text("; ".join(link.reasons))])
     if result.comparison_mode == "itemized":
         writer.writerow([])
         writer.writerow(["Ticket-by-ticket check"])

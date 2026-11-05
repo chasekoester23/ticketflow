@@ -166,6 +166,19 @@ Upgrading adds migration `20261105_11` (new `name_aliases` table only).
 
 Upgrading adds migration `20261105_12` (three new tables only).
 
+## Confirming ticket evidence on an invoice
+
+The ticket-by-ticket check shows what looks true right now. **Confirm clean matches** records that a manager agrees a delivery is billed in full by that invoice line.
+
+- **One ticket, one active link.** The database enforces this, including under simultaneous requests.
+- **Only clean matches qualify:** one verified delivery, in scope, tons equal or not entered, no flags. A link is all or nothing for the tickets you submit.
+- **Partial billing isn't supported.** A ticket billed at different tons than verified can't be linked. See [the specification](docs/engineering/invoice-ticket-evidence-spec.md) for why.
+- **Links can stop holding.** If the delivery changes afterward (approval withdrawn, tons, number, supplier, material or date), the link reads "No longer holds" and the comparison goes back to Incomplete until someone re-confirms or releases it. Re-approving doesn't restore it automatically.
+- **Links never change** a ticket, an approval or a locked price, and don't approve anything. The overlapping-date rule still applies.
+- **The summary is separate from the figures,** for example "1 of 2 invoice tickets confirmed by a person". Links and releases are in the correction history and the CSV report.
+
+Upgrading adds migration `20261105_13` (one new table).
+
 ## Invoice comparison (Batch #16)
 
 The **Invoice comparison** page lets a project engineer manually enter one
