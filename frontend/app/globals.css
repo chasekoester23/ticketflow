@@ -125,7 +125,7 @@ a { text-underline-offset: 3px; }
 .tf-dialog-scrim { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(17, 24, 32, .52); }
 .tf-dialog { width: min(480px, 100%); max-height: 90vh; overflow: auto; border-radius: 6px; background: white; }
 .tf-segmented { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--tf-border); border-radius: 4px; background: #f4f5f6; }
-.tf-segmented button { padding: 4px 9px; border: 0; border-radius: 3px; background: transparent; color: #576677; font-size: 11px; font-weight: 650; }
+.tf-segmented button { white-space: nowrap; padding: 4px 9px; border: 0; border-radius: 3px; background: transparent; color: #576677; font-size: 11px; font-weight: 650; }
 .tf-segmented button[aria-pressed="true"] { background: white; color: #1d2b38; box-shadow: 0 0 0 1px var(--tf-border); }
 .tf-progress { height: 6px; overflow: hidden; border-radius: 3px; background: #e7eaee; }
 .tf-progress > div { height: 100%; background: #2f855a; transition: width .15s ease; }

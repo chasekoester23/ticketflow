@@ -60,38 +60,39 @@ export function ScanCheck({ manifest, onChanged, onOpenTicket, onError }: {
     void run(() => setExpectedCount(manifest.batch_id, value === "" ? null : Number(value)));
   }
 
-  return <section className="mt-4 rounded border border-[#e2e7ec]" aria-label="Scan check">
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e2e7ec] px-4 py-3">
-      <div>
-        <h3 className="text-[13px] font-bold text-[#344352]">Scan check</h3>
-        <p className="mt-0.5 text-[12px] text-[#526273]">
+  // One compact row while nothing needs a decision, so the scan and the Accept
+  // button stay on screen. Anything needing a person expands below it.
+  return <section className="mt-2.5 rounded border border-[#e2e7ec]" aria-label="Scan check">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 py-2">
+      <div className="min-w-0">
+        <h3 className="text-[12px] font-bold text-[#344352]">Scan check</h3>
+        <p className="text-[11px] text-[#526273]">
           {counts.pages} page{counts.pages === 1 ? "" : "s"} · {counts.slots} slots · {counts.records} tickets on record
           · {counts.suspected_blank} faint · {counts.empty} empty · {counts.confirmed_blank} confirmed blank
           {counts.skipped > 0 && <> · {counts.skipped} skipped</>}
           {counts.failed_files > 0 && <> · {counts.failed_files} failed file{counts.failed_files === 1 ? "" : "s"}</>}
         </p>
       </div>
-      <span className={"tf-status " + status.style}>{status.label}</span>
+      <div className="flex flex-wrap items-center gap-2">
+        {canCount ? <form className="flex items-center gap-1.5" onSubmit={saveCount}>
+          <label className="flex items-center gap-1.5 text-[11px] font-bold text-[#49586a]">Paper tickets you scanned
+            <input className="tf-field !min-h-0 w-16 !py-1 !text-xs" inputMode="numeric" pattern="[0-9]*" value={count}
+              onChange={(e) => setCount(e.target.value)}/>
+          </label>
+          <button type="submit" className="tf-secondary-button !min-h-0 !py-1" disabled={busy}>Save count</button>
+        </form> : <p className="text-[11px] text-[#526273]">Paper tickets entered: {manifest.expected_ticket_count ?? "not entered"}</p>}
+        {counts.legacy_files > 0 && canCount && <button type="button" className="tf-secondary-button !min-h-0 !py-1" disabled={busy}
+          onClick={() => void run(() => buildManifest(manifest.batch_id))}>Build scan check</button>}
+        <span className={"tf-status " + status.style}>{status.label}</span>
+      </div>
     </div>
 
-    {manifest.blockers.length > 0 && <ul className="list-disc space-y-1 border-b border-[#f0d8ad] bg-[#fff9ed] py-3 pl-8 pr-4 text-[12px] text-[#754e20]">
+    {manifest.blockers.length > 0 && <ul className="list-disc space-y-0.5 border-t border-[#f0d8ad] bg-[#fff9ed] py-2 pl-7 pr-4 text-[11px] text-[#754e20]">
       {manifest.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
     </ul>}
 
-    <div className="flex flex-wrap items-end gap-3 px-4 py-3">
-      {canCount ? <form className="flex items-end gap-2" onSubmit={saveCount}>
-        <label className="tf-field-label">Paper tickets you scanned
-          <input className="tf-field w-28" inputMode="numeric" pattern="[0-9]*" value={count}
-            onChange={(e) => setCount(e.target.value)}/>
-        </label>
-        <button type="submit" className="tf-secondary-button" disabled={busy}>Save count</button>
-      </form> : <p className="text-[12px] text-[#526273]">Paper tickets entered: {manifest.expected_ticket_count ?? "not entered"}</p>}
-      {counts.legacy_files > 0 && canCount && <button type="button" className="tf-secondary-button" disabled={busy}
-        onClick={() => void run(() => buildManifest(manifest.batch_id))}>Build scan check</button>}
-    </div>
-
     <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)} className="border-t border-[#e2e7ec]">
-      <summary className="cursor-pointer select-none px-4 py-2 text-[12px] font-semibold text-[#46566a]">Pages and slots</summary>
+      <summary className="cursor-pointer select-none px-3 py-1 text-[11px] font-semibold text-[#46566a]">Pages and slots</summary>
       {manifest.files.flatMap((file) => file.pages.map((page) => <div key={file.id + "-" + page.page}
         className="grid gap-4 border-t border-[#eef0f3] p-4 lg:grid-cols-[220px_minmax(0,1fr)]">
         <figure>

@@ -137,7 +137,11 @@ export function ReviewForm({
   };
 
   const filled = FIELDS.filter((field) => values[field.key].trim() !== "").length;
-  const flaggedFor = (words: string[]) => ticket.flags.some((fl) => words.some((w) => fl.startsWith(w)));
+  // A blank field on a manual ticket isn't news: the counter above already says
+  // so. Keep every other warning, and all of them for AI-read tickets.
+  const isMissingNotice = (flag: string) => /\bmissing\b/i.test(flag);
+  const flags = manual ? ticket.flags.filter((flag) => !isMissingNotice(flag)) : ticket.flags;
+  const flaggedFor = (words: string[]) => flags.some((fl) => words.some((w) => fl.startsWith(w)));
   const carry = CARRIED.filter((key) => !values[key] && previous[key]);
   const tonsProblem = values.tonnage.trim() !== "" && !/^\d*\.?\d{0,3}$/.test(values.tonnage.trim())
     ? "Enter tons as a number with up to 3 decimals, like 24.50. Don't convert pounds or yards here." : null;
@@ -180,37 +184,33 @@ export function ReviewForm({
 
   return (
     <aside ref={form} className="tf-review-pane rounded-md border border-[#dce1e6] bg-white">
-      <div className="tf-review-pane-scroll space-y-3 p-4">
-        <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[#e9edf0] pb-3">
-          <div>
+      <div className="tf-review-pane-scroll space-y-2.5 p-3.5">
+        <div className="border-b border-[#e9edf0] pb-2">
+          <div className="flex items-center justify-between gap-2">
             <h3 className="text-[14px] font-bold text-[#1d2b38]">{manual ? "Manual ticket entry" : "Extracted ticket information"}</h3>
-            <p className="mt-1 text-xs text-[#657182]">
-              {manual ? "Enter the six required fields from the original. No AI populated these values." : "Compare every value with the scan, then accept."}
-            </p>
+            <span className={`tf-status ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
           </div>
-          <span className={`tf-status ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
+          <p className="mt-1 text-[11px] text-[#657182]">
+            {manual ? <>No AI populated these values. Required fields entered: <strong className="tabular-nums text-[#293948]">{filled} / 6</strong></> : "Compare every value with the scan, then accept."}
+          </p>
         </div>
-        {manual && <div className="flex items-center justify-between gap-2 rounded border border-[#e5e9ec] bg-[#f8f9fa] px-3 py-2">
-          <span className="text-xs font-semibold text-[#526273]">Required fields entered</span>
-          <span className="text-xs font-bold tabular-nums text-[#293948]">{filled} / 6</span>
-        </div>}
         {ticket.error && <p className="text-sm text-red-700">{ticket.error}</p>}
         {ticket.flag_note && <p className="rounded border border-[#e5b993] bg-[#fff7ee] px-3 py-2 text-xs text-[#7c4518]" data-testid="flag-note">
           <strong>Set aside:</strong> {ticket.flag_note}
         </p>}
-        {ticket.flags.length > 0 && <ul className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          {ticket.flags.map((f) => <li key={f}>• {f}</li>)}
+        {flags.length > 0 && <ul className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          {flags.map((f) => <li key={f}>• {f}</li>)}
         </ul>}
         {ticket.duplicates.length > 0 && <ul className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-900">
           <li className="font-bold">Possible duplicate</li>
           {ticket.duplicates.map((d) => <li key={d}>• {d}</li>)}
         </ul>}
         {canEdit && carry.length > 0 && <button id="fill-repeats" type="button" onClick={fillRepeats}
-          className="flex w-full items-center justify-between gap-2 rounded border border-[#dce1e6] bg-[#f8f9fa] px-3 py-2 text-left text-xs font-semibold text-[#39495b] hover:bg-[#f1f3f5]">
+          className="flex w-full items-center justify-between gap-2 rounded border border-[#dce1e6] bg-[#f8f9fa] px-2.5 py-1.5 text-left text-[11px] font-semibold text-[#39495b] hover:bg-[#f1f3f5]">
           <span>{CARRY_LABEL}: same as previous ticket</span><kbd className="tf-kbd">Alt+D</kbd>
         </button>}
         {FIELDS.map((f, index) => <div key={f.key}>
-          <label htmlFor={"review-" + f.key} className={"mb-1 block text-xs text-[#526273] " + (f.critical ? "font-bold" : "font-medium")}>
+          <label htmlFor={"review-" + f.key} className={"mb-0.5 block text-[11px] text-[#526273] " + (f.critical ? "font-bold" : "font-medium")}>
             {f.label}{f.critical && <span className="ml-1 font-normal text-[#7a8796]">· check against the scan</span>}
           </label>
           <input
@@ -224,7 +224,7 @@ export function ReviewForm({
             readOnly={!canEdit}
             onKeyDown={(event) => nextOnEnter(event, index)}
             onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-            className={`w-full rounded border px-3 py-2 text-sm text-[#19232e] outline-none focus:ring-2 focus:ring-[#e6a97b] read-only:bg-[#f6f7f8] ${
+            className={`w-full rounded border px-2.5 py-1.5 text-sm text-[#19232e] outline-none focus:ring-2 focus:ring-[#e6a97b] read-only:bg-[#f6f7f8] ${
               flaggedFor(f.flagWords) ? "border-amber-400 bg-amber-50" : "border-[#cfd6de]"
             }`}
           />
@@ -302,12 +302,12 @@ export function ReviewForm({
         <TicketHistory ticketId={ticket.id} version={JSON.stringify([ticket.status, ticket.verified_at, ticket.unit_price_override, ...FIELDS.map((f) => ticket[f.key])])} />
       </div>
       {dirty && <p className="border-t border-[#e9edf0] bg-[#fff8ec] px-4 py-1.5 text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
-      {canEdit && <div className="flex flex-wrap gap-2 border-t border-[#dce1e6] bg-white p-3">
+      {canEdit && <div className="flex flex-wrap gap-1.5 border-t border-[#dce1e6] bg-white p-2.5">
         {canVerify ? <button
           ref={acceptButton}
           title="Review and accept ticket (Cmd/Ctrl + Enter)"
           onClick={() => run(act("verify"), true)}
-          className="min-w-40 flex-1 rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
+          className="w-full rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
           disabled={saving || Boolean(tonsProblem) || (ticket.status === "verified" && !dirty)}
         >
           {ticket.status === "verified" && !dirty ? "Accepted" : "Accept & next"}
@@ -315,22 +315,22 @@ export function ReviewForm({
           ref={acceptButton}
           title="Save and go to the next ticket (Cmd/Ctrl + Enter)"
           onClick={() => run(save, true)}
-          className="min-w-40 flex-1 rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
+          className="w-full rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
           disabled={saving || Boolean(tonsProblem)}
         >
           Save &amp; next
         </button>}
-        <button disabled={saving || !dirty || Boolean(tonsProblem)} onClick={() => run(save)} className="rounded border border-[#cfd6dc] px-3 py-2 text-xs font-semibold text-[#39495b] disabled:opacity-40">
+        <button disabled={saving || !dirty || Boolean(tonsProblem)} onClick={() => run(save)} className="rounded border border-[#cfd6dc] px-2.5 py-1.5 text-xs font-semibold text-[#39495b] disabled:opacity-40">
           Save changes
         </button>
         {canFlag && <button disabled={saving} onClick={() => run(act("flag", note), true)}
-          className="rounded border border-[#e5b993] bg-[#fff7ee] px-3 py-2 text-xs font-semibold text-[#97511e] hover:bg-[#fff0dc] disabled:opacity-40">
+          className="rounded border border-[#e5b993] bg-[#fff7ee] px-2.5 py-1.5 text-xs font-semibold text-[#97511e] hover:bg-[#fff0dc] disabled:opacity-40">
           Flag for later
         </button>}
         {canSkip && <button disabled={saving} onClick={() => {
           if (!window.confirm("Skip this ticket? Skipped tickets are excluded from exports and financial totals.")) return;
           run(act("skip"), true);
-        }} className="rounded px-2 py-2 text-xs font-medium text-[#657182] hover:text-[#19232e] disabled:opacity-40">
+        }} className="rounded px-2 py-1.5 text-xs font-medium text-[#657182] hover:text-[#19232e] disabled:opacity-40">
           Skip non-ticket
         </button>}
       </div>}
