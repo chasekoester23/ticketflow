@@ -307,13 +307,20 @@ test("a possible duplicate needs a deliberate decision, and declining changes no
     return json(route, { detail: { code: "possible_duplicate", message: "S ticket 10482 is already approved (batch 3, page 1, ticket 2)." } }, 409);
   });
   await page.goto("/upload?batch=5&ticket=101");
-  page.once("dialog", (dialog) => { expect(dialog.message()).toContain("already approved"); dialog.dismiss(); });
+  // Waits for each dialog in turn: a second handler registered while the first is
+  // still pending would answer the wrong question.
+  let dialog = page.waitForEvent("dialog");
   await page.getByRole("button", { name: "Accept & next" }).click();
-  await expect.poll(() => asks.length).toBe(1);
+  const first = await dialog;
+  expect(first.message()).toContain("already approved");
+  await first.dismiss();
+  await expect(page.getByRole("button", { name: "Accept & next" })).toBeEnabled();
   await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
+  expect(asks.length).toBe(1);
   expect(log.verified).toEqual([]);
-  page.once("dialog", (dialog) => dialog.accept());
+  dialog = page.waitForEvent("dialog");
   await page.getByRole("button", { name: "Accept & next" }).click();
+  await (await dialog).accept();
   await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
   expect(asks.at(-1)).toEqual({ confirm_duplicate: true });
 });
