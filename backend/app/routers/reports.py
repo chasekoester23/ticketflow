@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..config import settings
 from ..db import get_db
-from ..models import AuditEvent, Batch, InvoiceComparison, Project, ReviewTiming, Ticket, UploadedFile, User
+from ..models import AuditEvent, Batch, InvoiceComparison, Project, ReviewTiming, Ticket, UploadedFile, User, as_utc
 from ..permissions import require
 from ..schemas import TicketOut
 from ..services import aggregates
@@ -144,9 +144,10 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
         label = func.coalesce(func.nullif(column, ""), "(unknown)")
         rows = db.execute(filtered_query(select(
             label.label("name"), func.count().label("tickets"), aggregates.counted_tons().label("tons"),
-            aggregates.counted_cost().label("cost")), **filters).group_by(label).order_by(label))
+            aggregates.counted_cost().label("cost")), **filters).group_by(label))
+        # Sorted here: each database's own text ordering puts "(unknown)" somewhere else.
         return [{"name": r.name, "tickets": r.tickets, "tons": str(aggregates.as_decimal(r.tons, 3)),
-                 "cost": str(aggregates.as_decimal(r.cost, 2))} for r in rows]
+                 "cost": str(aggregates.as_decimal(r.cost, 2))} for r in sorted(rows, key=lambda r: r.name)]
 
     bq = select(Batch).where(Batch.organization_id == organization_id).order_by(Batch.id.desc()).limit(8)
     if project_id is not None:
@@ -172,7 +173,7 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
         "by_supplier": group(Ticket.supplier),
         "by_material": group(Ticket.material_type),
         "recent_batches": [
-            {"id": b.id, "status": b.status, "created_at": b.created_at, "files": file_counts.get(b.id, 0),
+            {"id": b.id, "status": b.status, "created_at": as_utc(b.created_at), "files": file_counts.get(b.id, 0),
              "project": projects.get(b.project_id)} for b in recent
         ],
     }

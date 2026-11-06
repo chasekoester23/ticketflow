@@ -23,6 +23,12 @@ class BatchOut(BaseModel):
     expected_ticket_count: int | None = None
     files: list[FileOut] = []
 
+    @field_validator("created_at")
+    @classmethod
+    def _utc(cls, value: datetime) -> datetime:
+        from .models import as_utc
+        return as_utc(value)
+
 
 class TicketOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

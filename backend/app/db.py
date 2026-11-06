@@ -13,10 +13,11 @@ def engine_options(url: str) -> dict:
         return {"connect_args": {"check_same_thread": False, "timeout": 30}, "hide_parameters": True}
     # A connection dropped by a restart or failover is replaced instead of failing
     # someone's request. A request stuck on a lock fails clearly instead of hanging.
-    # hide_parameters keeps ticket values out of error messages and logs.
+    # hide_parameters keeps ticket values out of error messages and logs. Timestamps
+    # come back in UTC whatever the server's own setting is, so a date never shifts.
     return {"hide_parameters": True, "pool_pre_ping": True, "pool_size": settings.database_pool_size, "max_overflow": settings.database_pool_overflow,
             "connect_args": {"options": f"-c lock_timeout={settings.database_lock_timeout_ms} "
-                                        f"-c statement_timeout={settings.database_statement_timeout_ms}"}}
+                                        f"-c statement_timeout={settings.database_statement_timeout_ms} -c timezone=UTC"}}
 
 
 def normalized_url(url: str) -> str:
