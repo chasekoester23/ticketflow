@@ -1,6 +1,7 @@
 """Application settings. Every secret comes from environment variables (or a local .env file)."""
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -47,6 +48,8 @@ class Settings(BaseSettings):
     max_total_pdf_pixels: int = 70_000_000
     max_image_pixels: int = 14_000_000
     render_dpi: int = 200
+    # How many times one job may take the worker down before it's set aside for a person.
+    max_job_attempts: int = Field(default=3, ge=1)
     # Tonnage above this is flagged for review (a single tandem truck rarely exceeds ~30 t).
     max_plausible_tons: float = 60.0
 

@@ -61,6 +61,14 @@ Logs hold route templates and never the query string, so filters containing name
 
 When someone sees "quote reference abc123", search the log for that id. Every response carries it in `X-Request-ID`.
 
+The worker also writes one JSON line per event to stderr, with ids and no document contents:
+
+```json
+{"at": "2026-11-06T17:04:12.331+00:00", "level": "INFO", "logger": "app.services.jobqueue", "event": "job_finished", "job_id": 12, "batch_id": 7, "attempt": 1, "batch_status": "ready_for_review", "ms": 8421}
+```
+
+Events: `worker_started`, `worker_stopped`, `worker_lock_held`, `job_started`, `job_finished`, `job_failed`, `job_requeued`, `job_gave_up`, `jobs_recovered`, `file_failed`, `heartbeat_failed`. An error line gives the error's type and where in the code it happened, and leaves out its message, because an error's text can quote a ticket.
+
 ## When something goes wrong
 
 | What you see | What it means | What to do |
@@ -68,6 +76,7 @@ When someone sees "quote reference abc123", search the log for that id. Every re
 | An upload stays "Uploaded" | Worker isn't running | Start it. The upload picks up where it was |
 | Worker says another holds the lock | One is already running | Check for an old terminal. The lock clears itself if a worker dies |
 | Worker died mid-job | Its job is reclaimed on next start | Start it. Finished files and reviewed tickets aren't redone |
+| A file says processing stopped the worker | That upload took the worker down 3 times (`MAX_JOB_ATTEMPTS`), so it was set aside and other uploads carried on | **Retry failed files** once. If it fails again, re-scan it or enter those tickets by hand |
 | A file shows Failed | That file couldn't be processed | **Retry failed files** on the batch, or enter those tickets by hand |
 | "Someone else changed this ticket" | A teammate saved first | Check the values now shown, then accept |
 | API refuses to start, naming a migration | Code is newer than the database | Follow Upgrading above |

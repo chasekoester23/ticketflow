@@ -3,18 +3,22 @@
 The FastAPI server records jobs transactionally and never executes extraction.
 A separate single-machine worker holds an exclusive OS file lock and drains
 pending jobs. A worker restart can safely reclaim interrupted jobs *after*
-the previous worker's OS lock is released.
+the previous worker's OS lock is released. A job that keeps taking the worker down
+is set aside after settings.max_job_attempts, so it can't stop everything behind it.
 
 This is not a distributed production queue, and AI calls are at-least-once.
+Logs here hold ids only. See job_log.py.
 """
 from __future__ import annotations
 
 import logging
 import secrets
+import time
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..models import Batch, ProcessingJob
 from . import pipeline
 from .extraction import ExtractionError
@@ -37,12 +41,17 @@ def enqueue(db: Session, batch_id: int, *, only_failed: bool = False) -> Process
     return job
 
 
+def _next_pending():
+    """The oldest job nobody is claiming. On PostgreSQL a row another worker has
+    locked is passed over rather than waited for. SQLite has no row locks and renders
+    no FOR UPDATE: it has one writer, and the guarded update below settles any tie."""
+    return (select(ProcessingJob.id).where(ProcessingJob.status == PENDING)
+            .order_by(ProcessingJob.id).limit(1).with_for_update(skip_locked=True))
+
+
 def claim_next(db: Session) -> tuple[int, str] | None:
     """Atomically transition one persisted pending job to running."""
-    candidate = db.scalar(
-        select(ProcessingJob.id).where(ProcessingJob.status == PENDING)
-        .order_by(ProcessingJob.id).limit(1)
-    )
+    candidate = db.scalar(_next_pending())
     if candidate is None:
         return None
     token = secrets.token_hex(24)
@@ -59,13 +68,40 @@ def claim_next(db: Session) -> tuple[int, str] | None:
 
 
 def recover_interrupted(db: Session) -> int:
-    """Call ONLY after acquiring the exclusive local worker file lock."""
-    result = db.execute(
-        update(ProcessingJob).where(ProcessingJob.status == RUNNING)
-        .values(status=PENDING, claim_token=None)
-    )
+    """Pick up what a dead worker left running. A job that has already taken the
+    worker down too many times is set aside instead of being tried again, otherwise
+    one bad scan stops all processing forever.
+
+    Call ONLY after acquiring the exclusive local worker file lock. Returns how many
+    jobs were found interrupted.
+    """
+    interrupted = list(db.scalars(select(ProcessingJob).where(ProcessingJob.status == RUNNING).order_by(ProcessingJob.id)))
+    for job in interrupted:
+        if (job.attempts or 0) >= settings.max_job_attempts:
+            _give_up(db, job)
+        else:
+            job.status, job.claim_token = PENDING, None
+            logger.warning("job_requeued", extra={"job_id": job.id, "batch_id": job.batch_id, "attempt": job.attempts})
     db.commit()
-    return result.rowcount
+    return len(interrupted)
+
+
+def _give_up(db: Session, job: ProcessingJob) -> None:
+    """Set one job aside for a person. Only files that never finished are touched:
+    finished files, tickets and approvals stay exactly as they are."""
+    message = (f"Processing this upload stopped the worker {job.attempts} times, so it was set aside to let other uploads continue. "
+               "Finished files and reviewed tickets weren't changed. Retry it, upload a re-scanned copy, or enter these tickets by hand.")
+    job.status, job.claim_token, job.error = FAILED, None, message
+    logger.error("job_gave_up", extra={"job_id": job.id, "batch_id": job.batch_id, "attempt": job.attempts,
+                                       "max_attempts": settings.max_job_attempts})
+    batch = db.get(Batch, job.batch_id)
+    if batch is None:
+        return
+    for file in batch.files:
+        if file.status in ("uploaded", "processing"):
+            file.status, file.error = FAILED, message
+    # If everything had already finished, there's nothing to retry, so don't say failed.
+    batch.status = FAILED if any(file.status == FAILED for file in batch.files) else "ready_for_review"
 
 
 def _mark_unfinished_files_failed(batch: Batch, message: str) -> None:
@@ -87,6 +123,9 @@ def execute_claimed(
     job = db.get(ProcessingJob, job_id)
     if job is None or job.status != RUNNING or job.claim_token != token:
         raise RuntimeError("Job not held by this worker")
+    ids = {"job_id": job_id, "batch_id": job.batch_id, "attempt": job.attempts}
+    started = time.perf_counter()
+    logger.info("job_started", extra=ids)
     try:
         batch = db.get(Batch, job.batch_id)
         if batch is None:
@@ -119,8 +158,10 @@ def execute_claimed(
         job.claim_token = None
         job.error = None
         db.commit()
+        logger.info("job_finished", extra={**ids, "batch_status": db.get(Batch, job.batch_id).status,
+                                           "ms": round((time.perf_counter() - started) * 1000)})
     except Exception:
-        logger.exception("Job %s failed unexpectedly", job_id)
+        logger.exception("job_failed", extra=ids)
         db.rollback()
         job = db.get(ProcessingJob, job_id)
         if job is None or job.claim_token != token:

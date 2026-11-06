@@ -172,7 +172,7 @@ def process_batch(db: Session, batch_id: int, extractor: Extractor | None, only_
             else:
                 process_file(db, file, batch.layout, extractor)
         except Exception:
-            logger.exception("Unexpected failure processing stored file id %s", file_id)
+            logger.exception("file_failed", extra={"batch_id": batch_id, "file_id": file_id})
             db.rollback()
             # An unexpected crop, storage or API error should not prevent
             # processing the other files or erase already reviewed tickets.

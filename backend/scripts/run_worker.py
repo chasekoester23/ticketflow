@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import settings  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
+from app.services import job_log  # noqa: E402
 from app.services.extraction import get_extractor  # noqa: E402
 from app.services.jobqueue import claim_next, execute_claimed, recover_interrupted  # noqa: E402
 from app.services.system_health import heartbeat_path  # noqa: E402
@@ -37,7 +38,7 @@ def _heartbeat(stop: threading.Event) -> None:
         try:
             path.touch()
         except OSError:
-            logger.warning("Could not update the worker heartbeat")
+            logger.warning("heartbeat_failed")
         stop.wait(HEARTBEAT_SECONDS)
 
 
@@ -50,15 +51,15 @@ def run(*, once: bool, poll_seconds: float) -> int:
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            logger.error("Another TicketFlow worker already holds the local lock")
+            logger.error("worker_lock_held")
             return 2
 
         with SessionLocal() as db:
             recovered = recover_interrupted(db)
             if recovered:
-                logger.warning("Recovered %s processing job(s) after worker restart", recovered)
+                logger.warning("jobs_recovered", extra={"jobs": recovered})
 
-        logger.info("Worker started; waiting for queued batches")
+        logger.info("worker_started", extra={"poll_seconds": poll_seconds})
         stop = threading.Event()
         beat = threading.Thread(target=_heartbeat, args=(stop,), daemon=True)
         beat.start()
@@ -72,10 +73,8 @@ def run(*, once: bool, poll_seconds: float) -> int:
                     time.sleep(poll_seconds)
                     continue
                 job_id, token = claimed
-                logger.info("Processing durable job %s", job_id)
                 with SessionLocal() as db:
                     execute_claimed(db, job_id, token, extractor_factory=get_extractor)
-                logger.info("Finished attempt for job %s", job_id)
                 if once:
                     return 0
         finally:
@@ -92,11 +91,11 @@ def main() -> int:
     args = parser.parse_args()
     if not 0.25 <= args.poll_seconds <= 60:
         parser.error("--poll-seconds must be between 0.25 and 60")
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    job_log.configure()
     try:
         return run(once=args.once, poll_seconds=args.poll_seconds)
     except KeyboardInterrupt:
-        logger.info("Worker stopped; running job will resume after next worker start")
+        logger.info("worker_stopped")
         return 0
 
 
