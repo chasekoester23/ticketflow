@@ -8,7 +8,12 @@ async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> 
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
     headers.set("X-TicketFlow-Request", "1");
   }
-  return fetch(url, { ...init, headers, credentials: "include", cache: "no-store" });
+  try {
+    return await fetch(url, { ...init, headers, credentials: "include", cache: "no-store" });
+  } catch {
+    // fetch only rejects when no answer came back: offline, server down, or dropped mid-request.
+    throw new ApiError("Couldn't reach the TicketFlow server. Check your connection and try again.", "network");
+  }
 }
 
 export type Role = "owner" | "manager" | "clerk" | "viewer";
@@ -100,18 +105,64 @@ export type Rate = { id: number; supplier_id: number; material_id: number; unit_
 /** An API refusal. `code` is set when the UI should react, not just show text. */
 export class ApiError extends Error {
   code?: string;
-  constructor(message: string, code?: string) {
+  status?: number;
+  /** The server's own reference for this request, to quote if it keeps happening. */
+  reference?: string;
+  retryAfterSeconds?: number;
+  constructor(message: string, code?: string, details: { status?: number; reference?: string; retryAfterSeconds?: number } = {}) {
     super(message);
     this.code = code;
+    Object.assign(this, details);
   }
 }
 
+/** A failed save or approval, in words for the person who just tried it. */
+export type Failure = { message: string; reference?: string; canRetry: boolean; signIn?: boolean };
+
+/**
+ * `noun` names what was attempted ("save", "approval"). `savedFirst` means the
+ * typed values reached the server before the next step failed, so they're safe.
+ */
+export function describeFailure(error: unknown, noun: string, savedFirst = false): Failure {
+  const api = error instanceof ApiError ? error : new ApiError((error as Error)?.message ?? "Something went wrong.");
+  const start = savedFirst ? `Your changes were saved, but this ${noun}` : `This ${noun}`;
+  const typed = savedFirst ? "" : " What you typed is still here.";
+  const reference = api.reference;
+  if (api.code === "network") {
+    return { message: `${start} may not have gone through, because TicketFlow couldn't reach the server. Check your connection, then try again.${typed}`, canRetry: true };
+  }
+  if (api.status === 401) {
+    return { message: `${start} did not go through, because you've been signed out. Sign in again and reopen this ticket.${savedFirst ? "" : " What you typed is kept on this computer."}`, canRetry: false, signIn: true };
+  }
+  if (api.status === 429) {
+    const wait = api.retryAfterSeconds ? `about ${api.retryAfterSeconds} second${api.retryAfterSeconds === 1 ? "" : "s"}` : "a minute";
+    return { message: `${start} did not go through, because too many requests reached the server at once. Wait ${wait}, then try again.${typed}`, reference, canRetry: true };
+  }
+  if (api.status === 503) {
+    const wait = api.retryAfterSeconds ? `in about ${api.retryAfterSeconds} second${api.retryAfterSeconds === 1 ? "" : "s"}` : "in a moment";
+    return { message: `${start} did not go through, because the server is busy or temporarily unavailable. Try again ${wait}.${typed}`, reference, canRetry: true };
+  }
+  if (api.status !== undefined && api.status >= 500) {
+    return { message: `${start} did not go through, because something went wrong on the server. Try again; if it keeps happening, quote the reference to whoever looks after TicketFlow.${typed}`, reference, canRetry: true };
+  }
+  // A refusal the server explained: trying the same thing again won't change the answer.
+  return { message: api.message, canRetry: false };
+}
+
+const FALLBACK_MESSAGE: Record<number, string> = {
+  429: "Too many requests reached the server at once. Wait a minute, then try again.",
+  503: "The server is busy or temporarily unavailable. Try again in a moment.",
+};
+
 async function check(res: Response) {
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail = FALLBACK_MESSAGE[res.status] ?? (res.status >= 500 ? "Something went wrong on the server. Try again." : res.statusText);
     let code: string | undefined;
+    let reference = res.headers.get("X-Request-ID") ?? undefined;
+    const retryAfter = Number(res.headers.get("Retry-After"));
     try {
       const body = await res.json();
+      if (typeof body.request_id === "string") reference = body.request_id;
       if (typeof body.detail === "string") {
         detail = body.detail;
       } else if (body.detail && typeof body.detail.message === "string") {
@@ -122,11 +173,17 @@ async function check(res: Response) {
           && window.location.pathname !== "/account") {
           window.location.replace("/account");
         }
-      } else {
+      } else if (Array.isArray(body.detail)) {
+        // The framework's field-by-field validation answer.
+        detail = body.detail.map((item: { loc?: unknown[]; msg?: string }) =>
+          [item.loc?.[item.loc.length - 1], item.msg].filter(Boolean).join(": ")).join("; ");
+      } else if (body.detail !== undefined) {
         detail = JSON.stringify(body.detail);
       }
     } catch {}
-    throw new ApiError(detail, code);
+    throw new ApiError(detail, code, {
+      status: res.status, reference, retryAfterSeconds: retryAfter > 0 ? retryAfter : undefined,
+    });
   }
   return res;
 }

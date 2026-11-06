@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ApiError, HistoryEntry, Ticket, getTicketHistory, patchTicket, ticketAction } from "../../lib/api";
+import { ApiError, Failure, HistoryEntry, Ticket, describeFailure, getTicketHistory, patchTicket, ticketAction } from "../../lib/api";
 import { TicketDraft, draftsFor, removeDraft, removeTicketDrafts, saveDraft } from "../../lib/drafts";
 import { useAccount } from "../account-context";
 
@@ -72,6 +72,14 @@ function recoverDrafts(ticket: Ticket, accountId: number, allowed: (key: string)
   };
 }
 
+type ActionName = "save" | "verify" | "flag" | "skip";
+const ACTION_NOUN: Record<ActionName, string> = { save: "save", verify: "approval", flag: "flag", skip: "skip" };
+/**
+ * A save or approval that failed. It lives with the page, because a form remounts
+ * when its ticket's revision changes, and a save can succeed before an approval fails.
+ */
+export type ActionFailure = Failure & { ticketId: number; action: ActionName; note?: string; advance: boolean };
+
 const clockTime = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 /** The nearest earlier value of each field in this batch, for typing help only. */
@@ -88,17 +96,20 @@ export function previousValues(tickets: Ticket[], index: number): PreviousValues
 }
 
 export function ReviewForm({
-  ticket, manual, catalog, previous, onChange, onAdvance, onAccepted, onDirtyChange, onError, onStale,
+  ticket, manual, catalog, previous, failure, onChange, onAdvance, onAccepted, onDirtyChange, onBusyChange, onError, onFailure, onStale,
 }: {
   ticket: Ticket;
   manual: boolean;
   catalog: { suppliers: string[]; materials: string[] };
   previous: PreviousValues;
+  failure: ActionFailure | null;
   onChange: (t: Ticket) => void;
   onAdvance: () => void;
   onAccepted: (ticketId: number) => void;
   onDirtyChange: (dirty: boolean) => void;
+  onBusyChange: (busy: boolean) => void;
   onError: (m: string | null) => void;
+  onFailure: (failure: ActionFailure | null) => void;
   onStale: (message: string) => void;
 }) {
   const { account, can } = useAccount();
@@ -119,8 +130,11 @@ export function ReviewForm({
     Object.fromEntries(FIELDS.map((f) => [f.key, recovered.same?.typed[f.key] ?? saved[f.key]])),
   );
   const [override, setOverride] = useState(recovered.same?.typed[OVERRIDE_KEY] ?? saved[OVERRIDE_KEY]);
-  const [note, setNote] = useState(recovered.same?.typed[NOTE_KEY] ?? saved[NOTE_KEY]);
+  const [note, setNote] = useState(recovered.same?.typed[NOTE_KEY] ?? failure?.note ?? saved[NOTE_KEY]);
   const [saving, setSaving] = useState(false);
+  // Read and set in the same moment as a click. Disabling the button waits for a
+  // render, which is too late for a double click to be stopped by it alone.
+  const inFlight = useRef(false);
   const acceptButton = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLElement>(null);
   const overrideDirty = override !== saved[OVERRIDE_KEY];
@@ -180,13 +194,18 @@ export function ReviewForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per ticket shown; the form remounts per ticket
   }, []);
 
-  function fail(e: unknown): null {
-    if (e instanceof ApiError && (e.code === "ticket_changed" || e.code === "record_changed")) onStale(e.message);
-    else onError((e as Error).message);
+  function fail(e: unknown, action: ActionName, advance: boolean, savedFirst = false): null {
+    if (e instanceof ApiError && (e.code === "ticket_changed" || e.code === "record_changed")) {
+      // A form on the latest values opens next; what was typed stays in its draft for a person to compare.
+      onStale(e.message);
+    } else {
+      onFailure({ ...describeFailure(e, ACTION_NOUN[action], savedFirst), ticketId: ticket.id, action, advance, note: action === "flag" ? note : undefined });
+    }
     return null;
   }
 
-  async function save(): Promise<Ticket | null> {
+  /** Send what's been typed, if anything. The form stays open until the whole action is done. */
+  async function write(action: ActionName, advance: boolean): Promise<Ticket | null> {
     const body: Record<string, string | null> = {};
     FIELDS.forEach((f) => {
       if (values[f.key] !== saved[f.key]) body[f.key] = values[f.key].trim() === "" ? null : values[f.key];
@@ -196,42 +215,61 @@ export function ReviewForm({
     try {
       const t = await patchTicket(ticket.id, body, ticket.revision);
       removeTicketDrafts(ticket.id);
-      onChange(t);
       return t;
     } catch (e) {
-      return fail(e);
+      return fail(e, action, advance);
     }
   }
 
-  async function run(action: () => Promise<Ticket | null>, advance = false) {
-    onError(null);
-    setSaving(true);
-    const t = await action();
-    setSaving(false);
-    if (t && advance) onAdvance();
-  }
-
-  const act = (name: "verify" | "flag" | "skip", noteText?: string) => async (): Promise<Ticket | null> => {
-    const written = await save();
+  async function perform(action: ActionName, noteText: string | undefined, advance: boolean): Promise<Ticket | null> {
+    const written = await write(action, advance);
     if (!written) return null;
+    const wroteChanges = written !== ticket;
+    if (action === "save") {
+      if (wroteChanges) onChange(written);
+      return written;
+    }
     try {
       let t: Ticket;
       try {
-        t = await ticketAction(ticket.id, name, written.revision, noteText === undefined ? undefined : { note: noteText });
+        t = await ticketAction(ticket.id, action, written.revision, noteText === undefined ? undefined : { note: noteText });
       } catch (e) {
         // Possibly the same delivery twice: a person decides, and it's recorded.
         if (!(e instanceof ApiError) || e.code !== "possible_duplicate") throw e;
-        if (!window.confirm(`${e.message}\n\nApprove this ticket anyway? Both will count toward totals, and your decision is recorded.`)) return null;
-        t = await ticketAction(ticket.id, name, written.revision, { confirm_duplicate: true });
+        if (!window.confirm(`${e.message}\n\nApprove this ticket anyway? Both will count toward totals, and your decision is recorded.`)) {
+          if (wroteChanges) onChange(written);
+          return null;
+        }
+        t = await ticketAction(ticket.id, action, written.revision, { confirm_duplicate: true });
       }
       removeTicketDrafts(ticket.id);
       onChange(t);
-      if (name === "verify") onAccepted(t.id);
+      if (action === "verify") onAccepted(t.id);
       return t;
     } catch (e) {
-      return fail(e);
+      fail(e, action, advance, wroteChanges);
+      if (wroteChanges) onChange(written);
+      return null;
     }
-  };
+  }
+
+  async function attempt(action: ActionName, noteText?: string, advance = false) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    onError(null);
+    onFailure(null);
+    onBusyChange(true);
+    setSaving(true);
+    let done: Ticket | null = null;
+    try {
+      done = await perform(action, noteText, advance);
+    } finally {
+      inFlight.current = false;
+      onBusyChange(false);
+      setSaving(false);
+    }
+    if (done && advance) onAdvance();
+  }
 
   const filled = FIELDS.filter((field) => values[field.key].trim() !== "").length;
   // A blank field on a manual ticket isn't news: the counter above already says
@@ -339,7 +377,7 @@ export function ReviewForm({
             type={f.type === "number" ? "text" : f.type ?? "text"}
             inputMode={f.type === "number" ? "decimal" : undefined}
             value={values[f.key]}
-            readOnly={!canEdit}
+            readOnly={!canEdit || saving}
             onKeyDown={(event) => nextOnEnter(event, index)}
             onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
             className={`w-full rounded border px-2.5 py-1.5 text-sm text-[#19232e] outline-none focus:ring-2 focus:ring-[#e6a97b] read-only:bg-[#f6f7f8] ${
@@ -388,7 +426,7 @@ export function ReviewForm({
             id="review-rate-override"
             inputMode="decimal"
             value={override}
-            readOnly={!canOverride}
+            readOnly={!canOverride || saving}
             aria-describedby={canOverride ? undefined : "review-rate-override-note"}
             onChange={(e) => setOverride(e.target.value)}
             className="mt-1 w-full rounded border border-[#cfd6de] px-3 py-2 text-sm read-only:bg-[#f6f7f8]"
@@ -419,12 +457,22 @@ export function ReviewForm({
         </label>}
         <TicketHistory ticketId={ticket.id} version={JSON.stringify([ticket.status, ticket.verified_at, ticket.unit_price_override, ...FIELDS.map((f) => ticket[f.key])])} />
       </div>
+      {failure && <div role="alert" data-testid="action-failure" className="border-t border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-900">
+        <p>{failure.message}</p>
+        {failure.reference && <p className="mt-0.5">Reference: <code className="font-mono font-semibold">{failure.reference}</code></p>}
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          {failure.canRetry && <button type="button" className="tf-secondary-button !min-h-0 !py-1" disabled={saving}
+            onClick={() => void attempt(failure.action, failure.note, failure.advance)}>{saving ? "Trying…" : "Try again"}</button>}
+          {failure.signIn && <a className="tf-secondary-button !min-h-0 !py-1" href="/login">Sign in again</a>}
+          <button type="button" className="font-semibold underline" onClick={() => onFailure(null)}>Dismiss</button>
+        </div>
+      </div>}
       {dirty && <p className="border-t border-[#e9edf0] bg-[#fff8ec] px-4 py-1.5 text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
       {canEdit && <div className="flex flex-wrap gap-1.5 border-t border-[#dce1e6] bg-white p-2.5">
         {canVerify ? <button
           ref={acceptButton}
           title="Review and accept ticket (Cmd/Ctrl + Enter)"
-          onClick={() => run(act("verify"), true)}
+          onClick={() => void attempt("verify", undefined, true)}
           className="w-full rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
           disabled={saving || Boolean(tonsProblem) || (ticket.status === "verified" && !dirty)}
         >
@@ -432,22 +480,22 @@ export function ReviewForm({
         </button> : <button
           ref={acceptButton}
           title="Save and go to the next ticket (Cmd/Ctrl + Enter)"
-          onClick={() => run(save, true)}
+          onClick={() => void attempt("save", undefined, true)}
           className="w-full rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
           disabled={saving || Boolean(tonsProblem)}
         >
           Save &amp; next
         </button>}
-        <button disabled={saving || !dirty || Boolean(tonsProblem)} onClick={() => run(save)} className="rounded border border-[#cfd6dc] px-2.5 py-1.5 text-xs font-semibold text-[#39495b] disabled:opacity-40">
+        <button disabled={saving || !dirty || Boolean(tonsProblem)} onClick={() => void attempt("save")} className="rounded border border-[#cfd6dc] px-2.5 py-1.5 text-xs font-semibold text-[#39495b] disabled:opacity-40">
           Save changes
         </button>
-        {canFlag && <button disabled={saving} onClick={() => run(act("flag", note), true)}
+        {canFlag && <button disabled={saving} onClick={() => void attempt("flag", note, true)}
           className="rounded border border-[#e5b993] bg-[#fff7ee] px-2.5 py-1.5 text-xs font-semibold text-[#97511e] hover:bg-[#fff0dc] disabled:opacity-40">
           Flag for later
         </button>}
         {canSkip && <button disabled={saving} onClick={() => {
           if (!window.confirm("Skip this ticket? Skipped tickets are excluded from exports and financial totals.")) return;
-          run(act("skip"), true);
+          void attempt("skip", undefined, true);
         }} className="rounded px-2 py-1.5 text-xs font-medium text-[#657182] hover:text-[#19232e] disabled:opacity-40">
           Skip non-ticket
         </button>}

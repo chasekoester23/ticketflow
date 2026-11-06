@@ -22,7 +22,7 @@ import {
 import { isSigningOut, removeTicketDrafts } from "../../lib/drafts";
 import { useAccount } from "../account-context";
 import { BatchQueue } from "./BatchQueue";
-import { ReviewForm, STATUS_LABEL, STATUS_STYLE, previousValues } from "./ReviewForm";
+import { ActionFailure, ReviewForm, STATUS_LABEL, STATUS_STYLE, previousValues } from "./ReviewForm";
 import { ScanCheck } from "./ScanCheck";
 import { ScanViewer, zoomIn, zoomOut } from "./ScanViewer";
 import { UploadPanel } from "./UploadPanel";
@@ -75,7 +75,11 @@ export default function Home() {
   // Leaving a ticket with unsaved work takes a person's say-so. Choosing to
   // discard it also drops its crash-recovery copy, or it would come back later.
   const shownTicket = useRef<number | undefined>(undefined);
+  const busyNow = useRef(false);
+  const reportBusy = useCallback((busy: boolean) => { busyNow.current = busy; }, []);
   const mayLeaveTicket = useCallback((question: string = DISCARD) => {
+    // A save or approval is on its way. Its answer decides what happens next.
+    if (busyNow.current) return false;
     if (!dirtyNow.current) return true;
     if (!window.confirm(question)) return false;
     if (shownTicket.current !== undefined) removeTicketDrafts(shownTicket.current);
@@ -88,6 +92,8 @@ export default function Home() {
   const [rotation, setRotation] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ActionFailure | null>(null);
+  const [offline, setOffline] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -209,7 +215,19 @@ export default function Home() {
   useEffect(() => {
     if (current && openedAt.current[current.id] === undefined) openedAt.current[current.id] = Date.now();
     setNotice(null);
+    setFailure(null);
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const update = () => setOffline(!navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
 
   // Fetch the next scans early, so moving on feels instant.
   useEffect(() => {
@@ -399,6 +417,10 @@ export default function Home() {
         </div>
       )}
 
+      {offline && <p role="status" data-testid="offline-notice" className="rounded border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900">
+        This computer has lost its connection. You can keep typing: it&apos;s kept here until you can save.
+      </p>}
+
       {!canUpload && !opening && (
         <p className="tf-notice" role="note">Your role is view-only. You can open batches and ticket images, but uploads and edits are disabled.</p>
       )}
@@ -572,11 +594,14 @@ export default function Home() {
             manual={batch?.intake_mode === "manual"}
             catalog={catalog}
             previous={previousValues(tickets, selected)}
+            failure={failure?.ticketId === current.id ? failure : null}
             onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
             onAdvance={advance}
             onAccepted={onAccepted}
             onDirtyChange={reportDirty}
+            onBusyChange={reportBusy}
             onError={setError}
+            onFailure={setFailure}
             onStale={onStale}
           />
         </section>
