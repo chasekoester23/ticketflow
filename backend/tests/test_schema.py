@@ -35,11 +35,20 @@ def blank_database(tmp_path):
         admin.dispose()
 
 
+# Sorted descending with blanks last, which SQLite can't index and the models
+# can't declare for one database only. Its own test below checks it's there.
+POSTGRES_ONLY_INDEX = "ix_tickets_org_date_recent"
+
+
+def _compared(_object, name, type_, _reflected, _compare_to) -> bool:
+    return not (type_ == "index" and name == POSTGRES_ONLY_INDEX)
+
+
 def _differences(url: str) -> list:
     engine = create_engine(normalized_url(url), poolclass=NullPool)
     try:
         with engine.connect() as connection:
-            context = MigrationContext.configure(connection, opts={"compare_type": True})
+            context = MigrationContext.configure(connection, opts={"compare_type": True, "include_object": _compared})
             return compare_metadata(context, Base.metadata)
     finally:
         engine.dispose()
@@ -59,6 +68,20 @@ def test_migrating_twice_changes_nothing(blank_database):
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == head_revision()
     engine.dispose()
     assert _differences(blank_database) == []
+
+
+def test_postgres_has_the_index_for_newest_deliveries_first(blank_database):
+    command.upgrade(alembic_config(blank_database), "head")
+    engine = create_engine(normalized_url(blank_database), poolclass=NullPool)
+    with engine.connect() as connection:
+        found = connection.execute(text(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = :name"), {"name": POSTGRES_ONLY_INDEX}).scalar() \
+            if engine.dialect.name == "postgresql" else None
+    dialect = engine.dialect.name
+    engine.dispose()
+    if dialect != "postgresql":
+        pytest.skip("PostgreSQL only")
+    assert "organization_id, delivery_date DESC NULLS LAST, id DESC" in found
 
 
 def test_the_baseline_doesnt_depend_on_the_current_models():
