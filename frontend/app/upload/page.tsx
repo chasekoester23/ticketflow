@@ -19,6 +19,7 @@ import {
   retryBatch,
   ticketImageUrl,
 } from "../../lib/api";
+import { isSigningOut, removeTicketDrafts } from "../../lib/drafts";
 import { useAccount } from "../account-context";
 import { BatchQueue } from "./BatchQueue";
 import { ReviewForm, STATUS_LABEL, STATUS_STYLE, previousValues } from "./ReviewForm";
@@ -70,6 +71,15 @@ export default function Home() {
   const reportDirty = useCallback((dirty: boolean) => {
     dirtyNow.current = dirty;
     setFormDirty(dirty);
+  }, []);
+  // Leaving a ticket with unsaved work takes a person's say-so. Choosing to
+  // discard it also drops its crash-recovery copy, or it would come back later.
+  const shownTicket = useRef<number | undefined>(undefined);
+  const mayLeaveTicket = useCallback((question: string = DISCARD) => {
+    if (!dirtyNow.current) return true;
+    if (!window.confirm(question)) return false;
+    if (shownTicket.current !== undefined) removeTicketDrafts(shownTicket.current);
+    return true;
   }, []);
   const [reviewFilter, setReviewFilter] = useState<"pending" | "flagged" | "all">("pending");
   const [queueSearch, setQueueSearch] = useState("");
@@ -146,6 +156,7 @@ export default function Home() {
 
   // Keep the address on the current ticket, so a reload or a shared link lands here.
   const current = tickets[selected];
+  shownTicket.current = current?.id;
   useEffect(() => {
     if (batchId === undefined) return;
     const suffix = current ? `&ticket=${current.id}` : "";
@@ -160,7 +171,7 @@ export default function Home() {
   }, [batch, refresh]);
 
   async function onUploaded(uploaded: Batch) {
-    if (dirtyNow.current && !window.confirm("You have unsaved ticket corrections. Discard them and open the new upload?")) return;
+    if (!mayLeaveTicket("You have unsaved ticket corrections. Discard them and open the new upload?")) return;
     setSelected(0);
     reportDirty(false);
     setReviewFilter("pending");
@@ -248,7 +259,7 @@ export default function Home() {
 
   function selectTicket(index: number) {
     if (index === selected) return;
-    if (dirtyNow.current && !window.confirm(DISCARD)) return;
+    if (!mayLeaveTicket()) return;
     setSelected(index);
     reportDirty(false);
   }
@@ -274,7 +285,7 @@ export default function Home() {
         event.preventDefault();
         const next = selected + step;
         if (next < 0 || next >= count) return;
-        if (dirtyNow.current && !window.confirm(DISCARD)) return;
+        if (!mayLeaveTicket()) return;
         setSelected(next);
         reportDirty(false);
       };
@@ -304,7 +315,7 @@ export default function Home() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [reportDirty]);
+  }, [reportDirty, mayLeaveTicket]);
 
   // Complete the pending queue first, then automatically revisit flagged tickets.
   // A ticket is never auto-accepted; only the explicit Accept action verifies.
@@ -349,6 +360,7 @@ export default function Home() {
   useEffect(() => {
     if (!formDirty) return;
     const warn = (event: BeforeUnloadEvent) => {
+      if (isSigningOut()) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -397,7 +409,7 @@ export default function Home() {
         <section className="tf-panel px-4 py-3" aria-live="polite">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
-              <a href="/upload" className="tf-link" onClick={(event) => { if (dirtyNow.current && !window.confirm(DISCARD)) event.preventDefault(); }}>← All uploads</a>
+              <a href="/upload" className="tf-link" onClick={(event) => { if (!mayLeaveTicket()) event.preventDefault(); }}>← All uploads</a>
               <h1 className="mt-0.5 text-[15px] font-bold text-[#1d2b38]">
                 Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}
                 {project && <span className="ml-2 font-medium text-[#657182]">{project.code} · {project.name}</span>}

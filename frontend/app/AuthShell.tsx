@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { getAuthMe, logOut, type Account, type Permission } from "../lib/api";
+import { beginSignOut, clearAllDrafts, clearOtherAccountsDrafts, hasDrafts } from "../lib/drafts";
 import { AccountContext } from "./account-context";
 
 type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "team" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers" | "report" | "health";
@@ -83,6 +84,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
         window.location.replace("/account");
         return;
       }
+      clearOtherAccountsDrafts(me.id);
       setAccount(me);
       setChecking(false);
     }).catch(() => {
@@ -139,7 +141,10 @@ export default function AuthShell({ children }: { children: ReactNode }) {
           </a>
           <button type="button" className="tf-sign-out" aria-label="Sign out" title="Sign out"
             onClick={async () => {
-              try { await logOut(); } finally { window.location.replace("/login"); }
+              // Typed values kept for crash recovery mustn't outlive a sign-out on a shared computer.
+              if (hasDrafts() && !window.confirm("Signing out clears unsaved ticket work kept on this computer. Sign out anyway?")) return;
+              beginSignOut();
+              try { await logOut(); } finally { clearAllDrafts(); window.location.replace("/login"); }
             }}><Icon name="logout" size={18} /><span>Sign out</span></button>
         </div>
       </header>

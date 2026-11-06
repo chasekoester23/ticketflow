@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ApiError, HistoryEntry, Ticket, getTicketHistory, patchTicket, ticketAction } from "../../lib/api";
+import { TicketDraft, draftsFor, removeDraft, removeTicketDrafts, saveDraft } from "../../lib/drafts";
 import { useAccount } from "../account-context";
 
 export const STATUS_STYLE: Record<string, string> = {
@@ -32,7 +33,46 @@ const FIELDS: { key: FieldKey; label: string; type?: string; flagWords: string[]
 const CARRIED: FieldKey[] = ["material_type", "supplier", "job_location"];
 const CARRY_LABEL = "Material, supplier and job";
 
+const OVERRIDE_KEY = "unit_price_override";
+const NOTE_KEY = "flag_note";
+const DRAFT_LABEL: Record<string, string> = {
+  ...Object.fromEntries(FIELDS.map((f) => [f.key, f.label])),
+  [OVERRIDE_KEY]: "Override rate",
+  [NOTE_KEY]: "Note",
+};
+
 export type PreviousValues = Partial<Record<FieldKey, string>>;
+
+/** The saved values of a ticket as the form holds them, with blanks as empty text. */
+function savedValues(ticket: Ticket): Record<string, string> {
+  return {
+    ...Object.fromEntries(FIELDS.map((f) => [f.key, (ticket[f.key] as string | null) ?? ""])),
+    [OVERRIDE_KEY]: ticket.unit_price_override ?? "",
+    [NOTE_KEY]: ticket.flag_note ?? "",
+  };
+}
+
+/**
+ * Anything still unsaved from before this form opened. A draft at this revision
+ * was typed over these exact values, so it comes back. A draft at another revision
+ * was typed over values that have since changed: a person decides what to keep.
+ */
+function recoverDrafts(ticket: Ticket, accountId: number, allowed: (key: string) => boolean) {
+  const saved = savedValues(ticket);
+  const revision = ticket.revision ?? "";
+  const usable = (draft: TicketDraft) => {
+    const typed = Object.fromEntries(Object.entries(draft.typed).filter(([key, text]) => allowed(key) && text !== saved[key]));
+    if (!Object.keys(typed).length) removeDraft(draft.ticketId, draft.revision);
+    return { ...draft, typed };
+  };
+  const drafts = draftsFor(ticket.id, accountId).map(usable).filter((draft) => Object.keys(draft.typed).length > 0);
+  return {
+    same: drafts.find((draft) => draft.revision === revision) ?? null,
+    older: drafts.find((draft) => draft.revision !== revision) ?? null,
+  };
+}
+
+const clockTime = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 /** The nearest earlier value of each field in this batch, for typing help only. */
 export function previousValues(tickets: Ticket[], index: number): PreviousValues {
@@ -61,25 +101,71 @@ export function ReviewForm({
   onError: (m: string | null) => void;
   onStale: (message: string) => void;
 }) {
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(FIELDS.map((f) => [f.key, (ticket[f.key] as string | null) ?? ""])),
-  );
-  const [saving, setSaving] = useState(false);
-  const acceptButton = useRef<HTMLButtonElement>(null);
-  const form = useRef<HTMLElement>(null);
-  const { can } = useAccount();
+  const { account, can } = useAccount();
+  const accountId = account?.id ?? 0;
   const canEdit = can("tickets.edit");
   const canVerify = can("tickets.verify");
   const canFlag = can("tickets.flag");
   const canSkip = can("tickets.skip");
   const canOverride = can("tickets.price_override");
-  const [override, setOverride] = useState(ticket.unit_price_override ?? "");
-  const [note, setNote] = useState(ticket.flag_note ?? "");
-  const overrideDirty = override !== (ticket.unit_price_override ?? "");
+  const saved = savedValues(ticket);
+  const revision = ticket.revision ?? "";
 
-  const dirty = overrideDirty || FIELDS.some((f) => values[f.key] !== ((ticket[f.key] as string | null) ?? ""));
+  const [recovered] = useState(() => recoverDrafts(ticket, accountId, (key) =>
+    canEdit && (key !== OVERRIDE_KEY || canOverride) && (key !== NOTE_KEY || canFlag)));
+  const [restoredAt, setRestoredAt] = useState(recovered.same?.savedAt ?? null);
+  const [olderDraft, setOlderDraft] = useState(recovered.older);
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(FIELDS.map((f) => [f.key, recovered.same?.typed[f.key] ?? saved[f.key]])),
+  );
+  const [override, setOverride] = useState(recovered.same?.typed[OVERRIDE_KEY] ?? saved[OVERRIDE_KEY]);
+  const [note, setNote] = useState(recovered.same?.typed[NOTE_KEY] ?? saved[NOTE_KEY]);
+  const [saving, setSaving] = useState(false);
+  const acceptButton = useRef<HTMLButtonElement>(null);
+  const form = useRef<HTMLElement>(null);
+  const overrideDirty = override !== saved[OVERRIDE_KEY];
+
+  const dirty = overrideDirty || FIELDS.some((f) => values[f.key] !== saved[f.key]);
   // Before paint, so the unsaved-work guard is never a keystroke behind.
   useLayoutEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+
+  // Keep what's been typed but not saved, on every change, for a crash or a closed tab.
+  useEffect(() => {
+    if (!canEdit) return;
+    const typed: Record<string, string> = {};
+    FIELDS.forEach((f) => { if (values[f.key] !== saved[f.key]) typed[f.key] = values[f.key]; });
+    if (overrideDirty) typed[OVERRIDE_KEY] = override;
+    if (note !== saved[NOTE_KEY]) typed[NOTE_KEY] = note;
+    if (Object.keys(typed).length) saveDraft(ticket.id, revision, accountId, typed);
+    else removeDraft(ticket.id, revision);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- saved values only change by remounting this form
+  }, [values, override, note]);
+
+  function discardRestored() {
+    setValues(Object.fromEntries(FIELDS.map((f) => [f.key, saved[f.key]])));
+    setOverride(saved[OVERRIDE_KEY]);
+    setNote(saved[NOTE_KEY]);
+    setRestoredAt(null);
+  }
+
+  function applyTyped(keys: string[]) {
+    if (!olderDraft) return;
+    const pick = (key: string) => olderDraft.typed[key];
+    setValues((current) => ({ ...current, ...Object.fromEntries(keys.filter((key) => key in current).map((key) => [key, pick(key)])) }));
+    if (keys.includes(OVERRIDE_KEY)) setOverride(pick(OVERRIDE_KEY));
+    if (keys.includes(NOTE_KEY)) setNote(pick(NOTE_KEY));
+    const left = Object.fromEntries(Object.entries(olderDraft.typed).filter(([key]) => !keys.includes(key)));
+    if (Object.keys(left).length) {
+      setOlderDraft({ ...olderDraft, typed: left });
+      saveDraft(olderDraft.ticketId, olderDraft.revision, accountId, left);
+    } else {
+      dropOlderDraft();
+    }
+  }
+  function dropOlderDraft() {
+    if (olderDraft) removeDraft(olderDraft.ticketId, olderDraft.revision);
+    setOlderDraft(null);
+  }
 
   // Put the cursor where work starts, unless the person is typing somewhere else.
   // Before paint: once a ticket is on screen the cursor is settled, so the next
@@ -103,13 +189,13 @@ export function ReviewForm({
   async function save(): Promise<Ticket | null> {
     const body: Record<string, string | null> = {};
     FIELDS.forEach((f) => {
-      const orig = (ticket[f.key] as string | null) ?? "";
-      if (values[f.key] !== orig) body[f.key] = values[f.key].trim() === "" ? null : values[f.key];
+      if (values[f.key] !== saved[f.key]) body[f.key] = values[f.key].trim() === "" ? null : values[f.key];
     });
     if (overrideDirty) body.unit_price_override = override.trim() === "" ? null : override;
     if (!Object.keys(body).length) return ticket;
     try {
       const t = await patchTicket(ticket.id, body, ticket.revision);
+      removeTicketDrafts(ticket.id);
       onChange(t);
       return t;
     } catch (e) {
@@ -126,18 +212,19 @@ export function ReviewForm({
   }
 
   const act = (name: "verify" | "flag" | "skip", noteText?: string) => async (): Promise<Ticket | null> => {
-    const saved = await save();
-    if (!saved) return null;
+    const written = await save();
+    if (!written) return null;
     try {
       let t: Ticket;
       try {
-        t = await ticketAction(ticket.id, name, saved.revision, noteText === undefined ? undefined : { note: noteText });
+        t = await ticketAction(ticket.id, name, written.revision, noteText === undefined ? undefined : { note: noteText });
       } catch (e) {
         // Possibly the same delivery twice: a person decides, and it's recorded.
         if (!(e instanceof ApiError) || e.code !== "possible_duplicate") throw e;
         if (!window.confirm(`${e.message}\n\nApprove this ticket anyway? Both will count toward totals, and your decision is recorded.`)) return null;
-        t = await ticketAction(ticket.id, name, saved.revision, { confirm_duplicate: true });
+        t = await ticketAction(ticket.id, name, written.revision, { confirm_duplicate: true });
       }
+      removeTicketDrafts(ticket.id);
       onChange(t);
       if (name === "verify") onAccepted(t.id);
       return t;
@@ -204,6 +291,27 @@ export function ReviewForm({
             {manual ? <>No AI populated these values. Required fields entered: <strong className="tabular-nums text-[#293948]">{filled} / 6</strong></> : "Compare every value with the scan, then accept."}
           </p>
         </div>
+        {restoredAt && <div role="status" data-testid="draft-restored" className="rounded border border-[#e5b993] bg-[#fff7ee] px-3 py-2 text-xs leading-relaxed text-[#7c4518]">
+          <strong>Restored unsaved work</strong> you typed on {clockTime(restoredAt)}. It isn&apos;t saved yet: check it against the scan, then save or accept.
+          <button type="button" className="tf-link ml-2" onClick={discardRestored}>Discard it</button>
+        </div>}
+        {olderDraft && <section aria-label="Values you typed on an earlier version" data-testid="draft-conflict" className="rounded border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+          <p className="font-bold">This ticket changed after you typed these values.</p>
+          <p className="mt-0.5 leading-relaxed">You typed them on {clockTime(olderDraft.savedAt)}. They haven&apos;t been applied. Compare them with the current values and the scan.</p>
+          <table className="mt-2 w-full text-left text-[11px]">
+            <thead><tr><th className="pb-1 pr-2 font-semibold">Field</th><th className="pb-1 pr-2 font-semibold">You typed</th><th className="pb-1 pr-2 font-semibold">Current</th><th><span className="sr-only">Choose</span></th></tr></thead>
+            <tbody>{Object.entries(olderDraft.typed).map(([key, text]) => <tr key={key} className="border-t border-amber-200 align-top">
+              <td className="py-1 pr-2">{DRAFT_LABEL[key] ?? key}</td>
+              <td className="py-1 pr-2 font-semibold [overflow-wrap:anywhere]">{text || "blank"}</td>
+              <td className="py-1 pr-2 [overflow-wrap:anywhere]">{saved[key] || "blank"}</td>
+              <td className="py-1 text-right"><button type="button" className="tf-link whitespace-nowrap text-[11px]" onClick={() => applyTyped([key])}>Use mine<span className="sr-only"> for {DRAFT_LABEL[key] ?? key}</span></button></td>
+            </tr>)}</tbody>
+          </table>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" className="tf-secondary-button !min-h-0 !py-1" onClick={() => applyTyped(Object.keys(olderDraft.typed))}>Use all I typed</button>
+            <button type="button" className="tf-secondary-button !min-h-0 !py-1" onClick={dropOlderDraft}>Discard what I typed</button>
+          </div>
+        </section>}
         {ticket.error && <p className="text-sm text-red-700">{ticket.error}</p>}
         {ticket.flag_note && <p className="rounded border border-[#e5b993] bg-[#fff7ee] px-3 py-2 text-xs text-[#7c4518]" data-testid="flag-note">
           <strong>Set aside:</strong> {ticket.flag_note}
