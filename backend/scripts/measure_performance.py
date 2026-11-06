@@ -76,8 +76,9 @@ def _keys(values: dict) -> dict:
         values.setdefault("organization_id", MAIN_ORG)
     if "lock_version" in columns:
         values["lock_version"] = 1
-    if "approved_cost" in columns and values["status"] == "verified":
-        values["approved_cost"] = (values["tonnage"] * values["applied_unit_price"]).quantize(Decimal("0.01"))
+    if "approved_cost" in columns:  # Every row of a bulk insert needs the same columns.
+        values["approved_cost"] = (values["tonnage"] * values["applied_unit_price"]).quantize(Decimal("0.01")) \
+            if values["status"] == "verified" else None
     return values
 
 
