@@ -129,7 +129,7 @@ def test_excel_export_neutralizes_formulas_but_keeps_numeric_values():
         job_location="  @SUM(1,1)",
         status="verified",
         tonnage_confirmed=True,
-        file=SimpleNamespace(original_name="=WEBSERVICE(\"https://example.test\").pdf"),
+        file_name="=WEBSERVICE(\"https://example.test\").pdf",
         source_page=1,
         position=0,
         verified_by_user_id=9,
@@ -137,7 +137,7 @@ def test_excel_export_neutralizes_formulas_but_keeps_numeric_values():
     )
     # A person's display name is user-controlled text too.
     workbook = load_workbook(io.BytesIO(build_workbook(
-        [ticket], {123: Decimal("2.00")}, {9: "=cmd|' /C calc'!A0"},
+        [ticket], {9: "=cmd|' /C calc'!A0"}, price_of=lambda _ticket: Decimal("2.00"),
     )))
     sheet = workbook["Delivery Records"]
     for letter in ("A", "C", "E", "F", "J", "K"):

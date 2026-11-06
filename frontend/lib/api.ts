@@ -559,7 +559,10 @@ export async function voidInvoiceDocument(id: number) {
 }
 
 export async function getInvoiceComparisons(): Promise<InvoiceLineComparison[]> {
-  return (await check(await apiFetch(API + "/api/invoice-comparisons"))).json();
+  return (await check(await apiFetch(API + "/api/invoice-comparisons?summary=true"))).json();
+}
+export async function getInvoiceComparison(id: number): Promise<InvoiceLineComparison> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id))).json();
 }
 export async function saveInvoiceComparison(
   body: InvoiceLineInput, id?: number, revision?: string,

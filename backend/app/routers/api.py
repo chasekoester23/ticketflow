@@ -499,6 +499,7 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
         t.price_snapshot_state = "pending"
         t.applied_unit_price = None
         t.applied_price_source = None
+        t.approved_cost = None
     _refresh_flags(t)
     db.commit()
     return _out(db, t, organization_id)
@@ -537,10 +538,10 @@ def verify_ticket(ticket_id: int, body: VerifyIn | None = Body(default=None), db
         # The same supplier ticket number is very likely the same delivery, but a
         # supplier could reuse one. So a person decides, and that's on the record.
         if t.ticket_number and t.supplier:
-            take_turn(db, "approve-number", organization_id, norm(t.supplier), t.ticket_number)
-            other = next((o for o in db.scalars(select(Ticket).where(
-                Ticket.organization_id == organization_id, Ticket.ticket_number == t.ticket_number,
-                Ticket.id != t.id, Ticket.status == "verified")) if norm(o.supplier) == norm(t.supplier)), None)
+            take_turn(db, "approve-number", organization_id, norm(t.supplier), t.number_key)
+            other = db.scalar(select(Ticket).where(
+                Ticket.organization_id == organization_id, Ticket.number_key == t.number_key,
+                Ticket.supplier_key == t.supplier_key, Ticket.id != t.id, Ticket.status == "verified").limit(1))
             if other is not None:
                 if not (body and body.confirm_duplicate):
                     raise HTTPException(409, {
@@ -561,6 +562,7 @@ def verify_ticket(ticket_id: int, body: VerifyIn | None = Body(default=None), db
     t.applied_unit_price = price
     t.applied_price_source = source
     t.price_snapshot_state = "priced" if price is not None else "unpriced"
+    t.approved_cost = pricing_svc.to_cents(t.tonnage * price) if price is not None and t.tonnage is not None else None
     t.status, t.tonnage_confirmed = "verified", True
     if t.flag_note is not None:  # Settled by this approval; the audit trail keeps it.
         _audit(db, t, user, "flag_note", t.flag_note, None)
@@ -590,6 +592,7 @@ def flag_ticket(ticket_id: int, body: FlagIn | None = Body(default=None), db: Se
     t.price_snapshot_state = "pending"
     t.applied_unit_price = None
     t.applied_price_source = None
+    t.approved_cost = None
     db.commit()
     return _out(db, t, organization_id)
 
@@ -607,6 +610,7 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db),
     t.price_snapshot_state = "pending"
     t.applied_unit_price = None
     t.applied_price_source = None
+    t.approved_cost = None
     db.commit()
     return _out(db, t, organization_id)
 
@@ -639,11 +643,10 @@ def export_batch(batch_id: int, db: Session = Depends(get_db), organization_id: 
         Batch.id == batch_id, Batch.organization_id == organization_id
     )) is None:
         raise HTTPException(404, "Batch not found")
-    tickets = db.scalars(
-        select(Ticket).where(Ticket.batch_id == batch_id).order_by(Ticket.file_id, Ticket.source_page, Ticket.position)).all()
     table = pricing_svc.rate_table(db, organization_id)
-    prices = {t.id: p for t in tickets if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
-    data = export_svc.build_workbook(list(tickets), prices, names_by_id(db, organization_id))
+    query = export_svc.row_query().where(Ticket.batch_id == batch_id)
+    data = export_svc.build_workbook(export_svc.rows(db, query, order=(Ticket.file_id, Ticket.source_page, Ticket.position)),
+                                     names_by_id(db, organization_id), price_of=lambda t: pricing_svc.effective_price_for(t, table)[0])
     return Response(
         data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="delivery-records-batch-{batch_id}.xlsx"'})

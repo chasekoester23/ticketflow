@@ -27,13 +27,14 @@ from ..db import get_db
 from ..models import Batch, Material, Project, SavedView, Supplier, Ticket, User, as_utc
 from ..permissions import has_permission, require
 from ..schemas import TicketOut
+from ..services import aggregates
 from ..services import duplicates as dup_svc
 from ..services import export as export_svc
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
 from ..services.pricing import norm
 from .api import apply_review_edit, _out
-from .reports import filtered_query, filtered_tickets
+from .reports import filtered_query
 
 router = APIRouter(prefix="/api")
 
@@ -81,25 +82,15 @@ def search_records(
     by_status = dict(db.execute(filtered_query(select(Ticket.status, func.count()), **filters)
                                 .group_by(Ticket.status)).all())
     total = sum(by_status.values())
-    verified = db.execute(filtered_query(
-        select(Ticket.status, Ticket.tonnage, Ticket.tonnage_confirmed, Ticket.unit_price_override,
-               Ticket.price_snapshot_state, Ticket.applied_unit_price, Ticket.applied_price_source),
-        **{**filters, "status": "verified" if status in (None, "", "verified") else "-none-"},
-    )).all()
-    tons = cost = Decimal(0)
-    unpriced = 0
-    for row in verified:
-        if not row.tonnage_confirmed:
-            continue
-        tons += row.tonnage or Decimal(0)
-        amount = pricing_svc.cost_for(row, pricing_svc.effective_price_for(row, {})[0])
-        if amount is None:
-            unpriced += 1
-        else:
-            cost += amount
+    totals = db.execute(filtered_query(select(
+        aggregates.counted_tons().label("tons"), aggregates.counted_cost().label("cost"), aggregates.unpriced().label("unpriced")),
+        **filters)).one()
+    tons, cost = aggregates.as_decimal(totals.tons, 3), aggregates.as_decimal(totals.cost, 2)
+    unpriced = int(totals.unpriced)
 
+    # Blank values go last whichever way it's sorted, on every database.
     column = SORTS[sort]
-    order = (column.asc(), Ticket.id.asc()) if direction == "asc" else (column.desc(), Ticket.id.desc())
+    order = (column.asc().nulls_last(), Ticket.id.asc()) if direction == "asc" else (column.desc().nulls_last(), Ticket.id.desc())
     tickets = list(db.scalars(filtered_query(select(Ticket), **filters).order_by(*order)
                               .limit(page_size).offset((page - 1) * page_size)))
     table = pricing_svc.rate_table(db, organization_id)
@@ -134,16 +125,16 @@ def export_records_csv(
 ):
     """Exact decimal text, for import into an accounting system. Skipped tickets are left out."""
     keys = _columns(columns) or list(export_svc.DEFAULT_COLUMNS)
-    tickets = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=supplier,
-                               material=material, status=status, date_from=date_from, date_to=date_to, q=q)
     table = pricing_svc.rate_table(db, organization_id)
-    prices = {t.id: p for t in tickets if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
-    context = export_svc.ExportContext(prices, names_by_id(db, organization_id), export_svc.project_codes(db, organization_id))
+    approvers = names_by_id(db, organization_id)
+    query = filtered_query(export_svc.row_query(), organization_id=organization_id, project_id=project_id, supplier=supplier,
+                           material=material, status=status, date_from=date_from, date_to=date_to, q=q)
+    price_of = lambda t: pricing_svc.effective_price_for(t, table)[0]  # noqa: E731
 
     def stream():
         buffer = StringIO(newline="")
         writer = csv.writer(buffer)
-        for number, row in enumerate(export_svc.csv_lines(tickets, keys, context), start=1):
+        for number, row in enumerate(export_svc.csv_lines(export_svc.rows(db, query), keys, approvers, price_of), start=1):
             writer.writerow(row)
             if number % 1000 == 0:  # One network chunk per row would be far slower.
                 yield buffer.getvalue()
@@ -230,10 +221,11 @@ def name_variants(field: Literal["supplier", "material"], project_id: int | None
     """Every spelling on record, with whether your catalog knows it. A closest
     catalog name is only ever a suggestion for a person to accept."""
     column = Ticket.supplier if field == "supplier" else Ticket.material_type
-    query = select(column, Ticket.status, func.count()).join(Batch, Batch.id == Ticket.batch_id).where(
-        Batch.organization_id == organization_id, column.is_not(None), Ticket.status != "skipped")
+    query = select(column, Ticket.status, func.count()).where(
+        Ticket.organization_id == organization_id, column.is_not(None), Ticket.status != "skipped")
     if project_id is not None:
-        query = query.where(Batch.project_id == project_id)
+        query = query.where(Ticket.batch_id.in_(select(Batch.id).where(
+            Batch.organization_id == organization_id, Batch.project_id == project_id)))
     totals: dict[str, dict[str, int]] = {}
     for value, status, count in db.execute(query.group_by(column, Ticket.status)):
         row = totals.setdefault(value, {"tickets": 0, "verified": 0})

@@ -7,13 +7,12 @@ Comparison precedence and explanations match the original implementation.
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
-from itertools import zip_longest
 from typing import Iterable
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Batch, Ticket
+from ..models import Ticket
 from .pricing import norm
 
 MAX_REASONS = 10  # A reviewer can't act on more, and fixed-weight loads can match thousands.
@@ -102,25 +101,20 @@ def load_index(db: Session, organization_id: int, tickets: Iterable[Ticket]) -> 
     """An index holding every stored ticket that could match ``tickets``."""
     tickets = list(tickets)
     hashes = sorted({t.crop_sha256 for t in tickets if t.crop_sha256})
-    numbers = sorted({t.ticket_number for t in tickets if t.supplier and t.ticket_number})
+    numbers = sorted({t.ticket_number.strip().upper() for t in tickets if t.supplier and t.ticket_number})
     loads = {(t.delivery_date, t.tonnage) for t in tickets
              if t.supplier and t.delivery_date and t.tonnage is not None and t.material_type}
     dates = sorted({d for d, _ in loads})
     tons = sorted({t for _, t in loads})
-    by_hash = [Ticket.crop_sha256.in_(chunk) for chunk in _chunks(hashes)]
-    by_number = [Ticket.ticket_number.in_(chunk) for chunk in _chunks(numbers)]
-    by_load = [
-        and_(Ticket.delivery_date.in_(date_chunk), Ticket.tonnage.in_(tons_chunk))
-        for date_chunk in _chunks(dates) for tons_chunk in _chunks(tons)
-    ]
+    # Separate lookups, each using its own index. A single OR of these scans the table.
+    conditions = [Ticket.crop_sha256.in_(chunk) for chunk in _chunks(hashes)]
+    conditions += [Ticket.number_key.in_(chunk) for chunk in _chunks(numbers)]
+    conditions += [Ticket.delivery_date.in_(date_chunk) & Ticket.tonnage.in_(tons_chunk)
+                   for date_chunk in _chunks(dates) for tons_chunk in _chunks(tons)]
     found: dict[int, Ticket] = {}
-    # Usually one statement. Large batches use several, to stay under bind limits.
-    for group in zip_longest(by_hash, by_number, by_load):
-        found.update({t.id: t for t in db.scalars(
-            select(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
-                Batch.organization_id == organization_id, Ticket.status != "skipped",
-                or_(*(condition for condition in group if condition is not None)),
-            ))})
+    for condition in conditions:
+        found.update({t.id: t for t in db.scalars(select(Ticket).where(
+            Ticket.organization_id == organization_id, Ticket.status != "skipped", condition))})
     return DuplicateIndex(list(found.values()))
 
 

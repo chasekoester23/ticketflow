@@ -566,13 +566,18 @@ def overview(db: Session = Depends(get_db), organization_id: int = Depends(curre
 
 
 @router.get("", response_model=list[InvoiceLineOut])
-def list_comparisons(db: Session = Depends(get_db),
+def list_comparisons(summary: bool = False, db: Session = Depends(get_db),
                      organization_id: int = Depends(current_organization_id)):
+    """``summary`` leaves out each line's ticket-by-ticket detail, which can be thousands
+    of rows. The list page uses it, and fetches one line's detail when it's opened."""
     items = db.scalars(select(InvoiceComparison).where(
         InvoiceComparison.organization_id == organization_id
     ).order_by(InvoiceComparison.id.desc())).all()
     context = LineContext(db, organization_id, items)
-    return [_line_out(db, item, organization_id, context) for item in items]
+    lines = (_line_out(db, item, organization_id, context) for item in items)
+    if summary:
+        return [line.model_copy(update={"tickets": [], "ticket_check": [], "ticket_links": [], "diagnosis": None}) for line in lines]
+    return list(lines)
 
 
 @router.post("", response_model=InvoiceLineOut, status_code=201)

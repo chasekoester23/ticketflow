@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ApiError, confirmTicketLinks, downloadInvoiceComparisonReport, getInvoiceComparisons, getInvoiceOverview, releaseTicketLink, getInvoiceHistory,
+  ApiError, confirmTicketLinks, downloadInvoiceComparisonReport, getInvoiceComparison, getInvoiceComparisons, getInvoiceOverview, releaseTicketLink, getInvoiceHistory,
   InvoiceDiagnosis, InvoiceLineComparison, InvoiceLineInput, InvoiceOverview, listMaterials, listProjects, listSuppliers, Material,
   Project, saveInvoiceComparison, Supplier, CheckedTicket, TicketCheckRow, ticketImageUrl,
 } from "../../lib/api";
@@ -165,9 +165,15 @@ export default function InvoiceComparisonPage() {
     // A summary on top of the list: failing to load it must not stop anything.
     getInvoiceOverview().then(setOverview).catch(() => setOverview(null));
   }, []);
+  // The list holds summaries. A line's ticket-by-ticket detail loads when it's opened.
+  const [detailById, setDetailById] = useState<Record<number, InvoiceLineComparison>>({});
+  const loadDetail = useCallback((id: number) => {
+    getInvoiceComparison(id).then((full) => setDetailById((old) => ({ ...old, [id]: full }))).catch(() => undefined);
+  }, []);
   const reload = useCallback(async () => {
     const data = await getInvoiceComparisons();
     setLines(data);
+    setDetailById({});
     loadOverview();
   }, [loadOverview]);
 
@@ -185,6 +191,10 @@ export default function InvoiceComparisonPage() {
   useEffect(() => {
     if (selected !== null) detail.current?.scrollIntoView?.({ block: "start", behavior: "auto" });
   }, [selected]);
+  const needsDetail = selected !== null && !detailById[selected];
+  useEffect(() => {
+    if (selected !== null && needsDetail) loadDetail(selected);
+  }, [selected, needsDetail, loadDetail]);
 
   function field<K extends keyof typeof EMPTY>(key: K, value: (typeof EMPTY)[K]) {
     setForm((old) => ({ ...old, [key]: value }));
@@ -215,7 +225,7 @@ export default function InvoiceComparisonPage() {
         const latest = (await getInvoiceComparisons().catch(() => null))?.find((line) => line.id === editing);
         if (latest) {
           setLines((old) => old.map((line) => line.id === latest.id ? latest : line));
-          edit(latest);
+          await edit(latest);
           setError((exc as Error).message);
         }
       }
@@ -224,7 +234,9 @@ export default function InvoiceComparisonPage() {
     }
   }
 
-  function edit(row: InvoiceLineComparison) {
+  async function edit(summaryRow: InvoiceLineComparison) {
+    // Correcting needs the line's full ticket list, which the summary leaves out.
+    const row = await getInvoiceComparison(summaryRow.id).catch(() => summaryRow);
     setEditing(row.id);
     setEditingRevision(row.revision);
     setShowForm(true);
@@ -282,7 +294,7 @@ export default function InvoiceComparisonPage() {
     }
   }
 
-  const chosen = lines.find((line) => line.id === selected) ?? null;
+  const chosen = selected === null ? null : detailById[selected] ?? lines.find((line) => line.id === selected) ?? null;
   const search = lineSearch.trim().toLowerCase();
   const shownLines = lines.filter((line) => {
     if (resultFilter === "open" && line.status === "matches") return false;
@@ -476,7 +488,7 @@ export default function InvoiceComparisonPage() {
             <td className="text-right tabular-nums">{row.subtotal_difference === null ? "Unresolved" : money(row.subtotal_difference)}</td>
             <td className="whitespace-nowrap text-right">
               <button type="button" onClick={() => { setSelected(row.id); setHistory(null); }} className="tf-link block w-full text-right">Details</button>
-              {canManage && <button type="button" onClick={() => edit(row)} className="tf-link mt-1 block w-full text-right">Correct</button>}
+              {canManage && <button type="button" onClick={() => void edit(row)} className="tf-link mt-1 block w-full text-right">Correct</button>}
             </td>
           </tr>)}</tbody>
         </table>

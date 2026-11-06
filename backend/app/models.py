@@ -2,6 +2,7 @@
 
 Company-owned parent rows and fail-closed read/write scoping enforce tenant isolation.
 """
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -217,10 +218,14 @@ class UploadedFile(Base):
 class Ticket(Base):
     __tablename__ = "tickets"
     __table_args__ = (
-        Index("ix_tickets_ticket_number", "ticket_number"),
-        Index("ix_tickets_delivery_date", "delivery_date"),
         Index("ix_tickets_batch_status", "batch_id", "status"),
         Index("ix_tickets_organization_id", "organization_id"),
+        Index("ix_tickets_org_status", "organization_id", "status"),
+        Index("ix_tickets_org_date", "organization_id", "delivery_date", "id"),
+        Index("ix_tickets_org_scope", "organization_id", "supplier_key", "material_key", "delivery_date"),
+        Index("ix_tickets_org_number", "organization_id", "number_key"),
+        Index("ix_tickets_org_loose", "organization_id", "number_loose"),
+        Index("ix_tickets_org_load", "organization_id", "delivery_date", "tonnage"),
         # One record per physical position, so a retried worker can't make a second.
         Index("uq_tickets_slot", "file_id", "source_page", "position", unique=True),
         # The same scan can't be approved twice in a company, whichever code path tries.
@@ -274,16 +279,42 @@ class Ticket(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     # Why someone set this ticket aside. Never affects totals or approval.
     flag_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Normalized forms that matching compares. Kept in step by the events below.
+    supplier_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    material_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    number_key: Mapped[str | None] = mapped_column(String(100), nullable=True)  # case and outer spaces ignored
+    number_loose: Mapped[str | None] = mapped_column(String(100), nullable=True)  # leading zeros ignored too
+    # Tons x locked rate, set at approval and cleared when approval is withdrawn.
+    approved_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
 
     file: Mapped[UploadedFile] = relationship(back_populates="tickets")
 
     __mapper_args__ = {"version_id_col": lock_version}
 
 
+def normal_name(name: str | None) -> str:
+    """Case, punctuation and spacing ignored, so 'ABC Aggregates.' matches 'abc  aggregates'."""
+    return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+
+
+def _derive_keys(ticket: "Ticket") -> None:
+    ticket.supplier_key = normal_name(ticket.supplier) if ticket.supplier is not None else None
+    ticket.material_key = normal_name(ticket.material_type) if ticket.material_type is not None else None
+    number = (ticket.ticket_number or "").strip().upper() if ticket.ticket_number is not None else None
+    ticket.number_key = number
+    ticket.number_loose = number.lstrip("0") if number is not None else None
+
+
 @event.listens_for(Ticket, "before_insert")
 def _ticket_company(_mapper, connection, ticket: Ticket) -> None:
     if ticket.organization_id is None:
         ticket.organization_id = connection.scalar(select(Batch.organization_id).where(Batch.id == ticket.batch_id))
+    _derive_keys(ticket)
+
+
+@event.listens_for(Ticket, "before_update")
+def _ticket_keys(_mapper, _connection, ticket: Ticket) -> None:
+    _derive_keys(ticket)
 
 
 class ScanSlot(Base):

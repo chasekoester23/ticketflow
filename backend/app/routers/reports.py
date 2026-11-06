@@ -1,6 +1,6 @@
 """Cross-batch views: filtered delivery records, dashboard totals, filtered Excel export."""
 import csv
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import date
 from decimal import Decimal
 from io import StringIO
@@ -17,6 +17,7 @@ from ..db import get_db
 from ..models import AuditEvent, Batch, InvoiceComparison, Project, ReviewTiming, Ticket, UploadedFile, User
 from ..permissions import require
 from ..schemas import TicketOut
+from ..services import aggregates
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
 from ..services import pilot_report, project_report
@@ -31,14 +32,6 @@ router = APIRouter(prefix="/api")
 VALID_STATUS = {"needs_review", "verified", "skipped", "failed", "flagged"}
 
 
-# What totals need. Whole Ticket objects cost several times as much to load,
-# which matters on every dashboard view of a large company.
-TOTALS_COLUMNS = (
-    Ticket.id, Ticket.status, Ticket.tonnage, Ticket.tonnage_confirmed, Ticket.supplier, Ticket.material_type,
-    Ticket.unit_price_override, Ticket.price_snapshot_state, Ticket.applied_unit_price, Ticket.applied_price_source,
-)
-
-
 def filtered_query(
     query, *, organization_id: int, project_id: int | None, supplier: str | None, material: str | None,
     status: str | None, date_from: date | None, date_to: date | None, q: str | None = None,
@@ -46,11 +39,10 @@ def filtered_query(
 ):
     """Add the record filters to ``query``. One definition, so a list, its totals
     and its exports can never disagree about which tickets are included."""
-    query = query.select_from(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
-        Batch.organization_id == organization_id
-    )
+    query = query.select_from(Ticket).where(Ticket.organization_id == organization_id)
     if project_id is not None:
-        query = query.where(Batch.project_id == project_id)
+        query = query.where(Ticket.batch_id.in_(select(Batch.id).where(
+            Batch.organization_id == organization_id, Batch.project_id == project_id)))
     if supplier:
         query = query.where(Ticket.supplier.icontains(supplier.strip(), autoescape=True))
     if material:
@@ -76,16 +68,18 @@ def filtered_query(
 
 def filtered_tickets(
     db: Session, *, organization_id: int, project_id: int | None, supplier: str | None, material: str | None,
-    status: str | None, date_from: date | None, date_to: date | None, include_skipped: bool = False,
-    columns: tuple | None = None, q: str | None = None,
-) -> list:
-    """Ticket objects, or lightweight rows with these attributes when ``columns`` is given."""
+    status: str | None, date_from: date | None, date_to: date | None, include_skipped: bool = False, q: str | None = None,
+) -> list[Ticket]:
     query = filtered_query(
-        select(*columns) if columns else select(Ticket), organization_id=organization_id, project_id=project_id,
+        select(Ticket), organization_id=organization_id, project_id=project_id,
         supplier=supplier, material=material, status=status, date_from=date_from, date_to=date_to, q=q,
         include_skipped=include_skipped,
     ).order_by(Ticket.delivery_date, Ticket.id)
-    return list(db.execute(query).all() if columns else db.scalars(query).all())
+    return list(db.scalars(query).all())
+
+
+MAX_UNPAGED_RECORDS = 5000
+MAX_EXCEL_ROWS = 200_000
 
 
 @router.get("/records", response_model=list[TicketOut])
@@ -95,9 +89,14 @@ def records(
     db: Session = Depends(get_db),
     organization_id: int = Depends(current_organization_id),
 ):
+    """Every matching record at once, for small result sets. /records/search pages."""
+    filters = dict(organization_id=organization_id, project_id=project_id, supplier=supplier, material=material,
+                   status=status, date_from=date_from, date_to=date_to)
+    matching = db.scalar(filtered_query(select(func.count()), **filters))
+    if matching > MAX_UNPAGED_RECORDS:
+        raise HTTPException(413, f"{matching:,} records match. Use /api/records/search, which pages through them.")
     table = pricing_svc.rate_table(db, organization_id)
-    ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=supplier, material=material,
-                          status=status, date_from=date_from, date_to=date_to)
+    ts = filtered_tickets(db, **filters)
     index = dup_svc.load_index(db, organization_id, ts)
     names = pricing_svc.catalog_names(db, organization_id)
     aliases = pricing_svc.alias_suggestions(db, organization_id, names)
@@ -115,12 +114,16 @@ def export_records(
     keys = [key.strip() for key in columns.split(",") if key.strip()] if columns else None
     if keys is not None and (not keys or set(keys) - set(export_svc.COLUMNS)):
         raise HTTPException(422, "Unknown export column.")
+    filters = dict(organization_id=organization_id, project_id=project_id, supplier=supplier, material=material,
+                   status=status, date_from=date_from, date_to=date_to, q=q)
+    matching = db.scalar(filtered_query(select(func.count()), **filters))
+    if matching > MAX_EXCEL_ROWS:
+        raise HTTPException(413, f"{matching:,} records is too many for a spreadsheet to open comfortably. "
+                                 "Narrow the filters, or use the CSV export, which handles any size.")
     table = pricing_svc.rate_table(db, organization_id)
-    ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=supplier, material=material,
-                          status=status, date_from=date_from, date_to=date_to, q=q)
-    prices = {t.id: p for t in ts if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
     return Response(
-        export_svc.build_workbook(ts, prices, names_by_id(db, organization_id), keys, export_svc.project_codes(db, organization_id)),
+        export_svc.build_workbook(export_svc.rows(db, filtered_query(export_svc.row_query(), **filters)),
+                                  names_by_id(db, organization_id), keys, price_of=lambda t: pricing_svc.effective_price_for(t, table)[0]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="delivery-records.xlsx"'})
 
@@ -128,30 +131,22 @@ def export_records(
 @router.get("/dashboard")
 def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
               organization_id: int = Depends(current_organization_id)):
-    table = pricing_svc.rate_table(db, organization_id)
-    all_ts = filtered_tickets(db, organization_id=organization_id, project_id=project_id, supplier=None, material=None, status=None,
-                              date_from=None, date_to=None, include_skipped=True, columns=TOTALS_COLUMNS)
-    ts = [t for t in all_ts if t.status != "skipped"]
+    # Added up by the database. Only approved quantities belong in actuals: unverified
+    # extractions are estimates and must not silently inflate project totals.
+    filters = dict(organization_id=organization_id, project_id=project_id, supplier=None, material=None, status=None,
+                   date_from=None, date_to=None)
+    by_status = dict(db.execute(filtered_query(select(Ticket.status, func.count()), **filters).group_by(Ticket.status)).all())
+    total = db.execute(filtered_query(select(
+        aggregates.counted_tons().label("tons"), aggregates.counted_cost().label("cost"), aggregates.pending_tons().label("pending"),
+        aggregates.unpriced().label("unpriced"), aggregates.counted_tickets().label("counted")), **filters)).one()
 
-    # Only approved quantities belong in actuals. Unverified extractions are
-    # estimates and must not silently inflate project totals.
-    verified = [t for t in ts if t.status == "verified" and t.tonnage_confirmed]
-    pending = [t for t in ts if t.status != "verified" or not t.tonnage_confirmed]
-    total_tons = sum((t.tonnage for t in verified if t.tonnage is not None), Decimal(0))
-    pending_tons = sum((t.tonnage for t in pending if t.tonnage is not None), Decimal(0))
-    prices = [pricing_svc.effective_price_for(t, table)[0] for t in ts]
-    costs = [pricing_svc.cost_for(t, p) for t, p in zip(ts, prices)]
-    total_cost = sum((c for c in costs if c is not None), Decimal(0))
-
-    def group(keyfn):
-        g: dict[str, list] = defaultdict(lambda: [0, Decimal(0), Decimal(0)])
-        for t, c in zip(ts, costs):
-            row = g[keyfn(t) or "(unknown)"]
-            row[0] += 1
-            if t.status == "verified" and t.tonnage_confirmed:
-                row[1] += t.tonnage or Decimal(0)
-            row[2] += c or Decimal(0)
-        return [{"name": k, "tickets": v[0], "tons": str(v[1]), "cost": str(v[2])} for k, v in sorted(g.items())]
+    def group(column):
+        label = func.coalesce(func.nullif(column, ""), "(unknown)")
+        rows = db.execute(filtered_query(select(
+            label.label("name"), func.count().label("tickets"), aggregates.counted_tons().label("tons"),
+            aggregates.counted_cost().label("cost")), **filters).group_by(label).order_by(label))
+        return [{"name": r.name, "tickets": r.tickets, "tons": str(aggregates.as_decimal(r.tons, 3)),
+                 "cost": str(aggregates.as_decimal(r.cost, 2))} for r in rows]
 
     bq = select(Batch).where(Batch.organization_id == organization_id).order_by(Batch.id.desc()).limit(8)
     if project_id is not None:
@@ -162,20 +157,20 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
     projects = {p.id: p.name for p in db.scalars(select(Project).where(
         Project.organization_id == organization_id
     ))}
+    tickets = sum(by_status.values())
     return {
-        "tickets": len(ts),
-        "needs_review": sum(1 for t in ts if t.status in ("needs_review", "failed", "flagged")),
-        "flagged": sum(1 for t in ts if t.status == "flagged"),
-        "verified": sum(1 for t in ts if t.status == "verified"),
+        "tickets": tickets,
+        "needs_review": sum(by_status.get(name, 0) for name in ("needs_review", "failed", "flagged")),
+        "flagged": by_status.get("flagged", 0),
+        "verified": by_status.get("verified", 0),
         # Strings: FastAPI would send Decimals in a plain dict as lossy floats.
-        "total_tons": str(total_tons),
-        "pending_tons": str(pending_tons),
-        "total_cost": str(total_cost),
-        "unpriced_tickets": sum(1 for t, p in zip(ts, prices)
-                                if t.status == "verified" and t.tonnage_confirmed and p is None),
-        "pending_cost_tickets": len(pending),
-        "by_supplier": group(lambda t: t.supplier),
-        "by_material": group(lambda t: t.material_type),
+        "total_tons": str(aggregates.as_decimal(total.tons, 3)),
+        "pending_tons": str(aggregates.as_decimal(total.pending, 3)),
+        "total_cost": str(aggregates.as_decimal(total.cost, 2)),
+        "unpriced_tickets": int(total.unpriced),
+        "pending_cost_tickets": tickets - int(total.counted),
+        "by_supplier": group(Ticket.supplier),
+        "by_material": group(Ticket.material_type),
         "recent_batches": [
             {"id": b.id, "status": b.status, "created_at": b.created_at, "files": file_counts.get(b.id, 0),
              "project": projects.get(b.project_id)} for b in recent

@@ -30,7 +30,8 @@ def sqlite_statements() -> list[str]:
     statements.append(
         "CREATE TRIGGER IF NOT EXISTS tickets_approved_figures_locked BEFORE UPDATE ON tickets "
         "WHEN OLD.status = 'verified' AND NEW.status = 'verified' AND OLD.price_snapshot_state = 'priced' "
-        "AND (NEW.tonnage IS NOT OLD.tonnage OR NEW.applied_unit_price IS NOT OLD.applied_unit_price) "
+        "AND (NEW.tonnage IS NOT OLD.tonnage OR NEW.applied_unit_price IS NOT OLD.applied_unit_price "
+        "OR NEW.approved_cost IS NOT OLD.approved_cost) "
         f"BEGIN SELECT RAISE(ABORT, '{LOCKED}'); END")
     return statements
 
@@ -42,10 +43,12 @@ def postgres_statements() -> list[str]:
         "$$ LANGUAGE plpgsql",
         "CREATE OR REPLACE FUNCTION ticketflow_approved_figures_locked() RETURNS trigger AS $$ "
         "BEGIN IF OLD.status = 'verified' AND NEW.status = 'verified' AND OLD.price_snapshot_state = 'priced' "
-        "AND (NEW.tonnage IS DISTINCT FROM OLD.tonnage OR NEW.applied_unit_price IS DISTINCT FROM OLD.applied_unit_price) THEN "
+        "AND (NEW.tonnage IS DISTINCT FROM OLD.tonnage OR NEW.applied_unit_price IS DISTINCT FROM OLD.applied_unit_price "
+        "OR NEW.approved_cost IS DISTINCT FROM OLD.approved_cost) THEN "
         f"RAISE EXCEPTION '{LOCKED}' USING ERRCODE = 'restrict_violation'; END IF; RETURN NEW; END "
         "$$ LANGUAGE plpgsql",
     ]
+    statements.append("CREATE INDEX IF NOT EXISTS ix_tickets_org_date_recent ON tickets (organization_id, delivery_date DESC NULLS LAST, id DESC)")
     for table in HISTORY_TABLES:
         statements.append(f"DROP TRIGGER IF EXISTS {table}_append_only ON {table}")
         statements.append(f"CREATE TRIGGER {table}_append_only BEFORE UPDATE OR DELETE ON {table} "
