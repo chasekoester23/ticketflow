@@ -265,7 +265,7 @@ def test_encrypted_and_oversized_page_counts_are_refused(client, monkeypatch):
 def test_stored_file_is_private(client):
     document = _upload(client).json()
     with api_module.SessionLocal() as db:
-        path = Path(db.get(InvoiceDocument, document["id"]).storage_path)
+        path = settings.storage_dir / db.get(InvoiceDocument, document["id"]).storage_path
     assert oct(path.stat().st_mode)[-3:] == "600" and path.parent.stat().st_mode & 0o077 == 0
     assert str(path) not in str(document)
 

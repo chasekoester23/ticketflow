@@ -1,9 +1,8 @@
 """Scan check: reconcile scanned pages and slots against tickets on record."""
 import io
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update
@@ -14,7 +13,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import AuditEvent, Batch, ScanEvent, ScanSlot, Ticket, UploadedFile, User, as_utc
 from ..permissions import require
-from ..services import pipeline, scan_manifest, splitter
+from ..services import pipeline, scan_manifest, splitter, storage
 from ..services.accounts import names_by_id
 
 router = APIRouter(prefix="/api")
@@ -115,10 +114,10 @@ def rebuild_manifest(batch_id: int, db: Session = Depends(get_db),
 def slot_image(slot_id: int, db: Session = Depends(get_db),
                organization_id: int = Depends(current_organization_id)):
     slot, _ = _slot_or_404(db, slot_id, organization_id)
-    path = Path(scan_manifest.rotated_path(slot.crop_path, slot.rotation))
-    if not path.is_file():
+    image = storage.current().serve(storage.rotated_key(slot.crop_path, slot.rotation), "image/png")
+    if image is None:
         raise HTTPException(404, "The stored image for this slot is missing.")
-    return FileResponse(path, media_type="image/png")
+    return image
 
 
 @router.get("/files/{file_id}/pages/{page_no}/image")
@@ -130,7 +129,7 @@ def page_image(file_id: int, page_no: int, db: Session = Depends(get_db),
     if file is None:
         raise HTTPException(404, "File not found")
     try:
-        data = Path(file.storage_path).read_bytes()
+        data = storage.current().read(file.storage_path)
         if file.original_name.lower().endswith(".pdf"):
             image = splitter.render_pdf_page(data, page_no, max_page_pixels=settings.max_rendered_page_pixels)
         elif page_no == 1:
@@ -168,7 +167,7 @@ def mark_ticket(slot_id: int, db: Session = Depends(get_db),
         return scan_manifest.build_manifest(db, batch)
     ticket = Ticket(
         batch_id=slot.batch_id, file_id=slot.file_id, source_page=slot.page, position=slot.position,
-        crop_box=slot.crop_box, crop_path=scan_manifest.rotated_path(slot.crop_path, slot.rotation),
+        crop_box=slot.crop_box, crop_path=storage.reference_for(storage.rotated_key(slot.crop_path, slot.rotation)),
         crop_sha256=slot.crop_sha256,
     )
     pipeline.set_blank_fields(ticket)
@@ -229,19 +228,19 @@ def rotate_slot(slot_id: int, body: Rotation, db: Session = Depends(get_db),
         raise HTTPException(409, "This ticket is approved. Withdraw the approval before changing its image.")
     if body.rotation == slot.rotation:
         return scan_manifest.build_manifest(db, batch)
-    base = Path(slot.crop_path)
-    if not base.is_file():
+    store = storage.current()
+    if not store.exists(slot.crop_path):
         raise HTTPException(409, "The stored image for this slot is missing.")
-    target = Path(scan_manifest.rotated_path(slot.crop_path, body.rotation))
+    target = storage.reference_for(storage.rotated_key(slot.crop_path, body.rotation))
     if body.rotation:
-        with Image.open(base) as image:
-            scan_manifest.write_private_png(target, scan_manifest.rotated(image.convert("RGB"), body.rotation))
+        with Image.open(io.BytesIO(store.read(slot.crop_path))) as image:
+            store.save_png(target, scan_manifest.rotated(image.convert("RGB"), body.rotation), replace=True)
     scan_manifest.record_event(db, batch.id, user.id, "rotated", slot_id=slot.id,
                                old=str(slot.rotation), new=str(body.rotation))
     if ticket is not None:
         db.add(AuditEvent(ticket_id=ticket.id, actor_user_id=user.id, field="scan_rotation",
                           old_value=str(slot.rotation), new_value=str(body.rotation)))
-        ticket.crop_path = str(target)
+        ticket.crop_path = target
     slot.rotation = body.rotation
     db.commit()
     return scan_manifest.build_manifest(db, batch)

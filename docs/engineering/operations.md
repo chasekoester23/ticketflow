@@ -78,6 +78,7 @@ Events: `worker_started`, `worker_stopped`, `worker_lock_held`, `job_started`, `
 | Worker died mid-job | Its job is reclaimed on next start | Start it. Finished files and reviewed tickets aren't redone |
 | A file says processing stopped the worker | That upload took the worker down 3 times (`MAX_JOB_ATTEMPTS`), so it was set aside and other uploads carried on | **Retry failed files** once. If it fails again, re-scan it or enter those tickets by hand |
 | A file shows Failed | That file couldn't be processed | **Retry failed files** on the batch, or enter those tickets by hand |
+| "The stored file is missing" on a ticket or scan | The database refers to a document that isn't in `STORAGE_DIR` | See [Missing documents](#missing-documents) |
 | "Someone else changed this ticket" | A teammate saved first | Check the values now shown, then accept |
 | API refuses to start, naming a migration | Code is newer than the database | Follow Upgrading above |
 | A number looks wrong | Open the ticket's **Change history** | Every edit and approval is recorded with a name |

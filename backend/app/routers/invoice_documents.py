@@ -7,7 +7,6 @@ through the same code as typed entry.
 import hashlib
 import io
 import json
-import os
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -15,7 +14,7 @@ from pathlib import Path
 
 import pymupdf as fitz
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -28,7 +27,7 @@ from ..models import (
     InvoiceComparison, InvoiceDocument, InvoiceDocumentEvent, InvoiceDraftLine, Project, Supplier, User, as_utc, utcnow,
 )
 from ..permissions import require
-from ..services import invoice_extraction, pipeline, splitter
+from ..services import invoice_extraction, pipeline, splitter, storage
 from ..services.accounts import names_by_id
 from ..services.invoice_extraction import InvoiceExtractionError
 from ..services.locks import take_turn
@@ -173,12 +172,8 @@ def upload_document(file: UploadFile = File(...), project_id: int | None = Form(
     if same is not None:
         raise HTTPException(409, f"This exact file is already uploaded as invoice document #{same}.")
 
-    directory = settings.storage_dir / "invoices" / str(organization_id)
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path = directory / f"{uuid.uuid4().hex}.pdf"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "wb") as stream:
-        stream.write(data)
+    store = storage.current()
+    key = store.save(f"invoices/{organization_id}/{uuid.uuid4().hex}.pdf", data)
 
     status, message, unread, extractor_name, drafted = "needs_review", None, [], "manual", []
     try:
@@ -198,7 +193,7 @@ def upload_document(file: UploadFile = File(...), project_id: int | None = Form(
         status, message = "failed", str(exc)
 
     document = InvoiceDocument(
-        organization_id=organization_id, project_id=project_id, original_name=name, storage_path=str(path),
+        organization_id=organization_id, project_id=project_id, original_name=name, storage_path=key,
         sha256=checksum, page_count=page_count, status=status, extractor=extractor_name, message=message,
         unread_rows=unread, created_by_user_id=user.id,
     )
@@ -218,7 +213,7 @@ def upload_document(file: UploadFile = File(...), project_id: int | None = Form(
     except IntegrityError:
         # Someone uploaded this exact file at the same moment. Theirs stands.
         db.rollback()
-        path.unlink(missing_ok=True)
+        store.delete(key)
         raise HTTPException(409, "This exact file was just uploaded by someone else.") from None
     return _document_out(db, document)
 
@@ -233,9 +228,10 @@ def get_document(document_id: int, db: Session = Depends(get_db),
 def original_file(document_id: int, db: Session = Depends(get_db),
                   organization_id: int = Depends(current_organization_id)):
     document = _document_or_404(db, document_id, organization_id)
-    if not Path(document.storage_path).is_file():
+    original = storage.current().serve(document.storage_path, "application/pdf")
+    if original is None:
         raise HTTPException(404, "The stored file is missing.")
-    return FileResponse(document.storage_path, media_type="application/pdf")
+    return original
 
 
 @router.get("/{document_id}/pages/{page_no}/image")
@@ -243,7 +239,7 @@ def page_image(document_id: int, page_no: int, db: Session = Depends(get_db),
                organization_id: int = Depends(current_organization_id)):
     document = _document_or_404(db, document_id, organization_id)
     try:
-        image = splitter.render_pdf_page(Path(document.storage_path).read_bytes(), page_no, dpi=110,
+        image = splitter.render_pdf_page(storage.current().read(document.storage_path), page_no, dpi=110,
                                          max_page_pixels=settings.max_rendered_page_pixels)
     except (splitter.PdfError, OSError):
         raise HTTPException(404, "That page is not available.") from None

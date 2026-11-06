@@ -2,14 +2,12 @@ import hashlib
 import json
 import uuid
 import logging
-import os
-import shutil
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -22,7 +20,7 @@ from ..permissions import has_permission, require
 from ..schemas import BatchOut, BatchQueueRow, FlagIn, TicketOut, TicketPatch, VerifyIn
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
-from ..services import pipeline, jobqueue, scan_manifest
+from ..services import pipeline, jobqueue, scan_manifest, storage
 from ..services.locks import take_turn
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
@@ -138,29 +136,25 @@ def create_batch(
     batch = Batch(layout=layout, intake_mode=intake_mode, status="uploaded",
                   project_id=project_id, organization_id=organization_id,
                   created_by_user_id=user.id, expected_ticket_count=expected_ticket_count)
-    upload_dir = None
+    store = storage.current()
+    upload_folder = None
     try:
         db.add(batch)
         db.flush()
-        upload_dir = settings.storage_dir / "uploads" / str(batch.id)
-        upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        upload_folder = f"uploads/{batch.id}"
         for up, original_name, ext, checksum in validated:
-            internal = upload_dir / f"{uuid.uuid4().hex}{ext}"
-            # Read each validated file individually. O_EXCL and mode 0600
-            # prevent overwrites and world-readable contractor scans.
-            fd = os.open(internal, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(up.file.read())
+            # Stored privately, under a random name, and never over another file.
+            key = store.save(f"{upload_folder}/{uuid.uuid4().hex}{ext}", up.file.read())
             db.add(UploadedFile(
                 batch_id=batch.id, original_name=original_name,
-                storage_path=str(internal), sha256=checksum,
+                storage_path=key, sha256=checksum,
             ))
         job = jobqueue.enqueue(db, batch.id)
         db.commit()
     except Exception:
         db.rollback()
-        if upload_dir is not None:
-            shutil.rmtree(upload_dir, ignore_errors=True)
+        if upload_folder is not None:
+            store.delete_prefix(upload_folder)
         raise
 
     _notify_worker(background, job.id)
@@ -618,9 +612,10 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db),
 @router.get("/tickets/{ticket_id}/image")
 def ticket_image(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     t = _ticket_or_404(db, ticket_id, organization_id)
-    if not Path(t.crop_path).is_file():
+    image = storage.current().serve(t.crop_path, "image/png")
+    if image is None:
         raise HTTPException(404, "The stored image for this ticket is missing.")
-    return FileResponse(t.crop_path, media_type="image/png")
+    return image
 
 
 @router.get("/tickets/{ticket_id}/audit")

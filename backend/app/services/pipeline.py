@@ -4,13 +4,12 @@ Each file is processed independently, so one bad PDF never fails the whole batch
 """
 import hashlib
 import logging
-from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import Batch, Ticket, UploadedFile
-from . import scan_manifest, splitter
+from . import scan_manifest, splitter, storage
 from .extraction import ExtractionError, Extractor
 from .validation import compute_flags, parse_date, parse_tonnage
 
@@ -51,13 +50,19 @@ def set_blank_fields(ticket: Ticket) -> None:
 
 
 def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extractor | None, *, manual: bool = False) -> None:
+    store = storage.current()
     file.status, file.error = "processing", None
     db.commit()
     try:
-        data = Path(file.storage_path).read_bytes()
+        data = store.read(file.storage_path)
         pages = pages_for(file, data)
-    except (splitter.PdfError, OSError) as exc:
+    except (splitter.PdfError, storage.DocumentMissing) as exc:
         file.status, file.error = "failed", str(exc)
+        db.commit()
+        return
+    except OSError:
+        # The operating system's message names the path, and this goes on the record.
+        file.status, file.error = "failed", "The stored file couldn't be read. Check the storage folder, then retry."
         db.commit()
         return
 
@@ -85,16 +90,16 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
                 continue  # never overwrite review work on an existing ticket
 
             image = scan_manifest.rotated(crop.image, slot.rotation)
-            path = Path(scan_manifest.rotated_path(slot.crop_path, slot.rotation))
+            crop_reference = storage.reference_for(storage.rotated_key(slot.crop_path, slot.rotation))
             if slot.rotation:
-                scan_manifest.write_private_png(path, image)
+                store.save_png(crop_reference, image, replace=True)
             if ticket is None:
                 ticket = Ticket(
                     batch_id=file.batch_id, file_id=file.id,
                     source_page=page_no, position=crop.position,
                 )
             ticket.crop_box = list(crop.box)
-            ticket.crop_path = str(path)
+            ticket.crop_path = crop_reference
             # The unrotated crop's hash: rotating must not defeat the check
             # that an identical scan cannot be approved twice.
             ticket.crop_sha256 = slot.crop_sha256
