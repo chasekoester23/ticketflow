@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from
 import { ApiError, Failure, HistoryEntry, Ticket, describeFailure, getTicketHistory, patchTicket, ticketAction } from "../../lib/api";
 import { TicketDraft, draftsFor, removeDraft, removeTicketDrafts, saveDraft } from "../../lib/drafts";
 import { useAccount } from "../account-context";
+import { FieldMessage, NEEDED_LABEL, REQUIRED_TEXT, dateMessage, rateMessage, tonsMessage } from "./validation";
 
 export const STATUS_STYLE: Record<string, string> = {
   needs_review: "tf-status-attention",
@@ -132,6 +133,8 @@ export function ReviewForm({
   const [override, setOverride] = useState(recovered.same?.typed[OVERRIDE_KEY] ?? saved[OVERRIDE_KEY]);
   const [note, setNote] = useState(recovered.same?.typed[NOTE_KEY] ?? failure?.note ?? saved[NOTE_KEY]);
   const [saving, setSaving] = useState(false);
+  const [leftBlank, setLeftBlank] = useState<Record<string, boolean>>({});
+  const [triedAccept, setTriedAccept] = useState(false);
   // Read and set in the same moment as a click. Disabling the button waits for a
   // render, which is too late for a double click to be stopped by it alone.
   const inFlight = useRef(false);
@@ -278,8 +281,50 @@ export function ReviewForm({
   const flags = manual ? ticket.flags.filter((flag) => !isMissingNotice(flag)) : ticket.flags;
   const flaggedFor = (words: string[]) => flags.some((fl) => words.some((w) => fl.startsWith(w)));
   const carry = CARRIED.filter((key) => !values[key] && previous[key]);
-  const tonsProblem = values.tonnage.trim() !== "" && !/^\d*\.?\d{0,3}$/.test(values.tonnage.trim())
-    ? "Enter tons as a number with up to 3 decimals, like 24.50. Don't convert pounds or yards here." : null;
+  const tons = tonsMessage(values.tonnage);
+  const rate = rateMessage(override);
+  const cannotSave = Boolean(tons?.blocksSaving || rate?.blocksSaving);
+  const message = (key: FieldKey): FieldMessage | null => {
+    if (!canEdit) return null;
+    const about = key === "tonnage" ? tons : key === "delivery_date" ? dateMessage(values[key]) : null;
+    if (about) return about;
+    return !values[key].trim() && (leftBlank[key] || triedAccept) ? { tone: "problem", text: REQUIRED_TEXT[key] } : null;
+  };
+  // What the server would refuse to approve. Saying so here saves the round trip,
+  // and the server still checks everything itself.
+  const stopsApproval = (key: FieldKey) => !values[key].trim() || (key === "tonnage" && tons?.tone === "problem");
+  const needed = FIELDS.filter((f) => !values[f.key].trim()).map((f) => NEEDED_LABEL[f.key]);
+
+  // A message appearing pushes the form down. If that happened mid-click, the
+  // click would land on something else, so it waits for the pointer to come up.
+  const pointerDown = useRef(false);
+  useEffect(() => {
+    const press = () => { pointerDown.current = true; };
+    const release = () => { pointerDown.current = false; };
+    window.addEventListener("pointerdown", press, true);
+    window.addEventListener("pointerup", release, true);
+    window.addEventListener("pointercancel", release, true);
+    return () => {
+      window.removeEventListener("pointerdown", press, true);
+      window.removeEventListener("pointerup", release, true);
+      window.removeEventListener("pointercancel", release, true);
+    };
+  }, []);
+  function leftField(key: string) {
+    const mark = () => setLeftBlank((old) => old[key] ? old : { ...old, [key]: true });
+    if (pointerDown.current) window.addEventListener("pointerup", () => setTimeout(mark, 0), { once: true });
+    else mark();
+  }
+
+  function accept() {
+    const first = FIELDS.find((f) => stopsApproval(f.key));
+    if (first) {
+      setTriedAccept(true);
+      document.getElementById("review-" + first.key)?.focus();
+      return;
+    }
+    void attempt("verify", undefined, true);
+  }
 
   function fillRepeats() {
     if (!canEdit) return;
@@ -365,28 +410,34 @@ export function ReviewForm({
           className="flex w-full items-center justify-between gap-2 rounded border border-[#dce1e6] bg-[#f8f9fa] px-2.5 py-1.5 text-left text-[11px] font-semibold text-[#39495b] hover:bg-[#f1f3f5]">
           <span>{CARRY_LABEL}: same as previous ticket</span><kbd className="tf-kbd">Alt+D</kbd>
         </button>}
-        {FIELDS.map((f, index) => <div key={f.key}>
+        {FIELDS.map((f, index) => {
+          const said = message(f.key);
+          const showsAsRead = ticket.as_read?.[f.key] !== undefined && ticket.as_read[f.key] !== values[f.key];
+          const describedBy = [said && "message-" + f.key, showsAsRead && "as-read-" + f.key].filter(Boolean).join(" ") || undefined;
+          return <div key={f.key}>
           <label htmlFor={"review-" + f.key} className={"mb-0.5 block text-[11px] text-[#526273] " + (f.critical ? "font-bold" : "font-medium")}>
             {f.label}{f.critical && <span className="ml-1 font-normal text-[#7a8796]">· check against the scan</span>}
           </label>
           <input
             id={"review-" + f.key}
             list={f.key === "supplier" ? "catalog-suppliers" : f.key === "material_type" ? "catalog-materials" : undefined}
-            aria-describedby={ticket.as_read?.[f.key] !== undefined && ticket.as_read[f.key] !== values[f.key] ? "as-read-" + f.key : undefined}
-            aria-invalid={f.key === "tonnage" && tonsProblem ? true : undefined}
+            aria-describedby={describedBy}
+            aria-invalid={said?.tone === "problem" ? true : undefined}
             type={f.type === "number" ? "text" : f.type ?? "text"}
             inputMode={f.type === "number" ? "decimal" : undefined}
             value={values[f.key]}
             readOnly={!canEdit || saving}
             onKeyDown={(event) => nextOnEnter(event, index)}
             onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+            onBlur={() => leftField(f.key)}
             className={`w-full rounded border px-2.5 py-1.5 text-sm text-[#19232e] outline-none focus:ring-2 focus:ring-[#e6a97b] read-only:bg-[#f6f7f8] ${
-              flaggedFor(f.flagWords) ? "border-amber-400 bg-amber-50" : "border-[#cfd6de]"
+              said?.tone === "problem" ? "border-red-400" : said?.tone === "warning" || flaggedFor(f.flagWords) ? "border-amber-400 bg-amber-50" : "border-[#cfd6de]"
             }`}
           />
-          {f.key === "tonnage" && tonsProblem && <p className="mt-1 text-[11px] font-semibold text-red-700">{tonsProblem}</p>}
-          {ticket.as_read?.[f.key] !== undefined && ticket.as_read[f.key] !== values[f.key] && (
-            <p id={"as-read-" + f.key} className="mt-1 text-[11px] text-[#657182]">Read from the ticket: {ticket.as_read[f.key]}</p>
+          <div aria-live="polite">{said && <p id={"message-" + f.key} data-testid={"message-" + f.key}
+            className={"mt-1 text-[11px] font-semibold leading-snug " + (said.tone === "problem" ? "text-red-700" : "text-amber-800")}>{said.text}</p>}</div>
+          {showsAsRead && (
+            <p id={"as-read-" + f.key} className="mt-1 text-[11px] text-[#657182]">Read from the ticket: {ticket.as_read?.[f.key]}</p>
           )}
           {canEdit && ticket.suggestions?.[f.key] && ticket.suggestions[f.key] !== values[f.key] && (
             <button type="button" className="tf-link mt-1 text-[11px]"
@@ -400,7 +451,8 @@ export function ReviewForm({
               Same date as previous ticket: {previous[f.key]}
             </button>
           )}
-        </div>)}
+        </div>;
+        })}
         <datalist id="catalog-suppliers">{catalog.suppliers.map((name) => <option key={name} value={name} />)}</datalist>
         <datalist id="catalog-materials">{catalog.materials.map((name) => <option key={name} value={name} />)}</datalist>
         <div className="rounded border border-[#e2e7eb] bg-[#f7f8f9] p-3 text-xs">
@@ -427,10 +479,12 @@ export function ReviewForm({
             inputMode="decimal"
             value={override}
             readOnly={!canOverride || saving}
-            aria-describedby={canOverride ? undefined : "review-rate-override-note"}
+            aria-describedby={canOverride ? (rate ? "message-rate" : undefined) : "review-rate-override-note"}
+            aria-invalid={rate ? true : undefined}
             onChange={(e) => setOverride(e.target.value)}
             className="mt-1 w-full rounded border border-[#cfd6de] px-3 py-2 text-sm read-only:bg-[#f6f7f8]"
           />
+          {rate && <p id="message-rate" className="mt-1 text-[11px] font-semibold text-red-700">{rate.text}</p>}
           {!canOverride && <p id="review-rate-override-note" className="mt-1 text-[#657182]">Only a manager or owner can change a ticket’s rate.</p>}
         </div>
         {ticket.status === "verified" && (
@@ -469,12 +523,14 @@ export function ReviewForm({
       </div>}
       {dirty && <p className="border-t border-[#e9edf0] bg-[#fff8ec] px-4 py-1.5 text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
       {canEdit && <div className="flex flex-wrap gap-1.5 border-t border-[#dce1e6] bg-white p-2.5">
+        {canVerify && needed.length > 0 && <p id="accept-needs" data-testid="accept-needs" className="w-full text-[11px] leading-snug text-[#526273]">Still needed to accept: {needed.join(", ")}.</p>}
         {canVerify ? <button
           ref={acceptButton}
           title="Review and accept ticket (Cmd/Ctrl + Enter)"
-          onClick={() => void attempt("verify", undefined, true)}
+          aria-describedby={needed.length > 0 ? "accept-needs" : undefined}
+          onClick={accept}
           className="w-full rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
-          disabled={saving || Boolean(tonsProblem) || (ticket.status === "verified" && !dirty)}
+          disabled={saving || cannotSave || (ticket.status === "verified" && !dirty)}
         >
           {ticket.status === "verified" && !dirty ? "Accepted" : "Accept & next"}
         </button> : <button
@@ -482,11 +538,11 @@ export function ReviewForm({
           title="Save and go to the next ticket (Cmd/Ctrl + Enter)"
           onClick={() => void attempt("save", undefined, true)}
           className="w-full rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
-          disabled={saving || Boolean(tonsProblem)}
+          disabled={saving || cannotSave}
         >
           Save &amp; next
         </button>}
-        <button disabled={saving || !dirty || Boolean(tonsProblem)} onClick={() => void attempt("save")} className="rounded border border-[#cfd6dc] px-2.5 py-1.5 text-xs font-semibold text-[#39495b] disabled:opacity-40">
+        <button disabled={saving || !dirty || cannotSave} onClick={() => void attempt("save")} className="rounded border border-[#cfd6dc] px-2.5 py-1.5 text-xs font-semibold text-[#39495b] disabled:opacity-40">
           Save changes
         </button>
         {canFlag && <button disabled={saving} onClick={() => void attempt("flag", note, true)}
