@@ -49,8 +49,9 @@ jobs:
           cache-dependency-path: |
             backend/requirements-dev.txt
             backend/requirements-postgres.txt
+            backend/constraints.txt
       - name: Install dependencies
-        run: python -m pip install -r requirements-dev.txt -r requirements-postgres.txt
+        run: python -m pip install -r requirements-dev.txt -r requirements-postgres.txt -c constraints.txt
       - name: Run the backend suite on PostgreSQL
         run: python -m pytest -q --junitxml=results.xml -p no:cacheprovider
       - name: Name every failure in one annotation
