@@ -126,7 +126,8 @@ def test_hostile_text_is_stored_as_text_and_inert_in_exports(client, value):
     assert response.status_code == 200
     assert response.json()["ticket_number"] == value
     assert client.get("/api/batches/1/tickets").status_code == 200
-    assert _session().query(Ticket).count() == 1  # The table is still here.
+    with _session() as db:
+        assert db.query(Ticket).count() == 1  # The table is still here.
     sheet = load_workbook(io.BytesIO(client.get("/api/records/export.xlsx").content))["Delivery Records"]
     cell = sheet.cell(2, 1)
     assert cell.data_type != "f"
