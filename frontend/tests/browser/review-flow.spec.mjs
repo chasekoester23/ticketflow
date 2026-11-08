@@ -307,21 +307,24 @@ test("a possible duplicate needs a deliberate decision, and declining changes no
     return json(route, { detail: { code: "possible_duplicate", message: "S ticket 10482 is already approved (batch 3, page 1, ticket 2)." } }, 409);
   });
   await page.goto("/upload?batch=5&ticket=101");
-  // Waits for each dialog in turn: a second handler registered while the first is
-  // still pending would answer the wrong question.
-  let dialog = page.waitForEvent("dialog");
+  // Each question is answered by a handler registered before the click that causes it.
+  // A confirm() blocks the page, and a click still in progress when it opens can't
+  // finish until it's answered: awaiting the click first, then the dialog, deadlocked
+  // whenever the answer from the server beat the end of the click (seen on a slowed CPU).
+  // One handler at a time, so neither can answer the other's question.
+  const questions = [];
+  page.once("dialog", (dialog) => { questions.push(dialog.message()); dialog.dismiss(); });
   await page.getByRole("button", { name: "Accept & next" }).click();
-  const first = await dialog;
-  expect(first.message()).toContain("already approved");
-  await first.dismiss();
+  await expect.poll(() => questions.length).toBe(1);
+  expect(questions[0]).toContain("already approved");
   await expect(page.getByRole("button", { name: "Accept & next" })).toBeEnabled();
   await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
   expect(asks.length).toBe(1);
   expect(log.verified).toEqual([]);
-  dialog = page.waitForEvent("dialog");
+  page.once("dialog", (dialog) => { questions.push(dialog.message()); dialog.accept(); });
   await page.getByRole("button", { name: "Accept & next" }).click();
-  await (await dialog).accept();
   await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
+  expect(questions.length).toBe(2);
   expect(asks.at(-1)).toEqual({ confirm_duplicate: true });
 });
 
