@@ -6,7 +6,7 @@ from decimal import Decimal
 from io import StringIO
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import false, func, or_, select
 from sqlalchemy.orm import Session
@@ -21,7 +21,7 @@ from ..schemas import TicketOut
 from ..services import aggregates
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
-from ..services import pilot_report, project_report
+from ..services import pilot_report, project_report, reconciliation
 from ..services.invoice_context import LineContext
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
@@ -204,6 +204,46 @@ def project_report_xlsx(project_id: int, db: Session = Depends(get_db),
         project_report.workbook(report),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="project-{project_id}-report.xlsx"', "Cache-Control": "no-store"})
+
+
+def _owned_project(db: Session, organization_id: int, project_id: int) -> Project:
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.organization_id == organization_id))
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    return project
+
+
+@router.get("/reports/project/{project_id}/unbilled", dependencies=[Depends(limited("reports"))])
+def unbilled(project_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    """Approved deliveries no invoice line lists or covers yet. Totals cover every one;
+    the rows stop at 500."""
+    return reconciliation.unbilled(db, organization_id, _owned_project(db, organization_id, project_id))
+
+
+@router.get("/reports/project/{project_id}/unbilled.csv", dependencies=[Depends(limited("exports"))])
+def unbilled_csv(project_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    from .invoices import _csv_text
+    project = _owned_project(db, organization_id, project_id)
+
+    def text(value) -> str:
+        return _csv_text(value) if value is not None else ""
+
+    def stream():
+        buffer = StringIO(newline="")
+        writer = csv.writer(buffer)
+        writer.writerow(["Ticket ID", "Batch ID", "Ticket number", "Delivery date", "Supplier", "Material", "Approved tons",
+                         "Material cost at locked rate (not a bill)"])
+        for number, row in enumerate(reconciliation.unbilled_rows(db, organization_id, project.id), start=1):
+            writer.writerow([row["ticket_id"], row["batch_id"], text(row["ticket_number"]), row["delivery_date"] or "",
+                             text(row["supplier"]), text(row["material"]), row["tons"] or "", row["cost"] or ""])
+            if number % 1000 == 0:
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate()
+        yield buffer.getvalue()
+
+    return StreamingResponse(stream(), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="unbilled-deliveries-project-{project.id}.csv"', "Cache-Control": "no-store"})
 
 
 def _project_report(db: Session, organization_id: int, project_id: int) -> dict:

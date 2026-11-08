@@ -17,7 +17,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -224,6 +224,8 @@ class InvoiceLineOut(BaseModel):
     source_document_id: int | None = None
     source_page: int | None = None
     created_at: date
+    # The approved deliveries in scope, kept for the discrepancy export. Never serialized.
+    _verified_ids: set[int] = PrivateAttr(default_factory=set)
 
 
 def _project_or_404(db: Session, organization_id: int, project_id: int) -> None:
@@ -460,7 +462,10 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
         headline=invoice_bridge.headline(
             status=status, itemized=bool(check), quantity_difference=quantity_difference,
             subtotal_difference=subtotal_difference, pending=len(pending), unclassified=len(unclassified),
-            verified_count=len(verified)),
+            verified_count=len(verified),
+            rounding=status == "discrepancy" and invoice_bridge.rounding_only(
+                quantity_difference=quantity_difference, subtotal_difference=subtotal_difference, money=money_detail,
+                tickets_disagree=bool(check and check.discrepancy) or bool(newly_conflicting))),
         tons=tons_detail, money=money_detail,
         money_unresolved_reason=None if money_detail else (
             f"{len(unpriced)} verified ticket(s) have no locked price, so the approved cost isn't known." if unpriced
@@ -472,7 +477,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
             intake_issues=intake_issues, project_id=item.project_id, supplier=item.supplier_name),
     )
 
-    return InvoiceLineOut(
+    out = InvoiceLineOut(
         id=item.id, revision=str(item.lock_version), project_id=item.project_id,
         source_document_id=source[0] if source else None, source_page=source[1] if source else None,
         invoice_number=item.invoice_number,
@@ -522,6 +527,8 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
         ],
         created_at=item.created_at.date() if hasattr(item.created_at, "date") else item.created_at,
     )
+    out._verified_ids = verified_ids
+    return out
 
 
 def _owned_or_404(db: Session, organization_id: int, line_id: int) -> InvoiceComparison:
@@ -564,6 +571,30 @@ def overview(db: Session = Depends(get_db), organization_id: int = Depends(curre
                         for _, group in sorted(by_supplier.items())],
         "exceptions": billing_exceptions.find(db, organization_id, items),
     }
+
+
+@router.get("/discrepancies.csv", dependencies=[Depends(limited("exports"))])
+def discrepancies_csv(project_id: str | None = None, supplier: str | None = None, db: Session = Depends(get_db),
+                      organization_id: int = Depends(current_organization_id)):
+    """One row per difference, for sending to a supplier. Describes; never approves."""
+    from ..services import reconciliation
+    query = select(InvoiceComparison).where(InvoiceComparison.organization_id == organization_id)
+    if project_id is not None and project_id.strip():
+        if not project_id.strip().isdigit():
+            raise HTTPException(422, "project_id must be a project's id.")
+        _project_or_404(db, organization_id, int(project_id))
+        query = query.where(InvoiceComparison.project_id == int(project_id))
+    if supplier is not None and supplier.strip():
+        query = query.where(InvoiceComparison.supplier_key == norm(supplier))
+    items = list(db.scalars(query.order_by(InvoiceComparison.id)))
+    context = LineContext(db, organization_id, items)
+    output = StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(reconciliation.HEADERS)
+    for row in reconciliation.discrepancy_lines(_line_out(db, item, organization_id, context) for item in items):
+        writer.writerow(row)
+    return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": 'attachment; filename="invoice-discrepancies.csv"', "Cache-Control": "no-store"})
 
 
 @router.get("", response_model=list[InvoiceLineOut])

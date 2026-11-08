@@ -7,6 +7,7 @@ and nothing here changes a ticket or approves an invoice.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Iterator
 
 from .pricing import to_cents
 
@@ -28,19 +29,24 @@ def _names(numbers: list[str]) -> str:
     return shown + (f" and {len(numbers) - 6} more" if len(numbers) > 6 else "")
 
 
-def tons_bridge(*, verified_ids: set[int], verified_tons: Decimal, billed_tons: Decimal, rows: list) -> dict:
-    """From verified tons to billed tons. Holds exactly when ``complete``:
-    start + sum(items) + unexplained == billed."""
-    groups: dict[str, dict] = {}
+def _kind(row, *, repeated: bool, fresh: list, change: Decimal | None) -> str | None:
+    if repeated or "duplicate_on_invoice" in row.flags and not fresh:
+        return "repeated"
+    if row.result == "matched" and not change:
+        return None
+    if row.result in ("matched", "tons_differ"):
+        return "tons_differ"
+    if row.result in ("not_found", "outside_scope", "ambiguous"):
+        return row.result
+    return "unverified"
+
+
+def tons_changes(*, verified_ids: set[int], rows: list) -> Iterator[dict]:
+    """One entry per invoice ticket row, and per approved delivery the invoice leaves
+    out: what kind of difference it is (None for none), and how many tons it moves the
+    total by (None when the invoice gave no tons for that ticket). The bridge below and
+    the discrepancy export both add these up, so they always agree."""
     consumed: set[int] = set()
-    missing_tons = 0
-
-    def add(kind: str, tons: Decimal, number: str | None) -> None:
-        group = groups.setdefault(kind, {"kind": kind, "label": _LABELS[kind][0], "tons": Decimal(0), "tickets": []})
-        group["tons"] += tons
-        if number:
-            group["tickets"].append(number)
-
     for row in rows:
         if row.line is None:
             continue
@@ -50,28 +56,32 @@ def tons_bridge(*, verified_ids: set[int], verified_tons: Decimal, billed_tons: 
         accounted = sum((t.tons or Decimal(0) for t in fresh), Decimal(0))
         repeated = bool(tickets) and not fresh and any(t.ticket_id in consumed for t in tickets)
         consumed.update(t.ticket_id for t in fresh)
-        number = row.invoice_ticket_number
-        if row.billed_tons is None:
-            missing_tons += 1
-            continue
-        change = row.billed_tons - accounted
-        if repeated or "duplicate_on_invoice" in row.flags and not fresh:
-            add("repeated", change, number)
-        elif row.result == "matched" and not change:
-            continue
-        elif row.result in ("matched", "tons_differ"):
-            add("tons_differ", change, number)
-        elif row.result == "not_found":
-            add("not_found", change, number)
-        elif row.result == "outside_scope":
-            add("outside_scope", change, number)
-        elif row.result == "ambiguous":
-            add("ambiguous", change, number)
-        else:
-            add("unverified", change, number)
+        change = None if row.billed_tons is None else row.billed_tons - accounted
+        yield {"row": row, "kind": _kind(row, repeated=repeated, fresh=fresh, change=change), "tons": change,
+               "number": row.invoice_ticket_number}
     for row in rows:
         if row.line is None and row.verified_tons is not None and row.ticket and row.ticket.ticket_id in verified_ids:
-            add("not_on_invoice", -row.verified_tons, row.ticket.ticket_number or f"record #{row.ticket.ticket_id}")
+            yield {"row": row, "kind": "not_on_invoice", "tons": -row.verified_tons,
+                   "number": row.ticket.ticket_number or f"record #{row.ticket.ticket_id}"}
+
+
+def tons_bridge(*, verified_ids: set[int], verified_tons: Decimal, billed_tons: Decimal, rows: list) -> dict:
+    """From verified tons to billed tons. Holds exactly when ``complete``:
+    start + sum(items) + unexplained == billed."""
+    groups: dict[str, dict] = {}
+    missing_tons = 0
+
+    def add(kind: str, tons: Decimal, number: str | None) -> None:
+        group = groups.setdefault(kind, {"kind": kind, "label": _LABELS[kind][0], "tons": Decimal(0), "tickets": []})
+        group["tons"] += tons
+        if number:
+            group["tickets"].append(number)
+
+    for change in tons_changes(verified_ids=verified_ids, rows=rows):
+        if change["tons"] is None:
+            missing_tons += 1
+        elif change["kind"]:
+            add(change["kind"], change["tons"], change["number"])
 
     items = [{
         "kind": kind, "label": groups[kind]["label"], "tons": groups[kind]["tons"],
@@ -145,8 +155,17 @@ def actions(*, tons: dict | None, itemized: bool, pending: int, unclassified: in
     return steps
 
 
+def rounding_only(*, quantity_difference: Decimal, subtotal_difference: Decimal | None, money: dict | None,
+                  tickets_disagree: bool) -> bool:
+    """Tons, rates, tickets and the invoice's own arithmetic all agree, and the only money
+    difference comes from rounding each ticket to the cent where the invoice rounds once."""
+    return bool(subtotal_difference and money and not quantity_difference and not tickets_disagree
+                and not money["rate_groups"] and not money["rate_effect"] and not money["arithmetic_effect"]
+                and money["rounding"] == subtotal_difference)
+
+
 def headline(*, status: str, itemized: bool, quantity_difference: Decimal, subtotal_difference: Decimal | None,
-             pending: int, unclassified: int, verified_count: int) -> str:
+             pending: int, unclassified: int, verified_count: int, rounding: bool = False) -> str:
     """One plain sentence for the top of the panel."""
     if status == "no_verified_tickets":
         return "No approved deliveries match this line yet, so there's nothing to compare it with."
@@ -158,6 +177,9 @@ def headline(*, status: str, itemized: bool, quantity_difference: Decimal, subto
         if waiting:
             return f"Can't be settled yet: {waiting} delivery record(s) that may belong here still need a person."
         return "Can't be settled yet: something this comparison depends on still needs a person."
+    if rounding and subtotal_difference:
+        return (f"The only money difference is rounding: ${abs(subtotal_difference)}, from rounding each ticket's cost to the cent "
+                "where the invoice rounds its total once. Tons and rates agree. Still not an approval to pay.")
     parts = []
     if quantity_difference:
         parts.append(f"billed {abs(quantity_difference)} tons {'more' if quantity_difference > 0 else 'less'} than approved")

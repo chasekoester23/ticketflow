@@ -135,6 +135,8 @@ EXPECTED_LIMITS = {
     ("GET", "/api/reports/pilot.csv"): "exports", ("GET", "/api/invoice-comparisons/{line_id}/report.csv"): "exports",
     ("GET", "/api/reports/project/{project_id}"): "reports", ("GET", "/api/reports/pilot"): "reports",
     ("GET", "/api/invoice-comparisons/overview"): "reports",
+    ("GET", "/api/reports/project/{project_id}/unbilled"): "reports", ("GET", "/api/reports/project/{project_id}/unbilled.csv"): "exports",
+    ("GET", "/api/invoice-comparisons/discrepancies.csv"): "exports",
 }
 
 
