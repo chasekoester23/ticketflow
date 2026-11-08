@@ -231,6 +231,9 @@ class Ticket(Base):
         # A project filter reaches its tickets through their batches. Without this,
         # the database walked every ticket the company has to find one project's.
         Index("ix_tickets_org_batch_status", "organization_id", "batch_id", "status"),
+        # Copies of one scanned image. Without it, SQLite walked every ticket the company
+        # has on each approval and ticket read.
+        Index("ix_tickets_org_image", "organization_id", "crop_sha256"),
         # One record per physical position, so a retried worker can't make a second.
         Index("uq_tickets_slot", "file_id", "source_page", "position", unique=True),
         # The same scan can't be approved twice in a company, whichever code path tries.

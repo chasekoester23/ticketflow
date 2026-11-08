@@ -28,3 +28,13 @@ def test_one_project_is_read_through_its_batches(client, query):
             pytest.skip("SQLite's plan is fixed by its rules. PostgreSQL chooses from table statistics.")
         plan = _plan(db, filtered_query(query(), **ONE_PROJECT))
     assert "(organization_id=? AND batch_id=?" in plan, plan
+
+
+def test_a_check_for_copies_of_one_scan_reads_only_that_image(client):
+    """Every approval and ticket read looks for copies of the same scanned image."""
+    with _session() as db:
+        if db.get_bind().dialect.name != "sqlite":
+            pytest.skip("SQLite's plan is fixed by its rules. PostgreSQL chooses from table statistics.")
+        query = select(Ticket.id).where(Ticket.organization_id == 1, Ticket.status != "skipped", Ticket.crop_sha256.in_(["a" * 64]))
+        plan = _plan(db, query)
+    assert "(organization_id=? AND crop_sha256=?)" in plan, plan
