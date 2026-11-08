@@ -13,7 +13,7 @@ const RESULT: Record<string, { label: string; tone: string }> = {
   no_verified_tickets: { label: "No verified tickets", tone: "tf-status-attention" },
 };
 
-const NOT_ENTERED = "Not entered";
+const NOT_ENTERED = "(not entered)"; // How the server names a blank supplier, material or month.
 /** The register, filtered to the approved tickets behind a row. Names match as "contains". */
 function approvedLink(projectId: string, filters: Record<string, string | undefined>) {
   const params = new URLSearchParams({ project_id: projectId, status: "verified" });

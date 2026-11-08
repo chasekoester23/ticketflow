@@ -47,6 +47,14 @@ export async function logIn(username: string, password: string): Promise<Account
   }))).json();
 }
 
+/** Whether this server has no accounts yet. A server without the check answers 404, meaning no. */
+export async function getSetupStatus(): Promise<{ needed: boolean }> {
+  return (await check(await apiFetch(`${API}/api/setup/status`))).json();
+}
+export async function setUpCompany(body: { company_name: string; display_name: string; username: string; password: string }): Promise<Account> {
+  return (await check(await apiFetch(`${API}/api/setup`, json("POST", body)))).json();
+}
+
 export async function logOut(): Promise<void> {
   await check(await apiFetch(`${API}/api/auth/logout`, { method: "POST" }));
 }
@@ -394,10 +402,14 @@ export async function setProjectStatus(id: number, status: "active" | "archived"
 export async function getRecords(f: Filters): Promise<Ticket[]> {
   return (await check(await apiFetch(`${API}/api/records${qs(f)}`))).json();
 }
-export const recordsExportUrl = (f: Filters, format: "xlsx" | "csv" = "xlsx", columns?: string[]) => {
-  const query = qs(f);
-  const extra = columns?.length ? `${query ? "&" : "?"}columns=${columns.join(",")}` : "";
-  return `${API}/api/records/export.${format}${query}${extra}`;
+/** With an open saved view, `viewId` also applies the view's own column names. */
+export const recordsExportUrl = (f: Filters, format: "xlsx" | "csv" = "xlsx", columns?: string[], viewId?: number) => {
+  const params = new URLSearchParams();
+  Object.entries(f).forEach(([k, v]) => v && params.set(k, v));
+  if (viewId) params.set("view_id", String(viewId));
+  if (columns?.length) params.set("columns", columns.join(","));
+  const query = params.toString().replaceAll("%2C", ",");
+  return `${API}/api/records/export.${format}${query ? `?${query}` : ""}`;
 };
 export type RecordsSort = "date" | "ticket_number" | "tons" | "supplier" | "material" | "status" | "job";
 export type RecordsPage = {
@@ -427,13 +439,16 @@ export type NameVariant = {
 export async function getNameVariants(field: "supplier" | "material"): Promise<{ field: string; catalog: string[]; rows: NameVariant[] }> {
   return (await check(await apiFetch(`${API}/api/records/name-variants?field=${field}`))).json();
 }
-export type SavedView = { id: number; name: string; filters: Filters; columns: string[]; created_by: string | null; created_at: string };
+/** `labels` names columns to match a team's own spreadsheet headers, by column key. */
+export type SavedView = { id: number; name: string; filters: Filters; columns: string[]; labels?: Record<string, string>; created_by: string | null; created_at: string };
 export async function listSavedViews(): Promise<SavedView[]> {
   return (await check(await apiFetch(`${API}/api/saved-views`))).json();
 }
-export async function createSavedView(name: string, filters: Filters, columns: string[]): Promise<SavedView> {
+export async function createSavedView(name: string, filters: Filters, columns: string[], labels: Record<string, string> = {}): Promise<SavedView> {
   const kept = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
-  return (await check(await apiFetch(`${API}/api/saved-views`, json("POST", { name, filters: kept, columns })))).json();
+  const named = Object.fromEntries(Object.entries(labels).map(([key, text]) => [key, text.trim()]).filter(([key, text]) => text && columns.includes(key)));
+  const body = Object.keys(named).length ? { name, filters: kept, columns, labels: named } : { name, filters: kept, columns };
+  return (await check(await apiFetch(`${API}/api/saved-views`, json("POST", body)))).json();
 }
 export async function deleteSavedView(id: number) {
   await check(await apiFetch(`${API}/api/saved-views/${id}`, { method: "DELETE" }));

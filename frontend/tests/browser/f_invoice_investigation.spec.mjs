@@ -115,3 +115,11 @@ test("the overview's counts open the lines they count", async ({ page }) => {
   await page.getByRole("region", { name: "Invoice overview" }).getByRole("button", { name: "Show them" }).click();
   await expect(page.getByRole("button", { name: "Differences", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
+
+test("a blank supplier or material isn't searched for as text", async ({ page }) => {
+  const gaps = [{ supplier: "Example Aggregates", material: "(not entered)", date_from: "2026-09-08", date_to: "2026-09-08", tickets: 1, tons: "18.250" }];
+  await mockWorkspace(page, { extra: answering("/api/reports/project/1/unbilled", (route) => json(route, unbilled({ gaps }))) });
+  await page.goto("/reports/project?project_id=1");
+  const link = page.getByRole("table", { name: "Delivery dates no invoice line covers" }).getByRole("link");
+  await expect(link).toHaveAttribute("href", "/records?project_id=1&status=verified&supplier=Example+Aggregates&date_from=2026-09-08&date_to=2026-09-08");
+});

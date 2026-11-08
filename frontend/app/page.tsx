@@ -57,6 +57,7 @@ function GettingStarted() {
 }
 
 export default function DashboardPage() {
+  const canUpload = useAccount().can("tickets.upload");
   const [data, setData] = useState<Dashboard | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
@@ -86,7 +87,7 @@ export default function DashboardPage() {
           <option value="">All projects</option>
           {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
         </select>
-        <a href="/upload" className="tf-primary-button"><span aria-hidden="true" className="text-lg leading-none">+</span> New ticket upload</a>
+        {canUpload && <a href="/upload" className="tf-primary-button"><span aria-hidden="true" className="text-lg leading-none">+</span> New ticket upload</a>}
       </div>
     </div>
 
@@ -127,7 +128,8 @@ export default function DashboardPage() {
             </tr>)}</tbody>
           </table></div> : <div className="tf-empty">
             <p>No uploads recorded yet.</p>
-            <a className="tf-link mt-3 inline-block" href="/upload">Upload your first ticket batch →</a>
+            {canUpload ? <a className="tf-link mt-3 inline-block" href="/upload">Upload your first ticket batch →</a>
+              : <p className="mt-1 text-[12px]">Batches appear here once someone on your team uploads scanned tickets.</p>}
           </div>}
         </div>
 

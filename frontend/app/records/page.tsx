@@ -42,8 +42,10 @@ function resultText(result: BulkResult): string {
 }
 
 export default function RecordsPage() {
-  const { can } = useAccount();
+  const { account, can } = useAccount();
   const canEdit = can("tickets.edit");
+  const canUpload = can("tickets.upload");
+  const canManage = can("projects.manage");
   const [filters, setFilters] = useState<Filters>({});
   const [applied, setApplied] = useState<Filters>({});
   const [page, setPage] = useState(1);
@@ -65,6 +67,7 @@ export default function RecordsPage() {
   const [columns, setColumns] = useState<string[]>(DEFAULT_EXPORT);
   const [dialog, setDialog] = useState<"export" | "save" | null>(null);
   const [viewName, setViewName] = useState("");
+  const [labels, setLabels] = useState<Record<string, string>>({});
   const [moreFilters, setMoreFilters] = useState(false);
   const [catalog, setCatalog] = useState<{ suppliers: string[]; materials: string[] }>({ suppliers: [], materials: [] });
   const reloadKey = useRef(0);
@@ -125,6 +128,13 @@ export default function RecordsPage() {
   const lastRow = Math.min(page * pageSize, total);
   const summary = result?.summary;
   const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.id));
+  const shownView = views.find((v) => String(v.id) === viewId);
+  // With a view open, exports send its id: the server applies the view's column
+  // names to whichever columns are chosen, so a team keeps its own headers.
+  const exportViewId = shownView?.id;
+  const viewLabels = shownView?.labels ?? {};
+  const me = account?.display_name || account?.username;
+  const canRemoveView = Boolean(shownView && (canManage || (shownView.created_by && shownView.created_by === me)));
   const suggestions = useMemo(() => bulkField === "supplier" ? catalog.suppliers : bulkField === "material_type" ? catalog.materials : [], [bulkField, catalog]);
 
   function toggleSort(column: RecordsSort) {
@@ -175,10 +185,11 @@ export default function RecordsPage() {
     setApplied(view.filters);
     setPage(1);
     setColumns(view.columns.length ? view.columns : DEFAULT_EXPORT);
+    setLabels(view.labels ?? {});
   }
   async function saveView() {
     try {
-      const view = await createSavedView(viewName, applied, columns);
+      const view = await createSavedView(viewName, applied, columns, labels);
       setViews((old) => [...old, view].sort((a, b) => a.name.localeCompare(b.name)));
       setViewId(String(view.id));
       setViewName("");
@@ -207,7 +218,7 @@ export default function RecordsPage() {
         <p className="tf-page-description">Search, audit, and export material delivery tickets by project and status.</p></div>
       <div className="flex flex-wrap gap-2">
         {canEdit && <a href="/records/names" className="tf-secondary-button">Name cleanup</a>}
-        <a href="/upload" className="tf-primary-button"><span aria-hidden="true">+</span> New ticket upload</a>
+        {canUpload && <a href="/upload" className="tf-primary-button"><span aria-hidden="true">+</span> New ticket upload</a>}
       </div>
     </div>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
@@ -222,7 +233,7 @@ export default function RecordsPage() {
             <option value="">Saved views…</option>
             {views.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select>
-          {viewId && <button type="button" className="tf-link" onClick={removeView}>Remove view</button>}
+          {canRemoveView && <button type="button" className="tf-link" onClick={removeView}>Remove view</button>}
           <button type="button" className="tf-link" onClick={() => setDialog("save")}>Save this view</button>
           {hasFilter && <button type="button" onClick={() => { setViewId(""); setFilters({}); }} className="tf-link">Clear filters</button>}
         </div>
@@ -274,8 +285,8 @@ export default function RecordsPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="tf-secondary-button" onClick={() => setDialog("export")}>Choose columns</button>
-          <a href={recordsExportUrl(applied, "csv", columns)} className="tf-secondary-button">Export CSV</a>
-          <a href={recordsExportUrl(applied, "xlsx", columns)} className="tf-secondary-button" aria-label="Download Excel (filtered)">
+          <a href={recordsExportUrl(applied, "csv", columns, exportViewId)} className="tf-secondary-button">Export CSV</a>
+          <a href={recordsExportUrl(applied, "xlsx", columns, exportViewId)} className="tf-secondary-button" aria-label="Download Excel (filtered)">
             <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4" /></svg>
             Export Excel
           </a>
@@ -323,10 +334,14 @@ export default function RecordsPage() {
           <td className="whitespace-nowrap"><a href={`/upload?batch=${t.batch_id}&ticket=${t.id}`}>Review →</a></td>
         </tr>)}</tbody>
       </table></div>
-      {!loading && !rows.length && <div className="tf-empty">
-        <p>{hasFilter ? "No delivery records match the current filters." : "No delivery tickets recorded yet."}</p>
-        {hasFilter ? <button className="tf-link mt-2" onClick={() => { setViewId(""); setFilters({}); }}>Clear filters</button> :
-          <a className="tf-link mt-2 inline-block" href="/upload">Start ticket intake →</a>}
+      {!loading && !rows.length && <div className="tf-empty" data-testid="records-empty">
+        {hasFilter ? <>
+          <p>No delivery records match the current filters.</p>
+          <button className="tf-link mt-2" onClick={() => { setViewId(""); setFilters({}); }}>Clear filters</button>
+        </> : canUpload ? <>
+          <p>No delivery tickets yet. Upload a batch of scanned tickets, then enter and check each one beside its scan.</p>
+          <a className="tf-link mt-2 inline-block" href="/upload">Upload scanned tickets →</a>
+        </> : <p>No delivery tickets yet. They appear here once someone on your team uploads and enters them.</p>}
       </div>}
       {total > 0 && <nav className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e9edf0] px-5 py-3 text-xs text-[#526273]" aria-label="Pages of records">
         <span className="tabular-nums">Showing {firstRow.toLocaleString()}–{lastRow.toLocaleString()} of {total.toLocaleString()}</span>
@@ -353,9 +368,12 @@ export default function RecordsPage() {
               onChange={(e) => setColumns((old) => e.target.checked
                 ? EXPORT_COLUMNS.map(([k]) => k).filter((k) => old.includes(k) || k === key)
                 : old.filter((k) => k !== key))} />
-            {label}
+            {label}{viewLabels[key] && <span className="text-[#5f6c7b]">as “{viewLabels[key]}”</span>}
           </label>)}
         </div>
+        {shownView?.labels && Object.keys(shownView.labels).length > 0 && <p className="px-5 pb-3 text-[11px] text-[#5f6c7b]">
+          Exports use the column names saved with “{shownView.name}”.
+        </p>}
         <div className="flex items-center justify-between gap-3 border-t border-[#e9edf0] px-5 py-3">
           <p className="text-[11px] text-[#657182]">Save this view to keep these columns with your filters.</p>
           <button type="button" className="tf-primary-button" disabled={!columns.length} onClick={() => setDialog(null)} autoFocus>Done</button>
@@ -368,7 +386,18 @@ export default function RecordsPage() {
           <label className="tf-field-label">Name
             <input className="tf-field w-full" maxLength={100} value={viewName} onChange={(e) => setViewName(e.target.value)} autoFocus />
           </label>
-          <p className="mt-2 text-[11px] text-[#657182]">Keeps these filters and export columns. Everyone in your company can open it.</p>
+          <p className="mt-2 text-[11px] text-[#5f6c7b]">Keeps these filters and export columns. Everyone in your company can open it.</p>
+          <details className="mt-3 rounded border border-[#e2e7ec]" data-testid="name-columns">
+            <summary className="cursor-pointer select-none px-3 py-2 text-[12px] font-semibold text-[#46566a]">Name these columns (optional)</summary>
+            <div className="space-y-2 border-t border-[#e9edf0] px-3 py-2.5">
+              <p className="text-[11px] text-[#5f6c7b]">To match your team&apos;s own spreadsheet, give any column the header you use. Blank keeps the standard name.</p>
+              {EXPORT_COLUMNS.filter(([key]) => columns.includes(key)).map(([key, label]) => <label key={key} className="grid grid-cols-[110px_minmax(0,1fr)] items-center gap-2 text-[11px] font-semibold text-[#49586a]">
+                <span>Header for {label}</span>
+                <input className="tf-field !min-h-0 !py-1 !text-xs" maxLength={100} placeholder={label} value={labels[key] ?? ""}
+                  onChange={(e) => setLabels((old) => ({ ...old, [key]: e.target.value }))} />
+              </label>)}
+            </div>
+          </details>
         </div>
         <div className="flex justify-end gap-2 border-t border-[#e9edf0] px-5 py-3">
           <button type="button" className="tf-secondary-button" onClick={() => setDialog(null)}>Cancel</button>

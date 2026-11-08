@@ -93,8 +93,11 @@ export default function ProjectsPage() {
             </button>}
           </div></td>
         </tr>)}</tbody>
-      </table></div> : <div className="tf-empty">
-        {showArchived ? "No projects found." : "No active projects yet. Use the form above to add your first job."}
+      </table></div> : <div className="tf-empty" data-testid="projects-empty">
+        {showArchived ? "No projects found."
+          : canManage ? <>No projects yet. Add your first job above with the number your team already uses for it.
+            Every ticket upload and invoice line belongs to a project, so this comes first.</>
+          : "No projects yet. A manager or owner adds each job here. Ask one to add the job you're working on."}
       </div>}
     </section>
   </div>;

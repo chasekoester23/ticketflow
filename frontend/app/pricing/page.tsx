@@ -95,7 +95,9 @@ export default function PricingPage() {
             {canManage && <button disabled={saving} onClick={() => void remove("suppliers", s.id, s.name)}
               className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}
           </li>)}
-        </ul> : <p className="tf-empty">No suppliers yet. Add a company above to begin pricing.</p>}
+        </ul> : <p className="tf-empty" data-testid="suppliers-empty">{canManage
+          ? "No suppliers yet. Add each company that delivers to your jobs, spelled the way your tickets spell it. Rates come next."
+          : "No suppliers yet. A manager or owner sets up suppliers, materials and rates."}</p>}
       </section>
 
       <section className="tf-panel">
@@ -116,7 +118,9 @@ export default function PricingPage() {
             {canManage && <button disabled={saving} onClick={() => void remove("materials", m.id, m.name)}
               className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}
           </li>)}
-        </ul> : <p className="tf-empty">No materials yet. Add a material type above.</p>}
+        </ul> : <p className="tf-empty">{canManage
+          ? "No materials yet. Add each material as your tickets name it, such as No. 57 Stone."
+          : "No materials yet. A manager or owner adds them."}</p>}
       </section>
     </div>
 
@@ -159,7 +163,10 @@ export default function PricingPage() {
             className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}</td>
         </tr>)}</tbody>
       </table></div>
-      {!rates.length && <p className="tf-empty">No unit prices configured. Add a supplier and material above, then save a rate.</p>}
+      {!rates.length && <p className="tf-empty" data-testid="rates-empty">{!canManage
+        ? "No rates yet. Approved tickets show no cost until a manager or owner sets the rate for each supplier and material."
+        : !suppliers.length || !materials.length ? "No rates yet. Add a supplier and a material above first, then set what that supplier charges per ton for it."
+        : "No rates yet. Choose a supplier and material above and save the price per ton. Each approved ticket locks the rate in force when it's approved."}</p>}
     </section>
     {canManage && <section className="tf-panel" aria-label="Paste a rate sheet">
       <div className="tf-panel-heading">

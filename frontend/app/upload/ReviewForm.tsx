@@ -478,19 +478,20 @@ export const ReviewForm = memo(function ReviewForm({
           ) : (
             <p className="text-amber-800">{ticket.pricing_notes.join(". ")}. Add it under Suppliers &amp; Pricing, or enter an override below.</p>
           )}
+          {canOverride ? <>
           <label htmlFor="review-rate-override" className="mt-2 block font-medium text-[#526273]">Override rate for this ticket ($/ton, optional)</label>
           <input
             id="review-rate-override"
             inputMode="decimal"
             value={override}
-            readOnly={!canOverride || saving}
-            aria-describedby={canOverride ? (rate ? "message-rate" : undefined) : "review-rate-override-note"}
+            readOnly={saving}
+            aria-describedby={rate ? "message-rate" : undefined}
             aria-invalid={rate ? true : undefined}
             onChange={(e) => setOverride(e.target.value)}
             className="mt-1 w-full rounded border border-[#cfd6de] px-3 py-2 text-sm read-only:bg-[#f6f7f8]"
           />
           {rate && <p id="message-rate" className="mt-1 text-[11px] font-semibold text-red-700">{rate.text}</p>}
-          {!canOverride && <p id="review-rate-override-note" className="mt-1 text-[#657182]">Only a manager or owner can change a ticket’s rate.</p>}
+          </> : <p className="mt-2 text-[#526273]">{ticket.unit_price_override ? <>Rate override on this ticket: ${ticket.unit_price_override}/ton. </> : null}Only a manager or owner can change a ticket’s rate.</p>}
         </div>
         {ticket.status === "verified" && (
           <p className="rounded border border-[#cce4d2] bg-[#f3f9f4] px-3 py-2 text-xs text-[#216c43]" data-testid="verified-by">

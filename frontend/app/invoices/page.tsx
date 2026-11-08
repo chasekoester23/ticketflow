@@ -539,7 +539,10 @@ export default function InvoiceComparisonPage() {
             </td>
           </tr>)}</tbody>
         </table>
-        {!loading && !lines.length && <p className="tf-empty">No invoice lines entered yet. Add one above to compare it with approved tickets.</p>}
+        {!loading && !lines.length && <div className="tf-empty" data-testid="invoices-empty">{!canManage
+          ? <p>No invoice lines yet. A manager or owner records each supplier invoice line here, and its comparison with approved tickets appears in this list.</p>
+          : !projects.length ? <p>No invoice lines yet. Invoices are checked project by project, so <a className="tf-link" href="/projects">create a project</a> first.</p>
+          : <p>No invoice lines yet. Type a line from a supplier invoice into the form above, or <a className="tf-link" href="/invoices/documents">upload the invoice PDF</a> and confirm its lines. Include the invoice&apos;s ticket numbers to check each delivery, not just the totals.</p>}</div>}
         {!loading && lines.length > 0 && !shownLines.length && <p className="tf-empty">No invoice lines match this view.</p>}
         {loading && <p className="tf-empty">Loading invoice comparisons…</p>}
       </div>

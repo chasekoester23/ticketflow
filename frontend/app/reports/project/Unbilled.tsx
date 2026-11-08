@@ -9,7 +9,8 @@ const tons = (v: string | null) => v === null ? "—" : Number(v).toLocaleString
 /** The register, filtered to exactly the approved tickets behind a figure. */
 function recordsLink(projectId: string, filters: Record<string, string | null>) {
   const params = new URLSearchParams({ project_id: projectId, status: "verified" });
-  Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+  // "(not entered)" is how the server names a blank. It isn't something to search for.
+  Object.entries(filters).forEach(([key, value]) => { if (value && value !== "(not entered)") params.set(key, value); });
   return `/records?${params}`;
 }
 
