@@ -226,6 +226,9 @@ class Ticket(Base):
         Index("ix_tickets_org_number", "organization_id", "number_key"),
         Index("ix_tickets_org_loose", "organization_id", "number_loose"),
         Index("ix_tickets_org_load", "organization_id", "delivery_date", "tonnage"),
+        # A project filter reaches its tickets through their batches. Without this,
+        # the database walked every ticket the company has to find one project's.
+        Index("ix_tickets_org_batch_status", "organization_id", "batch_id", "status"),
         # One record per physical position, so a retried worker can't make a second.
         Index("uq_tickets_slot", "file_id", "source_page", "position", unique=True),
         # The same scan can't be approved twice in a company, whichever code path tries.

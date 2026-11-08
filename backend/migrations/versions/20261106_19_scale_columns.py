@@ -34,6 +34,8 @@ NEW_INDEXES = (
     ("ix_tickets_org_number", ["organization_id", "number_key"]),
     ("ix_tickets_org_loose", ["organization_id", "number_loose"]),
     ("ix_tickets_org_load", ["organization_id", "delivery_date", "tonnage"]),
+    # One project's tickets, without walking the whole company's.
+    ("ix_tickets_org_batch_status", ["organization_id", "batch_id", "status"]),
 )
 _CHUNK = 5000
 
