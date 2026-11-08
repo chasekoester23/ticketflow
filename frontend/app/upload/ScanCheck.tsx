@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import {
   Manifest, ManifestSlot, buildManifest, confirmSlotBlank, markSlotTicket, pageImageUrl,
   rotateSlot, setExpectedCount, slotImageUrl,
@@ -21,7 +21,7 @@ const SLOT_LABEL: Record<ManifestSlot["state"], string> = {
 };
 
 /** Whole page plus every physical slot, so people can check scans against paper. */
-export function ScanCheck({ manifest, onChanged, onOpenTicket, onError }: {
+export const ScanCheck = memo(function ScanCheck({ manifest, onChanged, onOpenTicket, onError }: {
   manifest: Manifest;
   onChanged: (next: Manifest) => void;
   onOpenTicket: (ticketId: number) => void;
@@ -93,12 +93,13 @@ export function ScanCheck({ manifest, onChanged, onOpenTicket, onError }: {
 
     <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)} className="border-t border-[#e2e7ec]">
       <summary className="cursor-pointer select-none px-3 py-1 text-[11px] font-semibold text-[#46566a]">Pages and slots</summary>
-      {manifest.files.flatMap((file) => file.pages.map((page) => <div key={file.id + "-" + page.page}
+      {/* Only built once opened. A large batch has thousands of slots nobody is looking at. */}
+      {open && manifest.files.flatMap((file) => file.pages.map((page) => <div key={file.id + "-" + page.page}
         className="grid gap-4 border-t border-[#eef0f3] p-4 lg:grid-cols-[220px_minmax(0,1fr)]">
         <figure>
           <img src={pageImageUrl(file.id, page.page)} alt={"Original page " + page.page + " of " + file.original_name}
             loading="lazy" className="w-full rounded border border-[#dce1e6] bg-white"/>
-          <figcaption className="mt-1 break-words text-[11px] text-[#718091]">{file.original_name} · page {page.page}</figcaption>
+          <figcaption className="mt-1 break-words text-[11px] text-[#5f6c7b]">{file.original_name} · page {page.page}</figcaption>
         </figure>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {page.slots.map((slot) => <article key={slot.id} aria-label={"Page " + page.page + " slot " + (slot.position + 1)}
@@ -119,7 +120,7 @@ export function ScanCheck({ manifest, onChanged, onOpenTicket, onError }: {
           </article>)}
         </div>
       </div>))}
-      {counts.slots === 0 && <p className="px-4 pb-3 text-[12px] text-[#718091]">No slots on record for this batch yet.</p>}
+      {open && counts.slots === 0 && <p className="px-4 pb-3 text-[12px] text-[#5f6c7b]">No slots on record for this batch yet.</p>}
     </details>
   </section>;
-}
+});

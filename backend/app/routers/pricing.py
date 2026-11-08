@@ -13,6 +13,7 @@ from ..permissions import require
 from ..models import Material, NameAlias, PricingEvent, Supplier, SupplierRate, User, as_utc, utcnow
 from ..services.accounts import names_by_id
 from ..services import rate_sheet
+from ..services.locks import take_turn
 from ..services.pricing import norm
 
 router = APIRouter(prefix="/api")
@@ -97,8 +98,27 @@ def _name_is_an_alias(db: Session, organization_id: int, kind: str, name: str) -
     ).limit(1)) is not None
 
 
+def _same_catalog_name(db: Session, model, organization_id: int, name: str) -> str | None:
+    """Rates are found by normalized name, so 'Sand' and 'SAND' would be one
+    name with two prices. Returns the existing spelling, if there is one."""
+    key = norm(name)
+    return next((existing for existing in db.scalars(select(model.name).where(model.organization_id == organization_id))
+                 if norm(existing) == key), None)
+
+
+def _refuse_same_name(db: Session, model, organization_id: int, name: str, kind: str) -> None:
+    existing = _same_catalog_name(db, model, organization_id, name)
+    if existing is None:
+        return
+    if existing == name.strip():
+        raise HTTPException(409, f"A {kind} with that name already exists")
+    raise HTTPException(409, f"'{existing}' is already in the catalog, and tickets can't tell it apart from "
+                             f"'{name.strip()}'. Use '{existing}' instead.")
+
+
 @router.post("/suppliers", status_code=201)
 def create_supplier(body: SupplierIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    _refuse_same_name(db, Supplier, user.organization_id, body.name, "supplier")
     if _name_is_an_alias(db, user.organization_id, "supplier", body.name):
         raise HTTPException(409, "That name is already saved as another spelling of a supplier. Remove the spelling first.")
     s = Supplier(organization_id=user.organization_id, name=body.name.strip(), contact=body.contact)
@@ -133,6 +153,7 @@ def list_materials(db: Session = Depends(get_db), organization_id: int = Depends
 
 @router.post("/materials", status_code=201)
 def create_material(body: MaterialIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    _refuse_same_name(db, Material, user.organization_id, body.name, "material")
     if _name_is_an_alias(db, user.organization_id, "material", body.name):
         raise HTTPException(409, "That name is already saved as another spelling of a material. Remove the spelling first.")
     m = Material(organization_id=user.organization_id, name=body.name.strip(), unit=body.unit)
@@ -220,6 +241,7 @@ def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depend
         Material.id == body.material_id, Material.organization_id == organization_id))
     if supplier is None or material is None:
         raise HTTPException(404, "Supplier or material not found")
+    take_turn(db, "rate", organization_id, body.supplier_id, body.material_id)
     rate = db.scalar(select(SupplierRate).where(
         SupplierRate.supplier_id == body.supplier_id,
         SupplierRate.material_id == body.material_id,
@@ -249,6 +271,8 @@ def import_rate_sheet(body: RateSheetIn, db: Session = Depends(get_db), user: Us
     """Paste a rate sheet, see exactly what it would change, then apply it. Locked
     prices on approved tickets are never touched, and every change is recorded."""
     organization_id = user.organization_id
+    if body.apply:
+        take_turn(db, "rate-sheet", organization_id)
     try:
         rows = rate_sheet.parse(body.text)
     except rate_sheet.RateSheetError as exc:

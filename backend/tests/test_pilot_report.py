@@ -206,8 +206,8 @@ def test_dashboard_sends_money_and_tons_as_exact_strings(client):
     project = _project(client)
     _rate(client)
     batch = _batch(client, [dict(A, tonnage="0.100"), dict(STONE_B, tonnage="0.200"), None, None], project)
-    for ticket, tons in zip(_tickets(client, batch), ("0.100", "0.200")):
-        assert client.patch(f"/api/tickets/{ticket['id']}", json=dict(A, tonnage=tons)).status_code == 200
+    for number, (ticket, tons) in enumerate(zip(_tickets(client, batch), ("0.100", "0.200"))):
+        assert client.patch(f"/api/tickets/{ticket['id']}", json=dict(A, tonnage=tons, ticket_number=f"D{number}")).status_code == 200
         assert client.post(f"/api/tickets/{ticket['id']}/verify").status_code == 200
     data = client.get("/api/dashboard").json()
     assert data["total_tons"] == "0.300"  # floats would give 0.30000000000000004

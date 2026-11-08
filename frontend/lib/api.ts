@@ -8,7 +8,12 @@ async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> 
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
     headers.set("X-TicketFlow-Request", "1");
   }
-  return fetch(url, { ...init, headers, credentials: "include", cache: "no-store" });
+  try {
+    return await fetch(url, { ...init, headers, credentials: "include", cache: "no-store" });
+  } catch {
+    // fetch only rejects when no answer came back: offline, server down, or dropped mid-request.
+    throw new ApiError("Couldn't reach the TicketFlow server. Check your connection and try again.", "network");
+  }
 }
 
 export type Role = "owner" | "manager" | "clerk" | "viewer";
@@ -40,6 +45,14 @@ export async function logIn(username: string, password: string): Promise<Account
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   }))).json();
+}
+
+/** Whether this server has no accounts yet. A server without the check answers 404, meaning no. */
+export async function getSetupStatus(): Promise<{ needed: boolean }> {
+  return (await check(await apiFetch(`${API}/api/setup/status`))).json();
+}
+export async function setUpCompany(body: { company_name: string; display_name: string; username: string; password: string }): Promise<Account> {
+  return (await check(await apiFetch(`${API}/api/setup`, json("POST", body)))).json();
 }
 
 export async function logOut(): Promise<void> {
@@ -100,18 +113,64 @@ export type Rate = { id: number; supplier_id: number; material_id: number; unit_
 /** An API refusal. `code` is set when the UI should react, not just show text. */
 export class ApiError extends Error {
   code?: string;
-  constructor(message: string, code?: string) {
+  status?: number;
+  /** The server's own reference for this request, to quote if it keeps happening. */
+  reference?: string;
+  retryAfterSeconds?: number;
+  constructor(message: string, code?: string, details: { status?: number; reference?: string; retryAfterSeconds?: number } = {}) {
     super(message);
     this.code = code;
+    Object.assign(this, details);
   }
 }
 
+/** A failed save or approval, in words for the person who just tried it. */
+export type Failure = { message: string; reference?: string; canRetry: boolean; signIn?: boolean };
+
+/**
+ * `noun` names what was attempted ("save", "approval"). `savedFirst` means the
+ * typed values reached the server before the next step failed, so they're safe.
+ */
+export function describeFailure(error: unknown, noun: string, savedFirst = false): Failure {
+  const api = error instanceof ApiError ? error : new ApiError((error as Error)?.message ?? "Something went wrong.");
+  const start = savedFirst ? `Your changes were saved, but this ${noun}` : `This ${noun}`;
+  const typed = savedFirst ? "" : " What you typed is still here.";
+  const reference = api.reference;
+  if (api.code === "network") {
+    return { message: `${start} may not have gone through, because TicketFlow couldn't reach the server. Check your connection, then try again.${typed}`, canRetry: true };
+  }
+  if (api.status === 401) {
+    return { message: `${start} did not go through, because you've been signed out. Sign in again and reopen this ticket.${savedFirst ? "" : " What you typed is kept on this computer."}`, canRetry: false, signIn: true };
+  }
+  if (api.status === 429) {
+    const wait = api.retryAfterSeconds ? `about ${api.retryAfterSeconds} second${api.retryAfterSeconds === 1 ? "" : "s"}` : "a minute";
+    return { message: `${start} did not go through, because too many requests reached the server at once. Wait ${wait}, then try again.${typed}`, reference, canRetry: true };
+  }
+  if (api.status === 503) {
+    const wait = api.retryAfterSeconds ? `in about ${api.retryAfterSeconds} second${api.retryAfterSeconds === 1 ? "" : "s"}` : "in a moment";
+    return { message: `${start} did not go through, because the server is busy or temporarily unavailable. Try again ${wait}.${typed}`, reference, canRetry: true };
+  }
+  if (api.status !== undefined && api.status >= 500) {
+    return { message: `${start} did not go through, because something went wrong on the server. Try again; if it keeps happening, quote the reference to whoever looks after TicketFlow.${typed}`, reference, canRetry: true };
+  }
+  // A refusal the server explained: trying the same thing again won't change the answer.
+  return { message: api.message, canRetry: false };
+}
+
+const FALLBACK_MESSAGE: Record<number, string> = {
+  429: "Too many requests reached the server at once. Wait a minute, then try again.",
+  503: "The server is busy or temporarily unavailable. Try again in a moment.",
+};
+
 async function check(res: Response) {
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail = FALLBACK_MESSAGE[res.status] ?? (res.status >= 500 ? "Something went wrong on the server. Try again." : res.statusText);
     let code: string | undefined;
+    let reference = res.headers.get("X-Request-ID") ?? undefined;
+    const retryAfter = Number(res.headers.get("Retry-After"));
     try {
       const body = await res.json();
+      if (typeof body.request_id === "string") reference = body.request_id;
       if (typeof body.detail === "string") {
         detail = body.detail;
       } else if (body.detail && typeof body.detail.message === "string") {
@@ -122,11 +181,17 @@ async function check(res: Response) {
           && window.location.pathname !== "/account") {
           window.location.replace("/account");
         }
-      } else {
+      } else if (Array.isArray(body.detail)) {
+        // The framework's field-by-field validation answer.
+        detail = body.detail.map((item: { loc?: unknown[]; msg?: string }) =>
+          [item.loc?.[item.loc.length - 1], item.msg].filter(Boolean).join(": ")).join("; ");
+      } else if (body.detail !== undefined) {
         detail = JSON.stringify(body.detail);
       }
     } catch {}
-    throw new ApiError(detail, code);
+    throw new ApiError(detail, code, {
+      status: res.status, reference, retryAfterSeconds: retryAfter > 0 ? retryAfter : undefined,
+    });
   }
   return res;
 }
@@ -204,13 +269,14 @@ export async function patchTicket(id: number, body: Partial<Record<string, strin
   ).json();
 }
 
-export async function ticketAction(id: number, action: "verify" | "flag" | "skip", revision?: string, note?: string): Promise<Ticket> {
+export async function ticketAction(id: number, action: "verify" | "flag" | "skip", revision?: string,
+  extra?: { note?: string; confirm_duplicate?: boolean }): Promise<Ticket> {
   const headers: Record<string, string> = {};
   if (revision) headers["If-Match"] = revision;
   const init: RequestInit = { method: "POST", headers };
-  if (note !== undefined) {
+  if (extra) {
     headers["Content-Type"] = "application/json";
-    init.body = JSON.stringify({ note });
+    init.body = JSON.stringify(extra);
   }
   return (await check(await apiFetch(`${API}/api/tickets/${id}/${action}`, init))).json();
 }
@@ -336,10 +402,14 @@ export async function setProjectStatus(id: number, status: "active" | "archived"
 export async function getRecords(f: Filters): Promise<Ticket[]> {
   return (await check(await apiFetch(`${API}/api/records${qs(f)}`))).json();
 }
-export const recordsExportUrl = (f: Filters, format: "xlsx" | "csv" = "xlsx", columns?: string[]) => {
-  const query = qs(f);
-  const extra = columns?.length ? `${query ? "&" : "?"}columns=${columns.join(",")}` : "";
-  return `${API}/api/records/export.${format}${query}${extra}`;
+/** With an open saved view, `viewId` also applies the view's own column names. */
+export const recordsExportUrl = (f: Filters, format: "xlsx" | "csv" = "xlsx", columns?: string[], viewId?: number) => {
+  const params = new URLSearchParams();
+  Object.entries(f).forEach(([k, v]) => v && params.set(k, v));
+  if (viewId) params.set("view_id", String(viewId));
+  if (columns?.length) params.set("columns", columns.join(","));
+  const query = params.toString().replaceAll("%2C", ",");
+  return `${API}/api/records/export.${format}${query ? `?${query}` : ""}`;
 };
 export type RecordsSort = "date" | "ticket_number" | "tons" | "supplier" | "material" | "status" | "job";
 export type RecordsPage = {
@@ -369,13 +439,16 @@ export type NameVariant = {
 export async function getNameVariants(field: "supplier" | "material"): Promise<{ field: string; catalog: string[]; rows: NameVariant[] }> {
   return (await check(await apiFetch(`${API}/api/records/name-variants?field=${field}`))).json();
 }
-export type SavedView = { id: number; name: string; filters: Filters; columns: string[]; created_by: string | null; created_at: string };
+/** `labels` names columns to match a team's own spreadsheet headers, by column key. */
+export type SavedView = { id: number; name: string; filters: Filters; columns: string[]; labels?: Record<string, string>; created_by: string | null; created_at: string };
 export async function listSavedViews(): Promise<SavedView[]> {
   return (await check(await apiFetch(`${API}/api/saved-views`))).json();
 }
-export async function createSavedView(name: string, filters: Filters, columns: string[]): Promise<SavedView> {
+export async function createSavedView(name: string, filters: Filters, columns: string[], labels: Record<string, string> = {}): Promise<SavedView> {
   const kept = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
-  return (await check(await apiFetch(`${API}/api/saved-views`, json("POST", { name, filters: kept, columns })))).json();
+  const named = Object.fromEntries(Object.entries(labels).map(([key, text]) => [key, text.trim()]).filter(([key, text]) => text && columns.includes(key)));
+  const body = Object.keys(named).length ? { name, filters: kept, columns, labels: named } : { name, filters: kept, columns };
+  return (await check(await apiFetch(`${API}/api/saved-views`, json("POST", body)))).json();
 }
 export async function deleteSavedView(id: number) {
   await check(await apiFetch(`${API}/api/saved-views/${id}`, { method: "DELETE" }));
@@ -406,6 +479,58 @@ export async function getProjectReport(id: string): Promise<ProjectReport> {
   return (await check(await apiFetch(`${API}/api/reports/project/${id}`))).json();
 }
 export const projectReportUrl = (id: string) => `${API}/api/reports/project/${id}/report.xlsx`;
+
+/** An endpoint this server doesn't have yet answers with the framework's own 404. */
+const missingEndpoint = (error: unknown) => error instanceof ApiError && error.status === 404 && error.message === "Not Found";
+
+// Approved deliveries no invoice line lists or covers. Rows stop at 500; totals cover everything.
+export type UnbilledRow = {
+  ticket_id: number; batch_id: number; ticket_number: string | null; delivery_date: string | null;
+  supplier: string | null; material: string | null; tons: string | null; cost: string | null;
+};
+export type UnbilledGap = { supplier: string; material: string; date_from: string; date_to: string; tickets: number; tons: string };
+export type UnbilledReport = {
+  project: { id: number; code: string; name: string };
+  total_tickets: number; total_tons: string; total_cost: string | null;
+  rows: UnbilledRow[]; truncated: boolean; gaps: UnbilledGap[];
+};
+/** Null when this server doesn't offer the check yet. */
+export async function getUnbilled(projectId: string): Promise<UnbilledReport | null> {
+  try {
+    return await (await check(await apiFetch(`${API}/api/reports/project/${projectId}/unbilled`))).json();
+  } catch (error) {
+    if (missingEndpoint(error)) return null;
+    throw error;
+  }
+}
+export const unbilledCsvUrl = (projectId: string) => `${API}/api/reports/project/${projectId}/unbilled.csv`;
+export const discrepanciesCsvUrl = (filters: { project_id?: string; supplier?: string }) => {
+  const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value) as [string, string][]);
+  const query = params.toString();
+  return `${API}/api/invoice-comparisons/discrepancies.csv${query ? `?${query}` : ""}`;
+};
+
+/** Fetch a file and hand it to the browser, so a refusal shows as a message, not an error page. */
+export async function downloadFile(url: string, filename: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await check(await apiFetch(url));
+  } catch (error) {
+    if (missingEndpoint(error)) throw new ApiError("This server doesn't offer that download yet. It arrives with the next server update.", "missing_endpoint", { status: 404 });
+    throw error;
+  }
+  const link = document.createElement("a");
+  const href = URL.createObjectURL(await response.blob());
+  try {
+    link.href = href;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(href), 1000);
+  }
+}
 
 export type Group = { name: string; tickets: number; tons: string | number; cost: string | number };
 export type Dashboard = {
@@ -488,6 +613,7 @@ export async function getInvoiceOverview(): Promise<InvoiceOverview> {
 }
 export type InvoiceLineComparison = InvoiceLineInput & {
   id: number;
+  revision?: string;
   diagnosis?: InvoiceDiagnosis | null;
   billed_extension: string;
   invoice_arithmetic_difference: string;
@@ -514,7 +640,7 @@ export type InvoiceLineComparison = InvoiceLineInput & {
 };
 // Uploaded invoice PDFs and their drafts. A draft counts for nothing until confirmed.
 export type InvoiceDraftLine = {
-  id: number; page: number; source_text: string | null; state: "pending_review" | "confirmed" | "rejected";
+  id: number; revision?: string; page: number; source_text: string | null; state: "pending_review" | "confirmed" | "rejected";
   project_id: number | null; invoice_number: string | null; supplier_name: string | null; material_name: string | null;
   billed_quantity: string | null; unit: string | null; billed_unit_price: string | null; billed_subtotal: string | null;
   date_from: string | null; date_to: string | null; ticket_list: string;
@@ -546,8 +672,8 @@ export async function addDraftLine(id: number, page: number) {
 export async function saveDraftLine(id: number, lineId: number, body: Record<string, string | number | null>) {
   await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}`, json("PATCH", body)));
 }
-export async function confirmDraftLine(id: number, lineId: number) {
-  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/confirm`, { method: "POST" }));
+export async function confirmDraftLine(id: number, lineId: number, revision?: string) {
+  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/confirm`, { method: "POST", headers: revision ? { "If-Match": revision } : {} }));
 }
 export async function rejectDraftLine(id: number, lineId: number) {
   await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/reject`, { method: "POST" }));
@@ -557,16 +683,18 @@ export async function voidInvoiceDocument(id: number) {
 }
 
 export async function getInvoiceComparisons(): Promise<InvoiceLineComparison[]> {
-  return (await check(await apiFetch(API + "/api/invoice-comparisons"))).json();
+  return (await check(await apiFetch(API + "/api/invoice-comparisons?summary=true"))).json();
+}
+export async function getInvoiceComparison(id: number): Promise<InvoiceLineComparison> {
+  return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id))).json();
 }
 export async function saveInvoiceComparison(
-  body: InvoiceLineInput, id?: number,
+  body: InvoiceLineInput, id?: number, revision?: string,
 ): Promise<InvoiceLineComparison> {
   const suffix = id !== undefined ? "/" + id : "";
-  return (await check(await apiFetch(
-    API + "/api/invoice-comparisons" + suffix,
-    json(id !== undefined ? "PUT" : "POST", body),
-  ))).json();
+  const init = json(id !== undefined ? "PUT" : "POST", body);
+  if (revision) (init.headers as Record<string, string>)["If-Match"] = revision;
+  return (await check(await apiFetch(API + "/api/invoice-comparisons" + suffix, init))).json();
 }
 export async function confirmTicketLinks(id: number, ticketIds: number[]): Promise<InvoiceLineComparison> {
   return (await check(await apiFetch(API + "/api/invoice-comparisons/" + id + "/ticket-links",

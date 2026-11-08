@@ -2,14 +2,12 @@ import hashlib
 import json
 import uuid
 import logging
-import os
-import shutil
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -19,12 +17,15 @@ from ..config import settings
 from ..db import SessionLocal, get_db
 from ..models import AuditEvent, Batch, InvoiceTicketLink, Project, ScanEvent, ScanSlot, Ticket, UploadedFile, User, as_utc
 from ..permissions import has_permission, require
-from ..schemas import BatchOut, BatchQueueRow, FlagIn, TicketOut, TicketPatch
+from ..rate_limit import limited
+from ..schemas import BatchOut, BatchQueueRow, FlagIn, TicketOut, TicketPatch, VerifyIn
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
-from ..services import pipeline, jobqueue, scan_manifest
+from ..services import pipeline, jobqueue, scan_manifest, storage
+from ..services.locks import take_turn
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
+from ..services.pricing import norm
 from ..services.extraction import ExtractionError, get_extractor
 from ..services.validation import compute_flags
 
@@ -66,8 +67,8 @@ def _drain_job_for_tests() -> None:
         jobqueue.execute_claimed(db, job_id, token, extractor_factory=get_extractor)
 
 
-@router.post("/batches", response_model=BatchOut)
-async def create_batch(
+@router.post("/batches", response_model=BatchOut, dependencies=[Depends(limited("uploads"))])
+def create_batch(
     background: BackgroundTasks,
     layout: str = Form("single"),
     intake_mode: str = Form("extract"),
@@ -77,6 +78,7 @@ async def create_batch(
     user: User = Depends(require("tickets.upload")),
     db: Session = Depends(get_db),
 ):
+    # Not async: reading and storing files here would otherwise stop every other request.
     organization_id = user.organization_id
     if layout not in ("single", "grid_2x2"):
         raise HTTPException(422, "layout must be 'single' or 'grid_2x2'")
@@ -105,7 +107,7 @@ async def create_batch(
     for up in files:
         original_name = Path(up.filename or "").name or "(unnamed file)"
         ext = Path(original_name).suffix.lower()
-        data = await up.read(settings.max_upload_bytes + 1)
+        data = up.file.read(settings.max_upload_bytes + 1)
         total_bytes += len(data)
         if len(original_name) > 255:
             rejected.append("A file name exceeds 255 characters; rename the scan before uploading")
@@ -119,7 +121,7 @@ async def create_batch(
             rejected.append(f"{original_name}: content does not match its file extension")
         else:
             validated.append((up, original_name, ext, pipeline.sha256_bytes(data)))
-        await up.seek(0)
+        up.file.seek(0)
 
     if total_bytes > settings.max_batch_total_bytes:
         raise HTTPException(
@@ -135,29 +137,25 @@ async def create_batch(
     batch = Batch(layout=layout, intake_mode=intake_mode, status="uploaded",
                   project_id=project_id, organization_id=organization_id,
                   created_by_user_id=user.id, expected_ticket_count=expected_ticket_count)
-    upload_dir = None
+    store = storage.current()
+    upload_folder = None
     try:
         db.add(batch)
         db.flush()
-        upload_dir = settings.storage_dir / "uploads" / str(batch.id)
-        upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        upload_folder = f"uploads/{batch.id}"
         for up, original_name, ext, checksum in validated:
-            internal = upload_dir / f"{uuid.uuid4().hex}{ext}"
-            # Read each validated file individually. O_EXCL and mode 0600
-            # prevent overwrites and world-readable contractor scans.
-            fd = os.open(internal, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(await up.read())
+            # Stored privately, under a random name, and never over another file.
+            key = store.save(f"{upload_folder}/{uuid.uuid4().hex}{ext}", up.file.read())
             db.add(UploadedFile(
                 batch_id=batch.id, original_name=original_name,
-                storage_path=str(internal), sha256=checksum,
+                storage_path=key, sha256=checksum,
             ))
         job = jobqueue.enqueue(db, batch.id)
         db.commit()
     except Exception:
         db.rollback()
-        if upload_dir is not None:
-            shutil.rmtree(upload_dir, ignore_errors=True)
+        if upload_folder is not None:
+            store.delete_prefix(upload_folder)
         raise
 
     _notify_worker(background, job.id)
@@ -279,7 +277,7 @@ def move_batch(batch_id: int, body: BatchProjectIn, db: Session = Depends(get_db
     return batch
 
 
-@router.post("/batches/{batch_id}/retry", response_model=BatchOut)
+@router.post("/batches/{batch_id}/retry", response_model=BatchOut, dependencies=[Depends(limited("uploads"))])
 def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db),
                 user: User = Depends(require("tickets.upload"))):
     organization_id = user.organization_id
@@ -359,33 +357,38 @@ def _out(
             t, aliases if aliases is not None else pricing_svc.alias_suggestions(db, organization_id)),
         as_read={field: str(t.raw_extraction[field]) for field in EDITABLE
                  if isinstance(t.raw_extraction, dict) and t.raw_extraction.get(field) not in (None, "")},
-        revision=ticket_revision(t),
+        revision=ticket_revision(t, price),
     ))
 
 
-def ticket_revision(t: Ticket) -> str:
-    """A short fingerprint of what a reviewer relies on. Decimals are formatted
-    at stored precision, so a value and its reload always agree."""
+def ticket_revision(t: Ticket, price: Decimal | None) -> str:
+    """A short fingerprint of what a reviewer relies on, including the price that
+    approving would lock. Decimals are formatted at stored precision, so a value
+    and its reload always agree."""
     parts = [
         t.ticket_number, t.delivery_date.isoformat() if t.delivery_date else None, t.material_type,
         f"{t.tonnage:.3f}" if t.tonnage is not None else None, t.supplier, t.job_location,
         f"{t.unit_price_override:.4f}" if t.unit_price_override is not None else None,
+        f"{price:.4f}" if price is not None else None,
         t.status, bool(t.tonnage_confirmed),
     ]
     return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
 
 
-def _require_revision(t: Ticket, if_match: str | None) -> None:
+def _require_revision(db: Session, t: Ticket, organization_id: int, if_match: str | None) -> None:
     """Refuse to act on a ticket that changed since the person last saw it.
 
-    Without this, a manager with a stale page could approve 22 tons while
-    looking at 20. Optional, so scripts that read first still work; the browser
-    always sends it.
+    Without this, a manager with a stale page could approve 22 tons while looking
+    at 20, or lock a rate they never saw. Optional, so scripts that read first
+    still work; the browser always sends it.
     """
-    if if_match is not None and if_match.strip().strip('"') != ticket_revision(t):
+    if if_match is None:
+        return
+    price, _ = pricing_svc.effective_price_for(t, pricing_svc.rate_table(db, organization_id))
+    if if_match.strip().strip('"') != ticket_revision(t, price):
         raise HTTPException(409, {
             "code": "ticket_changed",
-            "message": "Someone else changed this ticket while you had it open. Nothing was saved. "
+            "message": "Someone else changed this ticket or its rate while you had it open. Nothing was saved. "
                        "The latest values are shown now: check them against the scan.",
         })
 
@@ -451,7 +454,7 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
                  user: User = Depends(require("tickets.edit")), if_match: str | None = Header(None)):
     organization_id = user.organization_id
     t = _ticket_or_404(db, ticket_id, organization_id, lock=True)
-    _require_revision(t, if_match)
+    _require_revision(db, t, organization_id, if_match)
     changes = patch.model_dump(exclude_unset=True)
     if (
         "unit_price_override" in changes
@@ -491,17 +494,18 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
         t.price_snapshot_state = "pending"
         t.applied_unit_price = None
         t.applied_price_source = None
+        t.approved_cost = None
     _refresh_flags(t)
     db.commit()
     return _out(db, t, organization_id)
 
 
 @router.post("/tickets/{ticket_id}/verify", response_model=TicketOut)
-def verify_ticket(ticket_id: int, db: Session = Depends(get_db),
+def verify_ticket(ticket_id: int, body: VerifyIn | None = Body(default=None), db: Session = Depends(get_db),
                   user: User = Depends(require("tickets.verify")), if_match: str | None = Header(None)):
     organization_id = user.organization_id
     t = _ticket_or_404(db, ticket_id, organization_id, lock=True)
-    _require_revision(t, if_match)
+    _require_revision(db, t, organization_id, if_match)
     # Validate the current values rather than trusting stale extraction flags.
     _refresh_flags(t)
     # Unusually high tonnage is a warning, not an absolute rejection: some
@@ -509,29 +513,38 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db),
     blocking = [f for f in t.flags if not f.startswith("Tonnage unusually large")]
     if blocking:
         raise HTTPException(422, "Resolve ticket issues before verification: " + "; ".join(blocking))
-    if t.status != "verified" and t.crop_sha256:
-        # Duplicate warnings are advisory for similar ticket numbers/loads.
-        # An EXACT scan that has already been approved for this company is
-        # different: approving it again would double-count tons and cost.
-        # Other companies' documents must never influence this decision.
-        approved_copy = db.scalar(
-            select(Ticket.id)
-            .join(Batch, Batch.id == Ticket.batch_id)
-            .where(
-                Batch.organization_id == organization_id,
-                Ticket.crop_sha256 == t.crop_sha256,
-                Ticket.id != t.id,
-                Ticket.status == "verified",
-            )
-            .limit(1)
-        )
-        if approved_copy is not None:
-            raise HTTPException(
-                409,
-                "Identical scanned ticket already verified in this company. "
-                "Review the original; flag or skip the duplicate instead of "
-                "counting its quantity and cost twice.",
-            )
+    if t.status != "verified":
+        # People approving copies of one delivery take turns, so the second sees
+        # the first's result. Other companies' documents never influence this.
+        if t.crop_sha256:
+            take_turn(db, "approve-scan", organization_id, t.crop_sha256)
+            # An EXACT scan already approved in this company would double-count
+            # tons and cost. A person can't override this one.
+            approved_copy = db.scalar(select(Ticket.id).where(
+                Ticket.organization_id == organization_id, Ticket.crop_sha256 == t.crop_sha256,
+                Ticket.id != t.id, Ticket.status == "verified").limit(1))
+            if approved_copy is not None:
+                raise HTTPException(
+                    409,
+                    "Identical scanned ticket already verified in this company. "
+                    "Review the original; flag or skip the duplicate instead of "
+                    "counting its quantity and cost twice.",
+                )
+        # The same supplier ticket number is very likely the same delivery, but a
+        # supplier could reuse one. So a person decides, and that's on the record.
+        if t.ticket_number and t.supplier:
+            take_turn(db, "approve-number", organization_id, norm(t.supplier), t.number_key)
+            other = db.scalar(select(Ticket).where(
+                Ticket.organization_id == organization_id, Ticket.number_key == t.number_key,
+                Ticket.supplier_key == t.supplier_key, Ticket.id != t.id, Ticket.status == "verified").limit(1))
+            if other is not None:
+                if not (body and body.confirm_duplicate):
+                    raise HTTPException(409, {
+                        "code": "possible_duplicate",
+                        "message": f"{t.supplier} ticket {t.ticket_number} is already approved "
+                                   f"(batch {other.batch_id}, page {other.source_page}, ticket {other.position + 1}).",
+                    })
+                _audit(db, t, user, "duplicate_override", None, f"approved alongside ticket {other.id}")
     if t.status == "verified":
         if t.price_snapshot_state is None:
             raise HTTPException(409, "Historical unit price is unknown. Enter the documented rate as a ticket override and verify again.")
@@ -544,6 +557,7 @@ def verify_ticket(ticket_id: int, db: Session = Depends(get_db),
     t.applied_unit_price = price
     t.applied_price_source = source
     t.price_snapshot_state = "priced" if price is not None else "unpriced"
+    t.approved_cost = pricing_svc.to_cents(t.tonnage * price) if price is not None and t.tonnage is not None else None
     t.status, t.tonnage_confirmed = "verified", True
     if t.flag_note is not None:  # Settled by this approval; the audit trail keeps it.
         _audit(db, t, user, "flag_note", t.flag_note, None)
@@ -560,7 +574,7 @@ def flag_ticket(ticket_id: int, body: FlagIn | None = Body(default=None), db: Se
     """Defer a questionable ticket without approving its quantity or cost."""
     organization_id = user.organization_id
     t = _ticket_or_404(db, ticket_id, organization_id, lock=True)
-    _require_revision(t, if_match)
+    _require_revision(db, t, organization_id, if_match)
     if t.status != "flagged":
         _audit(db, t, user, "status", t.status, "flagged")
     note = (body.note or "").strip() or None if body is not None else None
@@ -573,6 +587,7 @@ def flag_ticket(ticket_id: int, body: FlagIn | None = Body(default=None), db: Se
     t.price_snapshot_state = "pending"
     t.applied_unit_price = None
     t.applied_price_source = None
+    t.approved_cost = None
     db.commit()
     return _out(db, t, organization_id)
 
@@ -582,7 +597,7 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db),
                 user: User = Depends(require("tickets.skip")), if_match: str | None = Header(None)):
     organization_id = user.organization_id
     t = _ticket_or_404(db, ticket_id, organization_id, lock=True)
-    _require_revision(t, if_match)
+    _require_revision(db, t, organization_id, if_match)
     _audit(db, t, user, "status", t.status, "skipped")
     t.status = "skipped"
     _withdraw_approval(t)
@@ -590,6 +605,7 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db),
     t.price_snapshot_state = "pending"
     t.applied_unit_price = None
     t.applied_price_source = None
+    t.approved_cost = None
     db.commit()
     return _out(db, t, organization_id)
 
@@ -597,9 +613,10 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db),
 @router.get("/tickets/{ticket_id}/image")
 def ticket_image(ticket_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     t = _ticket_or_404(db, ticket_id, organization_id)
-    if not Path(t.crop_path).is_file():
+    image = storage.current().serve(t.crop_path, "image/png")
+    if image is None:
         raise HTTPException(404, "The stored image for this ticket is missing.")
-    return FileResponse(t.crop_path, media_type="image/png")
+    return image
 
 
 @router.get("/tickets/{ticket_id}/audit")
@@ -616,17 +633,20 @@ def ticket_audit(ticket_id: int, db: Session = Depends(get_db), organization_id:
     ]
 
 
-@router.get("/batches/{batch_id}/export.xlsx")
-def export_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+@router.get("/batches/{batch_id}/export.xlsx", dependencies=[Depends(limited("exports"))])
+def export_batch(batch_id: int, view_id: int | None = None, db: Session = Depends(get_db),
+                 organization_id: int = Depends(current_organization_id)):
+    from .records import view_choice
     if db.scalar(select(Batch.id).where(
         Batch.id == batch_id, Batch.organization_id == organization_id
     )) is None:
         raise HTTPException(404, "Batch not found")
-    tickets = db.scalars(
-        select(Ticket).where(Ticket.batch_id == batch_id).order_by(Ticket.file_id, Ticket.source_page, Ticket.position)).all()
+    keys, labels = view_choice(db, organization_id, view_id, None)
     table = pricing_svc.rate_table(db, organization_id)
-    prices = {t.id: p for t in tickets if (p := pricing_svc.effective_price_for(t, table)[0]) is not None}
-    data = export_svc.build_workbook(list(tickets), prices, names_by_id(db, organization_id))
+    query = export_svc.row_query().where(Ticket.batch_id == batch_id)
+    data = export_svc.build_workbook(export_svc.rows(db, query, order=(Ticket.file_id, Ticket.source_page, Ticket.position)),
+                                     names_by_id(db, organization_id), keys, price_of=lambda t: pricing_svc.effective_price_for(t, table)[0],
+                                     labels=labels)
     return Response(
         data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="delivery-records-batch-{batch_id}.xlsx"'})

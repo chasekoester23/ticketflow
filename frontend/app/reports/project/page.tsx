@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Project, ProjectReport, ReportGroup, getProjectReport, listProjects, projectReportUrl } from "../../../lib/api";
+import { Unbilled } from "./Unbilled";
 
 const money = (v: string | null) => v === null ? "Unresolved" : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const tons = (v: string) => Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 });
@@ -12,13 +13,27 @@ const RESULT: Record<string, { label: string; tone: string }> = {
   no_verified_tickets: { label: "No verified tickets", tone: "tf-status-attention" },
 };
 
-function GroupCells({ row }: { row: ReportGroup }) {
+const NOT_ENTERED = "(not entered)"; // How the server names a blank supplier, material or month.
+/** The register, filtered to the approved tickets behind a row. Names match as "contains". */
+function approvedLink(projectId: string, filters: Record<string, string | undefined>) {
+  const params = new URLSearchParams({ project_id: projectId, status: "verified" });
+  Object.entries(filters).forEach(([key, value]) => { if (value && value !== NOT_ENTERED) params.set(key, value); });
+  return `/records?${params}`;
+}
+const monthRange = (month: string) => {
+  const [year, number] = month.split("-").map(Number);
+  if (!year || !number) return {};
+  const last = new Date(year, number, 0).getDate();
+  return { date_from: `${month}-01`, date_to: `${month}-${String(last).padStart(2, "0")}` };
+};
+
+function GroupCells({ row, href }: { row: ReportGroup; href?: string }) {
   return <>
-    <td className="text-right tabular-nums">{row.verified_tickets}</td>
+    <td className="text-right tabular-nums">{href && row.verified_tickets > 0 ? <a href={href}>{row.verified_tickets}<span className="sr-only"> approved tickets, open in records</span></a> : row.verified_tickets}</td>
     <td className="text-right tabular-nums">{tons(row.verified_tons)}</td>
     <td className="text-right tabular-nums">{money(row.cost)}{row.unpriced > 0 && <span className="block text-[10px] font-bold text-[#a14c1c]">{row.unpriced} with no locked price</span>}</td>
-    <td className="text-right tabular-nums text-[#7a8796]">{row.pending_tickets}</td>
-    <td className="text-right tabular-nums text-[#7a8796]">{tons(row.pending_tons)}</td>
+    <td className="text-right tabular-nums text-[#5f6c7b]">{row.pending_tickets}</td>
+    <td className="text-right tabular-nums text-[#5f6c7b]">{tons(row.pending_tons)}</td>
   </>;
 }
 const GROUP_HEADERS = <>
@@ -29,8 +44,8 @@ const GROUP_HEADERS = <>
 function Tile({ label, value, note, attention }: { label: string; value: string; note: string; attention?: boolean }) {
   return <div className="min-w-0 px-5 py-4">
     <p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">{label}</p>
-    <p className={`mt-1.5 text-[22px] font-bold tabular-nums ${attention ? "text-[#b85c2b]" : "text-[#192632]"}`}>{value}</p>
-    <p className="mt-1 text-[11px] text-[#7b8794]">{note}</p>
+    <p className={`mt-1.5 text-[22px] font-bold tabular-nums ${attention ? "text-[#a3511d]" : "text-[#192632]"}`}>{value}</p>
+    <p className="mt-1 text-[11px] text-[#5f6c7b]">{note}</p>
   </div>;
 }
 
@@ -63,7 +78,7 @@ export default function ProjectReportPage() {
     <div className="tf-page-heading">
       <div>
         <h1 className="tf-page-title">Project report</h1>
-        <p className="tf-page-description">Approved material by supplier and month, with invoice lines beside it. Not an approval for payment.</p>
+        <p className="tf-page-description">Approved material by supplier and month, the invoice lines against it, and approved deliveries no invoice covers. Not an approval for payment.</p>
       </div>
       <div className="flex flex-wrap items-end gap-2">
         <label className="tf-field-label">Project
@@ -90,7 +105,8 @@ export default function ProjectReportPage() {
         {report.by_supplier_material.length ? <div className="tf-table-wrap"><table className="tf-table">
           <thead><tr><th>Supplier</th><th>Material</th>{GROUP_HEADERS}</tr></thead>
           <tbody>{report.by_supplier_material.map((row) => <tr key={row.supplier + "|" + row.material}>
-            <td className="font-semibold">{row.supplier}</td><td>{row.material}</td><GroupCells row={row} />
+            <td className="font-semibold">{row.supplier}</td><td>{row.material}</td>
+            <GroupCells row={row} href={row.supplier === NOT_ENTERED || row.material === NOT_ENTERED ? undefined : approvedLink(project, { supplier: row.supplier, material: row.material })} />
           </tr>)}</tbody>
         </table></div> : <p className="tf-empty">No tickets on this project yet.</p>}
       </section>
@@ -99,7 +115,8 @@ export default function ProjectReportPage() {
         <div className="tf-panel-heading"><h2 className="tf-panel-title">By delivery month</h2></div>
         {report.by_month.length ? <div className="tf-table-wrap"><table className="tf-table">
           <thead><tr><th>Month</th>{GROUP_HEADERS}</tr></thead>
-          <tbody>{report.by_month.map((row) => <tr key={row.month}><td className="font-semibold tabular-nums">{row.month}</td><GroupCells row={row} /></tr>)}</tbody>
+          <tbody>{report.by_month.map((row) => <tr key={row.month}><td className="font-semibold tabular-nums">{row.month}</td>
+            <GroupCells row={row} href={row.month === NOT_ENTERED ? undefined : approvedLink(project, monthRange(row.month))} /></tr>)}</tbody>
         </table></div> : <p className="tf-empty">No tickets on this project yet.</p>}
       </section>
 
@@ -113,7 +130,7 @@ export default function ProjectReportPage() {
         {report.invoices.lines.length ? <div className="tf-table-wrap"><table className="tf-table">
           <thead><tr><th>Invoice</th><th>Supplier</th><th>Material</th><th>Result</th><th className="text-right">Billed tons</th><th className="text-right">Approved tons</th><th className="text-right">Billed</th><th className="text-right">Approved cost</th><th className="text-right">Difference</th></tr></thead>
           <tbody>{report.invoices.lines.map((line) => <tr key={line.id}>
-            <td className="font-semibold tabular-nums">{line.invoice_number}</td><td>{line.supplier}</td><td>{line.material}</td>
+            <td className="font-semibold tabular-nums"><a href={`/invoices?line=${line.id}`}>{line.invoice_number}<span className="sr-only">, open this invoice line</span></a></td><td>{line.supplier}</td><td>{line.material}</td>
             <td><span className={`tf-status ${RESULT[line.status]?.tone ?? ""}`}>{RESULT[line.status]?.label ?? line.status}</span></td>
             <td className="text-right tabular-nums">{tons(line.billed_tons)}</td><td className="text-right tabular-nums">{tons(line.verified_tons)}</td>
             <td className="text-right tabular-nums">{money(line.billed_subtotal)}</td><td className="text-right tabular-nums">{money(line.verified_subtotal)}</td>
@@ -121,6 +138,8 @@ export default function ProjectReportPage() {
           </tr>)}</tbody>
         </table></div> : <p className="tf-empty">No invoice lines on this project yet.</p>}
       </section>
+
+      <Unbilled projectId={project} />
     </>}
   </div>;
 }

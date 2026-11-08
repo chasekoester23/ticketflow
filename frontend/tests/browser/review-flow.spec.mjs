@@ -163,7 +163,7 @@ test("same-as-previous never replaces something already typed", async ({ page })
 });
 
 test("a stale approval is refused, the latest values appear, and nothing advances", async ({ page }) => {
-  const tickets = [ticket(101, { ticket_number: "1", tonnage: "20.000" }), ticket(102)];
+  const tickets = [ticket(101, { ticket_number: "1", tonnage: "20.000", delivery_date: "2026-10-15", material_type: "Sand", supplier: "S", job_location: "J" }), ticket(102)];
   const log = await mock(page, tickets);
   await page.goto("/upload?batch=5&ticket=101");
   await expect(page.getByLabel("Tonnage (tons)")).toHaveValue("20.000");
@@ -246,6 +246,86 @@ test("the shortcut list opens from the keyboard and closes with escape", async (
   await expect(dialog).toContainText("Accept (or save) and go to the next ticket");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
+});
+
+test("a key pressed in the same moment as typing still sees the unsaved work", async ({ page }) => {
+  await mock(page, [ticket(101), ticket(102)]);
+  await page.goto("/upload?batch=5&ticket=101");
+  await expect(page.getByLabel("Ticket number")).toBeFocused();
+  let asked = 0;
+  page.on("dialog", (dialog) => { asked += 1; dialog.dismiss(); });
+  // No time for anything to happen between typing and the key: the worst case
+  // for a slow machine, made certain instead of left to chance.
+  await page.evaluate(() => {
+    const field = document.getElementById("review-ticket_number");
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(field, "10482");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", altKey: true, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByLabel("Ticket number")).toHaveValue("10482");
+  await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
+  expect(asked).toBe(1);
+});
+
+test("keys right after a ticket opens go to shortcuts, not into a field", async ({ page }) => {
+  await mock(page, [ticket(101, { status: "verified", ticket_number: "1" }), ticket(102), ticket(103)]);
+  await page.goto("/upload?batch=5");
+  await expect(page.getByText("Ticket 2 of 3")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("j");
+  await expect(page.getByText("Ticket 3 of 3")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("k");
+  await expect(page.getByText("Ticket 2 of 3")).toBeVisible();
+  await expect(page.getByLabel("Ticket number")).toHaveValue("");
+});
+
+for (const [platform, leaves] of [["Win32", true], ["Linux x86_64", true], ["MacIntel", false]]) {
+  test(`Alt+Left while typing on ${platform} ${leaves ? "moves between tickets instead of leaving the page" : "stays with the cursor"}`, async ({ page }) => {
+    await page.addInitScript((value) => Object.defineProperty(navigator, "platform", { get: () => value }), platform);
+    await mock(page, [ticket(101), ticket(102)]);
+    await page.goto("/upload?batch=5&ticket=102");
+    await expect(page.getByLabel("Ticket number")).toBeFocused();
+    const prevented = await page.evaluate(() => !document.getElementById("review-ticket_number").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true })));
+    expect(prevented).toBe(leaves); // A prevented default is what stops the browser going Back.
+    await expect(page.getByText(leaves ? "Ticket 1 of 2" : "Ticket 2 of 2")).toBeVisible();
+  });
+}
+
+test("a possible duplicate needs a deliberate decision, and declining changes nothing", async ({ page }) => {
+  const tickets = [ticket(101, { ticket_number: "10482", material_type: "Sand", supplier: "S", job_location: "J", delivery_date: "2026-10-15", tonnage: "20.000" }), ticket(102)];
+  const log = await mock(page, tickets);
+  const asks = [];
+  await page.route("**/api/tickets/101/verify", async (route) => {
+    const body = route.request().postDataJSON();
+    asks.push(body);
+    if (body?.confirm_duplicate) {
+      tickets[0].status = "verified";
+      return json(route, { ...tickets[0] });
+    }
+    return json(route, { detail: { code: "possible_duplicate", message: "S ticket 10482 is already approved (batch 3, page 1, ticket 2)." } }, 409);
+  });
+  await page.goto("/upload?batch=5&ticket=101");
+  // Each question is answered by a handler registered before the click that causes it.
+  // A confirm() blocks the page, and a click still in progress when it opens can't
+  // finish until it's answered: awaiting the click first, then the dialog, deadlocked
+  // whenever the answer from the server beat the end of the click (seen on a slowed CPU).
+  // One handler at a time, so neither can answer the other's question.
+  const questions = [];
+  page.once("dialog", (dialog) => { questions.push(dialog.message()); dialog.dismiss(); });
+  await page.getByRole("button", { name: "Accept & next" }).click();
+  await expect.poll(() => questions.length).toBe(1);
+  expect(questions[0]).toContain("already approved");
+  await expect(page.getByRole("button", { name: "Accept & next" })).toBeEnabled();
+  await expect(page.getByText("Ticket 1 of 2")).toBeVisible();
+  expect(asks.length).toBe(1);
+  expect(log.verified).toEqual([]);
+  page.once("dialog", (dialog) => { questions.push(dialog.message()); dialog.accept(); });
+  await page.getByRole("button", { name: "Accept & next" }).click();
+  await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
+  expect(questions.length).toBe(2);
+  expect(asks.at(-1)).toEqual({ confirm_duplicate: true });
 });
 
 test("bad tons are caught before saving, and units are not converted", async ({ page }) => {

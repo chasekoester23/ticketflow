@@ -265,7 +265,7 @@ def test_encrypted_and_oversized_page_counts_are_refused(client, monkeypatch):
 def test_stored_file_is_private(client):
     document = _upload(client).json()
     with api_module.SessionLocal() as db:
-        path = Path(db.get(InvoiceDocument, document["id"]).storage_path)
+        path = settings.storage_dir / db.get(InvoiceDocument, document["id"]).storage_path
     assert oct(path.stat().st_mode)[-3:] == "600" and path.parent.stat().st_mode & 0o077 == 0
     assert str(path) not in str(document)
 
@@ -300,6 +300,8 @@ def test_edits_require_a_project_in_this_company_and_other_companies_see_nothing
     assert client.patch(line, json={"project_id": 9999}).status_code == 404
     with api_module.SessionLocal() as db:
         db.add(Organization(id=2, name="Other Fictional Contractor"))
+        db.flush()
+        db.add(User(id=2, organization_id=2, username="other", password_hash="fixture", role="owner"))
         db.commit()
     _as("owner", organization=2, uid=2)
     assert client.get("/api/invoice-documents").json() == []

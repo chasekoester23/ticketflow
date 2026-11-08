@@ -331,6 +331,7 @@ def test_project_and_company_isolation(client):
     with api_module.SessionLocal() as db:
         db.add(Organization(id=2, name="Second Customer"))
         db.flush()
+        db.add(User(id=2, organization_id=2, username="other-test-owner", password_hash="fixture", role="owner"))
         other_project = Project(
             organization_id=2, code="OTHER", name="Other Customer's Project",
         )

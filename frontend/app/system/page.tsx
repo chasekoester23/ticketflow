@@ -51,7 +51,7 @@ export default function SystemPage() {
           <div><dt className="text-[11px] font-bold text-[#637181]">Oldest waiting</dt><dd className="mt-1 font-bold tabular-nums">{status.queue.oldest_pending_seconds === null ? "—" : `${Math.round(status.queue.oldest_pending_seconds / 60)} min`}</dd></div>
         </dl>
       </section>
-      <p className="text-[11px] text-[#768391]">Database: {status.database.kind}{status.database.revision ? `, version ${status.database.revision}` : ""}. Invoice reader: {status.invoice_reader === "text_layer" ? "reads the PDF's own text on this machine" : "manual entry only"}. Steps for backups and upgrades are in docs/engineering/operations.md.</p>
+      <p className="text-[11px] text-[#5f6c7b]">Database: {status.database.kind}{status.database.revision ? `, version ${status.database.revision}` : ""}. Invoice reader: {status.invoice_reader === "text_layer" ? "reads the PDF's own text on this machine" : "manual entry only"}. Steps for backups and upgrades are in docs/engineering/operations.md.</p>
     </>}
   </div>;
 }

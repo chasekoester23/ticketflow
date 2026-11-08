@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Batch, InvoiceComparison, InvoiceTicketRef, Project, Ticket
@@ -221,6 +221,7 @@ TICKET_COLUMNS = (
     Ticket.id, Ticket.batch_id, Ticket.ticket_number, Ticket.delivery_date, Ticket.material_type, Ticket.supplier,
     Ticket.tonnage, Ticket.status, Ticket.tonnage_confirmed, Ticket.unit_price_override,
     Ticket.price_snapshot_state, Ticket.applied_unit_price, Ticket.applied_price_source,
+    Ticket.supplier_key, Ticket.material_key,
 )
 _KEY_CHUNK = 500
 
@@ -257,10 +258,9 @@ class NumberLookup:
         for start in range(0, len(missing), _KEY_CHUNK):
             for row in self.db.execute(
                 select(*TICKET_COLUMNS, Batch.project_id).join(Batch, Batch.id == Ticket.batch_id).where(
-                    Batch.organization_id == self.organization_id,
+                    Ticket.organization_id == self.organization_id,
                     Ticket.status != "skipped",
-                    Ticket.ticket_number.is_not(None),
-                    func.ltrim(func.upper(func.trim(Ticket.ticket_number)), "0").in_(missing[start:start + _KEY_CHUNK]),
+                    Ticket.number_loose.in_(missing[start:start + _KEY_CHUNK]),
                 ).order_by(Ticket.id)
             ):
                 self._by_loose[_zero_insensitive(ticket_key(row.ticket_number))].append(row)

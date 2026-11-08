@@ -2,16 +2,19 @@
 
 Company-owned parent rows and fail-closed read/write scoping enforce tenant isolation.
 """
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import false as sa_false
 from sqlalchemy import (
-    JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text,
+    JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, event,
+    select, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
+from . import db_guards  # noqa: F401 - installs rules the database itself enforces
 
 
 def utcnow() -> datetime:
@@ -56,6 +59,8 @@ class LoginSession(Base):
     token_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), index=True, nullable=False)
+    # Naive UTC, like expires_at. NULL for a session made before this was recorded.
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
 
 
 class AccountEvent(Base):
@@ -96,6 +101,8 @@ class Material(Base):
 class SupplierRate(Base):
     """Tenant-scoped price per supplier+material. Historical snapshots stay immutable."""
     __tablename__ = "supplier_rates"
+    # Two rows for one pair would make the price locked at approval arbitrary.
+    __table_args__ = (Index("uq_supplier_rate", "organization_id", "supplier_id", "material_id", unique=True),)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     id: Mapped[int] = mapped_column(primary_key=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id", ondelete="CASCADE"))
@@ -213,12 +220,32 @@ class UploadedFile(Base):
 class Ticket(Base):
     __tablename__ = "tickets"
     __table_args__ = (
-        Index("ix_tickets_ticket_number", "ticket_number"),
-        Index("ix_tickets_delivery_date", "delivery_date"),
         Index("ix_tickets_batch_status", "batch_id", "status"),
+        Index("ix_tickets_organization_id", "organization_id"),
+        Index("ix_tickets_org_status", "organization_id", "status"),
+        Index("ix_tickets_org_date", "organization_id", "delivery_date", "id"),
+        Index("ix_tickets_org_scope", "organization_id", "supplier_key", "material_key", "delivery_date"),
+        Index("ix_tickets_org_number", "organization_id", "number_key"),
+        Index("ix_tickets_org_loose", "organization_id", "number_loose"),
+        Index("ix_tickets_org_load", "organization_id", "delivery_date", "tonnage"),
+        # A project filter reaches its tickets through their batches. Without this,
+        # the database walked every ticket the company has to find one project's.
+        Index("ix_tickets_org_batch_status", "organization_id", "batch_id", "status"),
+        # Copies of one scanned image. Without it, SQLite walked every ticket the company
+        # has on each approval and ticket read.
+        Index("ix_tickets_org_image", "organization_id", "crop_sha256"),
+        # One record per physical position, so a retried worker can't make a second.
+        Index("uq_tickets_slot", "file_id", "source_page", "position", unique=True),
+        # The same scan can't be approved twice in a company, whichever code path tries.
+        Index("uq_tickets_approved_scan", "organization_id", "crop_sha256", unique=True,
+              sqlite_where=text("status = 'verified'"), postgresql_where=text("status = 'verified'")),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True)
+    # Copied from the batch. A batch never changes company.
+    organization_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Every UPDATE checks this, so two people saving at once can't overwrite each other.
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"))
     source_page: Mapped[int] = mapped_column(Integer)
     position: Mapped[int] = mapped_column(Integer)  # index within the page (0..3 for 2x2)
@@ -260,8 +287,42 @@ class Ticket(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     # Why someone set this ticket aside. Never affects totals or approval.
     flag_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Normalized forms that matching compares. Kept in step by the events below.
+    supplier_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    material_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    number_key: Mapped[str | None] = mapped_column(String(100), nullable=True)  # case and outer spaces ignored
+    number_loose: Mapped[str | None] = mapped_column(String(100), nullable=True)  # leading zeros ignored too
+    # Tons x locked rate, set at approval and cleared when approval is withdrawn.
+    approved_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
 
     file: Mapped[UploadedFile] = relationship(back_populates="tickets")
+
+    __mapper_args__ = {"version_id_col": lock_version}
+
+
+def normal_name(name: str | None) -> str:
+    """Case, punctuation and spacing ignored, so 'ABC Aggregates.' matches 'abc  aggregates'."""
+    return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+
+
+def _derive_keys(ticket: "Ticket") -> None:
+    ticket.supplier_key = normal_name(ticket.supplier) if ticket.supplier is not None else None
+    ticket.material_key = normal_name(ticket.material_type) if ticket.material_type is not None else None
+    number = (ticket.ticket_number or "").strip().upper() if ticket.ticket_number is not None else None
+    ticket.number_key = number
+    ticket.number_loose = number.lstrip("0") if number is not None else None
+
+
+@event.listens_for(Ticket, "before_insert")
+def _ticket_company(_mapper, connection, ticket: Ticket) -> None:
+    if ticket.organization_id is None:
+        ticket.organization_id = connection.scalar(select(Batch.organization_id).where(Batch.id == ticket.batch_id))
+    _derive_keys(ticket)
+
+
+@event.listens_for(Ticket, "before_update")
+def _ticket_keys(_mapper, _connection, ticket: Ticket) -> None:
+    _derive_keys(ticket)
 
 
 class ScanSlot(Base):
@@ -312,6 +373,8 @@ class SavedView(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     filters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     columns: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # {column key: header text}, so an export can match a team's own spreadsheet.
+    labels: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
@@ -366,6 +429,9 @@ class InvoiceComparison(Base):
     billed_subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+    __mapper_args__ = {"version_id_col": lock_version}
 
 
 class InvoiceTicketRef(Base):
@@ -417,6 +483,8 @@ class InvoiceDocument(Base):
     """An uploaded supplier invoice PDF. Separate from comparisons: nothing here
     counts until a manager confirms a draft line."""
     __tablename__ = "invoice_documents"
+    __table_args__ = (Index("uq_invoice_document_file", "organization_id", "sha256", unique=True,
+                            sqlite_where=text("status <> 'voided'"), postgresql_where=text("status <> 'voided'")),)
     id: Mapped[int] = mapped_column(primary_key=True)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)

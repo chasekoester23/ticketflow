@@ -54,6 +54,14 @@ def sign_in(client, username, password):
     return response.json()
 
 
+def use_session(client, token):
+    """Present exactly this session. A cookie set by hand sits beside the one the
+    server set rather than replacing it, and which of the two the server reads
+    depends on the HTTP library under the test client (httpx and httpx2 differ)."""
+    client.cookies.clear()
+    client.cookies.set(COOKIE_NAME, token)
+
+
 def add_member(client, username, role, display_name=None):
     response = client.post("/api/team/members", json={
         "username": username, "role": role, "display_name": display_name,
@@ -108,7 +116,7 @@ def test_every_mutating_api_route_declares_a_permission():
 
 def test_every_api_route_rejects_anonymous_requests(client):
     """Reads are protected too; only the sign-in endpoints are public."""
-    public = {"/api/auth/login", "/api/auth/logout"}
+    public = {"/api/auth/login", "/api/auth/logout", "/api/setup", "/api/setup/status"}  # Setup: see test_b_onboarding.py
     app.dependency_overrides.pop(current_user, None)
     leaked = []
     for route in all_routes():
@@ -302,9 +310,9 @@ def test_password_change_signs_out_other_sessions_only(real_auth):
         "current_password": OWNER_PASSWORD, "new_password": NEW_PASSWORD,
     }).status_code == 200
     assert client.get("/api/records").status_code == 200
-    client.cookies.set(COOKIE_NAME, other_token)
+    use_session(client, other_token)
     assert client.get("/api/records").status_code == 401
-    client.cookies.set(COOKIE_NAME, mine)
+    use_session(client, mine)
     assert client.get("/api/records").status_code == 200
 
 
@@ -318,16 +326,16 @@ def test_deactivation_role_change_and_reset_take_effect_immediately(real_auth):
     sign_in(client, "boss", OWNER_PASSWORD)
     owner_token = client.cookies.get(COOKIE_NAME)
     assert client.patch(f"/api/team/members/{member_id}", json={"role": "viewer"}).json()["role"] == "viewer"
-    client.cookies.set(COOKIE_NAME, clerk_token)
+    use_session(client, clerk_token)
     assert client.get("/api/records").status_code == 401
     sign_in(client, "cal", NEW_PASSWORD)
     assert client.post("/api/projects", json={"code": "Z", "name": "z"}).status_code == 403
     viewer_token = client.cookies.get(COOKIE_NAME)
 
     # Deactivation: next request is refused; sign-in is refused.
-    client.cookies.set(COOKIE_NAME, owner_token)
+    use_session(client, owner_token)
     assert client.patch(f"/api/team/members/{member_id}", json={"active": False}).json()["active"] is False
-    client.cookies.set(COOKIE_NAME, viewer_token)
+    use_session(client, viewer_token)
     assert client.get("/api/records").status_code == 401
     client.cookies.clear()
     assert client.post("/api/auth/login", json={"username": "cal", "password": NEW_PASSWORD}).status_code == 401
@@ -336,7 +344,7 @@ def test_deactivation_role_change_and_reset_take_effect_immediately(real_auth):
                          .where(LoginSession.user_id == member_id)) == 0
 
     # Reactivate + reset: old password stops working, a new temporary one is issued.
-    client.cookies.set(COOKIE_NAME, owner_token)
+    use_session(client, owner_token)
     assert client.patch(f"/api/team/members/{member_id}", json={"active": True}).status_code == 200
     reset = client.post(f"/api/team/members/{member_id}/reset-password")
     assert reset.status_code == 200
@@ -479,7 +487,7 @@ def test_terminal_password_recovery_resets_and_signs_out(real_auth):
     answers = iter(["recovered-long-password", "recovered-long-password"])
     assert reset_script.main(["--username", "BOSS"], prompt=lambda _: next(answers),
                              session_factory=api_module.SessionLocal) == 0
-    client.cookies.set(COOKIE_NAME, old)
+    use_session(client, old)
     assert client.get("/api/records").status_code == 401
     assert sign_in(client, "boss", "recovered-long-password")["must_change_password"] is False
     events = client.get("/api/team/events").json()

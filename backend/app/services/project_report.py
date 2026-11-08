@@ -12,19 +12,14 @@ from decimal import Decimal
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
-from sqlalchemy import select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session
 
 from ..models import Batch, Project, Ticket
+from . import aggregates
 from .export import _safe_excel_text as safe
-from .pricing import cost_for, effective_price_for
 
 NOT_ENTERED = "(not entered)"
-_COLUMNS = (
-    Ticket.status, Ticket.tonnage, Ticket.tonnage_confirmed, Ticket.supplier, Ticket.material_type,
-    Ticket.delivery_date, Ticket.unit_price_override, Ticket.price_snapshot_state, Ticket.applied_unit_price,
-    Ticket.applied_price_source,
-)
 
 
 class _Group:
@@ -34,18 +29,14 @@ class _Group:
         self.tickets = self.verified_tickets = self.pending_tickets = self.unpriced = 0
         self.verified_tons = self.cost = self.pending_tons = Decimal(0)
 
-    def add(self, row, cost: Decimal | None) -> None:
-        self.tickets += 1
-        if row.status == "verified" and row.tonnage_confirmed:
-            self.verified_tickets += 1
-            self.verified_tons += row.tonnage or Decimal(0)
-            if cost is None:
-                self.unpriced += 1
-            else:
-                self.cost += cost
-        else:
-            self.pending_tickets += 1
-            self.pending_tons += row.tonnage or Decimal(0)
+    def add(self, row) -> None:
+        self.tickets += row.tickets
+        self.verified_tickets += int(row.counted)
+        self.pending_tickets += row.tickets - int(row.counted)
+        self.unpriced += int(row.unpriced)
+        self.verified_tons += aggregates.as_decimal(row.tons, 3)
+        self.cost += aggregates.as_decimal(row.cost, 2)
+        self.pending_tons += aggregates.as_decimal(row.pending, 3)
 
     def out(self) -> dict:
         return {"tickets": self.tickets, "verified_tickets": self.verified_tickets,
@@ -54,21 +45,29 @@ class _Group:
 
 
 def build(db: Session, organization_id: int, project: Project, lines: list) -> dict:
-    """``lines`` are this project's computed invoice comparisons."""
-    rows = db.execute(select(*_COLUMNS).join(Batch, Batch.id == Ticket.batch_id).where(
-        Batch.organization_id == organization_id, Batch.project_id == project.id, Ticket.status != "skipped"))
+    """``lines`` are this project's computed invoice comparisons. The database adds up
+    each supplier, material and month, so this reads a few hundred rows at most."""
+    supplier = func.coalesce(func.nullif(Ticket.supplier, ""), NOT_ENTERED)
+    material = func.coalesce(func.nullif(Ticket.material_type, ""), NOT_ENTERED)
+    month = func.coalesce(func.substr(cast(Ticket.delivery_date, String), 1, 7), NOT_ENTERED)
+    rows = db.execute(select(
+        supplier.label("supplier"), material.label("material"), month.label("month"),
+        func.count().label("tickets"), aggregates.counted_tickets().label("counted"), aggregates.counted_tons().label("tons"),
+        aggregates.counted_cost().label("cost"), aggregates.pending_tons().label("pending"), aggregates.unpriced().label("unpriced"),
+    ).where(
+        Ticket.organization_id == organization_id, Ticket.status != "skipped",
+        Ticket.batch_id.in_(select(Batch.id).where(Batch.organization_id == organization_id, Batch.project_id == project.id)),
+    ).group_by(supplier, material, month))
     total = _Group()
     pairs: dict[tuple[str, str], _Group] = defaultdict(_Group)
     months: dict[str, _Group] = defaultdict(_Group)
-    first, last = None, None
     for row in rows:
-        cost = cost_for(row, effective_price_for(row, {})[0])
-        total.add(row, cost)
-        pairs[(row.supplier or NOT_ENTERED, row.material_type or NOT_ENTERED)].add(row, cost)
-        months[row.delivery_date.strftime("%Y-%m") if row.delivery_date else NOT_ENTERED].add(row, cost)
-        if row.delivery_date:
-            first = min(first, row.delivery_date) if first else row.delivery_date
-            last = max(last, row.delivery_date) if last else row.delivery_date
+        total.add(row)
+        pairs[(row.supplier, row.material)].add(row)
+        months[row.month].add(row)
+    first, last = db.execute(select(func.min(Ticket.delivery_date), func.max(Ticket.delivery_date)).where(
+        Ticket.organization_id == organization_id, Ticket.status != "skipped",
+        Ticket.batch_id.in_(select(Batch.id).where(Batch.organization_id == organization_id, Batch.project_id == project.id)))).one()
 
     invoice_rows = []
     billed = verified = Decimal(0)
@@ -96,7 +95,7 @@ def build(db: Session, organization_id: int, project: Project, lines: list) -> d
         "last_delivery": last.isoformat() if last else None,
         "totals": total.out(),
         "by_supplier_material": [{"supplier": s, "material": m, **pairs[(s, m)].out()} for s, m in sorted(pairs)],
-        "by_month": [{"month": month, **months[month].out()} for month in sorted(months)],
+        "by_month": [{"month": name, **months[name].out()} for name in sorted(months)],
         "invoices": {
             "lines": invoice_rows, "by_status": dict(by_status), "billed_total": str(billed),
             # Over lines with a known figure only. `lines_unresolved` says how many that leaves out.

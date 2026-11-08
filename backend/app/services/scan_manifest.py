@@ -10,17 +10,14 @@ person's decision (``decision``).
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 from PIL import Image
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..config import settings
 from ..models import Batch, ScanEvent, ScanSlot, Ticket, UploadedFile
-from . import splitter
+from . import splitter, storage
 
 NO_CONTENT_ERROR = ("No ticket content detected in this file. Inspect the original "
                     "scan and layout, then upload a corrected document.")
@@ -34,30 +31,8 @@ _ROTATIONS = {90: Image.Transpose.ROTATE_270, 180: Image.Transpose.ROTATE_180,
               270: Image.Transpose.ROTATE_90}
 
 
-def write_private_png(path: Path, image: Image.Image) -> None:
-    """Crops are private job documents: never world-readable under any umask."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as stream:
-        image.save(stream, format="PNG")
-    path.chmod(0o600)
-
-
-def crops_dir(batch_id: int) -> Path:
-    path = settings.storage_dir / "crops" / str(batch_id)
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return path
-
-
 def rotated(image: Image.Image, degrees: int) -> Image.Image:
     return image.transpose(_ROTATIONS[degrees]) if degrees else image
-
-
-def rotated_path(base: str, degrees: int) -> str:
-    """Rotation is a derived file; the unrotated crop is always kept."""
-    if not degrees:
-        return base
-    path = Path(base)
-    return str(path.with_name(f"{path.stem}_r{degrees}{path.suffix}"))
 
 
 def record_slot(db: Session, file: UploadedFile, existing: dict, page_no: int,
@@ -67,15 +42,15 @@ def record_slot(db: Session, file: UploadedFile, existing: dict, page_no: int,
     assessment = splitter.assess_slot(crop.image)
     slot = existing.get((page_no, crop.position))
     if slot is None:
-        path = crops_dir(file.batch_id) / f"f{file.id}_p{page_no}_c{crop.position}.png"
-        slot = ScanSlot(batch_id=file.batch_id, file_id=file.id, page=page_no,
-                        position=crop.position, crop_path=str(path), rotation=0)
+        slot = ScanSlot(batch_id=file.batch_id, file_id=file.id, page=page_no, position=crop.position,
+                        crop_path=f"crops/{file.batch_id}/f{file.id}_p{page_no}_c{crop.position}.png", rotation=0)
         db.add(slot)
         existing[(page_no, crop.position)] = slot
-    if not Path(slot.crop_path).exists():
-        write_private_png(Path(slot.crop_path), crop.image)
+    store = storage.current()
+    if not store.exists(slot.crop_path):
+        store.save_png(storage.reference_for(slot.crop_path), crop.image)
     slot.crop_box = list(crop.box)
-    slot.crop_sha256 = sha256(Path(slot.crop_path).read_bytes())
+    slot.crop_sha256 = sha256(store.read(slot.crop_path))
     slot.ink_fraction = assessment.ink
     slot.detection = assessment.detection
     return slot
@@ -116,7 +91,7 @@ def rebuild_for_file(db: Session, file: UploadedFile) -> int:
     """
     from .pipeline import pages_for, sha256_bytes
 
-    pages = pages_for(file, Path(file.storage_path).read_bytes())
+    pages = pages_for(file, storage.current().read(file.storage_path))
     batch = db.get(Batch, file.batch_id)
     existing = slots_by_position(db, file.id)
     created = 0

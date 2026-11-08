@@ -35,11 +35,11 @@ def upgrade() -> None:
     # company. Do NOT automatically distribute legacy records among users.
     first_id = bind.execute(sa.text("SELECT id FROM organizations ORDER BY id LIMIT 1")).scalar()
     if first_id is None:
-        result = bind.execute(
+        bind.execute(
             sa.text("INSERT INTO organizations (name) VALUES (:name)"),
             {"name": "Original workspace"},
         )
-        first_id = result.lastrowid
+        first_id = bind.execute(sa.text("SELECT id FROM organizations ORDER BY id LIMIT 1")).scalar()
 
     for table in OWNED_TABLES:
         columns = {column["name"] for column in sa.inspect(bind).get_columns(table)}

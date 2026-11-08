@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -17,7 +17,6 @@ from ..models import (
 from . import scan_manifest
 from .accounts import names_by_id
 from .invoice_matching import TICKET_COLUMNS, NumberLookup, ticket_key
-from .pricing import norm
 
 _IN_CHUNK = 500
 
@@ -58,6 +57,41 @@ class LineContext:
         for chunk in _chunks(sorted({link.ticket_id for rows in self._links.values() for link in rows})):
             self.linked_tickets.update({t.id: t for t in db.scalars(select(Ticket).where(Ticket.id.in_(chunk)))})
         self.numbers.prefetch({ticket_key(ref.ticket_number) for rows in self._refs.values() for ref in rows})
+        self._load_deliveries(items)
+
+    def _load_deliveries(self, items: list[InvoiceComparison]) -> None:
+        """Only deliveries these lines could concern, through the scope index, instead
+        of reading each project's whole history."""
+        self._scope: dict[tuple[int, str, str], list] = defaultdict(list)
+        self._incomplete: dict[int, list] = defaultdict(list)
+        projects = sorted({item.project_id for item in items})
+        if not projects:
+            return
+        scopes = sorted({(item.supplier_key, item.material_key, item.date_from, item.date_to) for item in items})
+        seen: set[int] = set()
+        rows = []
+        for chunk in _chunks(scopes, 100):
+            # The company is repeated inside each branch, so each can use the index.
+            for row in self.db.execute(select(*TICKET_COLUMNS, Batch.project_id).join(Batch, Batch.id == Ticket.batch_id).where(
+                Batch.project_id.in_(projects), Ticket.status != "skipped",
+                or_(*(and_(Ticket.organization_id == self.organization_id, Ticket.supplier_key == supplier, Ticket.material_key == material,
+                           Ticket.delivery_date >= start, Ticket.delivery_date <= end)
+                      for supplier, material, start, end in chunk)))):
+                if row.id not in seen:
+                    seen.add(row.id)
+                    rows.append(row)
+        rows.sort(key=lambda r: (r.delivery_date, r.id))
+        for row in rows:
+            self._scope[(row.project_id, row.supplier_key or "", row.material_key or "")].append(row)
+        # A ticket with every value present is either in a line's scope or plainly
+        # not. Only one missing a date, supplier or material could secretly belong.
+        for row in self.db.execute(select(*TICKET_COLUMNS, Batch.project_id).join(Batch, Batch.id == Ticket.batch_id).where(
+            Ticket.organization_id == self.organization_id, Batch.project_id.in_(projects),
+            Ticket.status.in_(("needs_review", "flagged", "failed")),
+            or_(Ticket.delivery_date.is_(None), Ticket.supplier_key.is_(None), Ticket.supplier_key == "",
+                Ticket.material_key.is_(None), Ticket.material_key == ""),
+        ).order_by(Ticket.id)):
+            self._incomplete[row.project_id].append(row)
 
     def refs(self, comparison_id: int) -> list[InvoiceTicketRef]:
         return self._refs.get(comparison_id, [])
@@ -74,29 +108,13 @@ class LineContext:
             self._people = names_by_id(self.db, self.organization_id)
         return self._people
 
-    def _project(self, project_id: int) -> tuple[dict, list]:
-        cached = self._projects.get(project_id)
-        if cached is None:
-            by_scope: dict[tuple[str, str], list] = defaultdict(list)
-            unreviewed: list = []
-            for row in self.db.execute(
-                select(*TICKET_COLUMNS).join(Batch, Batch.id == Ticket.batch_id).where(
-                    Batch.organization_id == self.organization_id, Batch.project_id == project_id,
-                    Ticket.status != "skipped",
-                ).order_by(Ticket.delivery_date, Ticket.id)
-            ):
-                by_scope[(norm(row.supplier), norm(row.material_type))].append(row)
-                if row.status != "verified":
-                    unreviewed.append(row)
-            cached = self._projects[project_id] = (by_scope, unreviewed)
-        return cached
-
     def in_scope(self, project_id: int, supplier_key: str, material_key: str) -> list:
         """This project's non-skipped deliveries with exactly this supplier and material."""
-        return self._project(project_id)[0].get((supplier_key, material_key), [])
+        return self._scope.get((project_id, supplier_key, material_key), [])
 
     def unreviewed(self, project_id: int) -> list:
-        return self._project(project_id)[1]
+        """Unapproved deliveries missing a value that could place them in or out of a line."""
+        return self._incomplete.get(project_id, [])
 
     def intake_issues(self, project_id: int) -> list[str]:
         if project_id not in self._issues:

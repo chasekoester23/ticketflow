@@ -3,7 +3,6 @@
 Entirely fictional scans; the extractor is a test fixture, so no AI calls.
 """
 import io
-import pathlib
 from decimal import Decimal
 
 import pytest
@@ -11,6 +10,7 @@ from PIL import Image
 from sqlalchemy import func, select
 
 from app.auth import current_user
+from app.config import settings
 from app.main import app
 from app.models import Batch, Organization, ScanSlot, Ticket, UploadedFile, User
 from app.routers import api as api_module
@@ -218,7 +218,7 @@ def test_rotation_is_non_destructive_and_keeps_the_duplicate_guard(client, tmp_p
     assert ("scan_rotation", "0", "90") in {(e["field"], e["old"], e["new"]) for e in audit}
     with api_module.SessionLocal() as db:
         row = db.scalar(select(ScanSlot).where(ScanSlot.id == slot["id"]))
-        assert pathlib.Path(row.crop_path).is_file()  # the original stays
+        assert (settings.storage_dir / row.crop_path).is_file()  # the original stays
         stored = db.get(Ticket, ticket["id"])
         assert stored.crop_sha256 == slot["crop_sha256"]  # identity of the unrotated crop
 
@@ -366,7 +366,7 @@ def test_missing_stored_images_return_404_not_a_crash(client):
     batch = _upload(client, make_pdf([make_page([A, None, None, None])]))
     ticket = _tickets(client, batch)[0]
     with api_module.SessionLocal() as db:
-        pathlib.Path(db.get(Ticket, ticket["id"]).crop_path).unlink()
+        (settings.storage_dir / db.get(Ticket, ticket["id"]).crop_path).unlink()
     assert client.get(f"/api/tickets/{ticket['id']}/image").status_code == 404
     slot = _slots(_manifest(client, batch))[0]
     assert client.get(f"/api/scan-slots/{slot['id']}/image").status_code == 404

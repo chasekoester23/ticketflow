@@ -1,22 +1,23 @@
-"""Excel export with openpyxl. Phase 1: unit price / cost columns exist but stay blank until Phase 2 pricing."""
+"""Excel and CSV exports of delivery records, written row by row so memory stays flat."""
 import io
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Batch, Project, Ticket
+from ..models import Batch, Project, Ticket, UploadedFile
+from .pricing import to_cents
 
 LEGACY_APPROVER = "Not recorded (approved before individual accounts)"
 STATUS_LABEL = {"verified": "Verified", "needs_review": "Needs review", "failed": "Extraction failed", "skipped": "Skipped", "flagged": "Flagged for review"}
 HEADER_FILL = PatternFill("solid", fgColor="1F2937")
-CENTS = Decimal("0.01")
 
 
 def _safe_excel_text(value: str | None) -> str | None:
@@ -33,18 +34,18 @@ def _safe_excel_text(value: str | None) -> str | None:
     return value
 
 
-def ticket_cost(t: Ticket, unit_price: Decimal | None) -> Decimal | None:
+def ticket_cost(t, unit_price: Decimal | None) -> Decimal | None:
     """Exact decimal math, available only for currently verified tickets."""
     if t.status != "verified" or unit_price is None or t.tonnage is None or not t.tonnage_confirmed:
         return None
-    return (t.tonnage * unit_price).quantize(CENTS)
+    return to_cents(t.tonnage * unit_price)
 
 
-def _source_ref(t: Ticket) -> str:
-    return f"{t.file.original_name} (page {t.source_page}, ticket {t.position + 1})"
+def _source_ref(t) -> str:
+    return f"{t.file_name} (page {t.source_page}, ticket {t.position + 1})"
 
 
-def _approval(t: Ticket, approvers: dict[int, str]) -> tuple[str | None, object]:
+def _approval(t, approvers: dict[int, str]) -> tuple[str | None, object]:
     """Who approved the CURRENT verification, and when (naive UTC for Excel).
 
     Blank for unapproved tickets. A verified ticket without a recorded
@@ -59,23 +60,16 @@ def _approval(t: Ticket, approvers: dict[int, str]) -> tuple[str | None, object]
     return _safe_excel_text(name), at
 
 
-@dataclass
-class ExportContext:
-    unit_prices: dict[int, Decimal]
-    approvers: dict[int, str]
-    projects: dict[int, str]
+def _money(value: Decimal | None) -> float | None:
+    return float(value) if value is not None else None
 
 
 @dataclass(frozen=True)
 class Column:
     header: str
     width: int
-    value: Callable[[Ticket, Decimal | None, Decimal | None, ExportContext], object]
+    value: Callable[[Any, Decimal | None, Decimal | None, dict], object]
     number_format: str | None = None
-
-
-def _money(value: Decimal | None) -> float | None:
-    return float(value) if value is not None else None
 
 
 # Keyed for export configurations. The default set and its order never change,
@@ -84,143 +78,177 @@ COLUMNS: dict[str, Column] = {
     "ticket_number": Column("Ticket Number", 16, lambda t, *_: _safe_excel_text(t.ticket_number)),
     "delivery_date": Column("Delivery Date", 14, lambda t, *_: t.delivery_date, "yyyy-mm-dd"),
     "material": Column("Material Type", 28, lambda t, *_: _safe_excel_text(t.material_type)),
-    "tons": Column("Tonnage", 12, lambda t, *_: _money(t.tonnage), "#,##0.00"),
+    "tons": Column("Tonnage", 12, lambda t, *_: _money(t.tonnage), "#,##0.000"),
     "supplier": Column("Supplier", 24, lambda t, *_: _safe_excel_text(t.supplier)),
     "job_location": Column("Job Location", 24, lambda t, *_: _safe_excel_text(t.job_location)),
-    "unit_price": Column("Unit Price", 12, lambda t, price, *_: _money(price), '"$"#,##0.00'),
-    "cost": Column("Calculated Cost", 16, lambda t, price, cost, _c: _money(cost), '"$"#,##0.00'),
+    "unit_price": Column("Unit Price", 12, lambda t, price, *_: _money(price), '"$"#,##0.00##'),
+    "cost": Column("Calculated Cost", 16, lambda t, price, cost, _a: _money(cost), '"$"#,##0.00'),
     "status": Column("Verification Status", 20, lambda t, *_: STATUS_LABEL.get(t.status, t.status)),
     "source": Column("Source File Reference", 44, lambda t, *_: _safe_excel_text(_source_ref(t))),
-    "approved_by": Column("Approved By", 26, lambda t, p, c, ctx: _approval(t, ctx.approvers)[0]),
-    "approved_at": Column("Approved At (UTC)", 18, lambda t, p, c, ctx: _approval(t, ctx.approvers)[1], "yyyy-mm-dd hh:mm"),
-    "project": Column("Project", 16, lambda t, p, c, ctx: _safe_excel_text(ctx.projects.get(t.id))),
+    "approved_by": Column("Approved By", 26, lambda t, p, c, approvers: _approval(t, approvers)[0]),
+    "approved_at": Column("Approved At (UTC)", 18, lambda t, p, c, approvers: _approval(t, approvers)[1], "yyyy-mm-dd hh:mm"),
+    "project": Column("Project", 16, lambda t, *_: _safe_excel_text(t.project_code)),
     "batch": Column("Batch", 8, lambda t, *_: t.batch_id),
 }
 DEFAULT_COLUMNS = ("ticket_number", "delivery_date", "material", "tons", "supplier", "job_location", "unit_price",
                    "cost", "status", "source", "approved_by", "approved_at")
 HEADERS = [COLUMNS[key].header for key in DEFAULT_COLUMNS]
+_ROW_COLUMNS = (
+    Ticket.id, Ticket.batch_id, Ticket.source_page, Ticket.position, Ticket.ticket_number, Ticket.delivery_date, Ticket.material_type,
+    Ticket.tonnage, Ticket.supplier, Ticket.job_location, Ticket.status, Ticket.tonnage_confirmed, Ticket.unit_price_override,
+    Ticket.price_snapshot_state, Ticket.applied_unit_price, Ticket.applied_price_source, Ticket.verified_by_user_id, Ticket.verified_at,
+)
 
 
-def project_codes(db: Session, organization_id: int) -> "_ProjectCodes":
-    return _ProjectCodes(db, organization_id)
+def row_query():
+    """Exactly what an export needs, as plain rows. File and project names come from
+    correlated lookups, so they cost one small read per row at most, and whole Ticket
+    objects are never built for a large export."""
+    file_name = select(UploadedFile.original_name).where(UploadedFile.id == Ticket.file_id).scalar_subquery()
+    project_code = select(Project.code).join(Batch, Batch.project_id == Project.id).where(Batch.id == Ticket.batch_id).scalar_subquery()
+    return select(*_ROW_COLUMNS, file_name.label("file_name"), project_code.label("project_code"))
 
 
-class _ProjectCodes:
-    """Ticket id to project code, read only if a Project column was asked for."""
-
-    def __init__(self, db: Session, organization_id: int):
-        self.db, self.organization_id = db, organization_id
-        self._by_ticket: dict[int, str] | None = None
-
-    def get(self, ticket_id: int) -> str | None:
-        if self._by_ticket is None:
-            self._by_ticket = dict(self.db.execute(
-                select(Ticket.id, Project.code).join(Batch, Batch.id == Ticket.batch_id)
-                .join(Project, Project.id == Batch.project_id).where(Batch.organization_id == self.organization_id)
-            ).all())
-        return self._by_ticket.get(ticket_id)
+def rows(db: Session, query, order=(Ticket.delivery_date, Ticket.id)) -> Iterator:
+    """Read in chunks: a large export holds a little in memory at a time."""
+    yield from db.execute(query.order_by(*order).execution_options(yield_per=2000))
 
 
-def build_workbook(tickets: list[Ticket], unit_prices: dict[int, Decimal] | None = None,
-                   approvers: dict[int, str] | None = None, columns: list[str] | None = None,
-                   projects=None) -> bytes:
-    """``approvers`` maps user id -> display name for the exporting company."""
-    context = ExportContext(unit_prices or {}, approvers or {}, projects or {})
+def headers(keys: list[str], labels: dict[str, str] | None = None) -> list[str]:
+    """Each column's header: a saved view's own label if it has one. A label is a
+    person's text, so it's made formula-safe like any other."""
+    labels = labels or {}
+    return [_safe_excel_text(labels[key]) if key in labels else COLUMNS[key].header for key in keys]
+
+
+def build_workbook(tickets: Iterable, approvers: dict[int, str] | None = None, columns: list[str] | None = None, *,
+                   price_of: Callable[[Any], Decimal | None], labels: dict[str, str] | None = None) -> bytes:
+    """``approvers`` maps user id -> display name for the exporting company. Rows go
+    straight to a temporary file as they're written, so memory stays flat."""
+    approvers = approvers or {}
     keys = columns or list(DEFAULT_COLUMNS)
     chosen = [COLUMNS[key] for key in keys]
-    tickets = [t for t in tickets if t.status != "skipped"]
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Delivery Records"
-    ws.append([column.header for column in chosen])
-    for c in ws[1]:
-        c.font, c.fill = Font(bold=True, color="FFFFFF"), HEADER_FILL
-        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-    rows = []
-    for t in tickets:
-        price = context.unit_prices.get(t.id)
-        cost = ticket_cost(t, price)
-        rows.append((t, price, cost))
-        ws.append([column.value(t, price, cost, context) for column in chosen])
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("Delivery Records")
     for index, column in enumerate(chosen, start=1):
-        if column.number_format:
-            for r in range(2, ws.max_row + 1):
-                ws.cell(r, index).number_format = column.number_format
         ws.column_dimensions[get_column_letter(index)].width = column.width
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(chosen))}{max(ws.max_row, 2)}"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(chosen))}1048576"
 
-    _summary_sheet(wb, rows)
+    def header(cells):
+        styled = []
+        for text in cells:
+            cell = WriteOnlyCell(ws, value=text)
+            cell.font, cell.fill = Font(bold=True, color="FFFFFF"), HEADER_FILL
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            styled.append(cell)
+        return styled
+
+    ws.append(header(headers(keys, labels)))
+    formatted = [column.number_format for column in chosen]
+    summary = _Summary()
+    for t in tickets:
+        if t.status == "skipped":
+            continue
+        price = price_of(t)
+        cost = ticket_cost(t, price)
+        summary.add(t, cost)
+        out = []
+        for column, number_format in zip(chosen, formatted):
+            value = column.value(t, price, cost, approvers)
+            if number_format and value is not None:
+                cell = WriteOnlyCell(ws, value=value)
+                cell.number_format = number_format
+                value = cell
+            out.append(value)
+        ws.append(out)
+    summary.write(wb)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-def csv_lines(tickets: list[Ticket], keys: list[str], context: ExportContext) -> Iterator[list]:
+def csv_lines(tickets: Iterable, keys: list[str], approvers: dict[int, str], price_of: Callable[[Any], Decimal | None],
+              labels: dict[str, str] | None = None) -> Iterator[list]:
     """Rows for a CSV: exact decimal text, never floats, and formula-safe text."""
     exact = {"tons": lambda t, _p, _c: t.tonnage, "unit_price": lambda t, p, _c: p, "cost": lambda t, _p, c: c}
-    yield [COLUMNS[key].header for key in keys]
+    yield headers(keys, labels)
     for t in tickets:
         if t.status == "skipped":
             continue
-        price = context.unit_prices.get(t.id)
+        price = price_of(t)
         cost = ticket_cost(t, price)
         row = []
         for key in keys:
-            value = exact[key](t, price, cost) if key in exact else COLUMNS[key].value(t, price, cost, context)
+            value = exact[key](t, price, cost) if key in exact else COLUMNS[key].value(t, price, cost, approvers)
             row.append("" if value is None else value.isoformat() if hasattr(value, "isoformat") else str(value))
         yield row
 
 
-def _summary_sheet(wb: Workbook, rows) -> None:
-    ws = wb.create_sheet("Summary")
-    bold = Font(bold=True)
-    total_tons = sum((t.tonnage for t, _, _ in rows if t.status == "verified"
-                      and t.tonnage_confirmed and t.tonnage is not None), Decimal(0))
-    pending_tons = sum((t.tonnage for t, _, _ in rows if t.status != "verified"
-                        and t.tonnage is not None), Decimal(0))
-    total_cost = sum((c for _, _, c in rows if c is not None), Decimal(0))
-    unpriced = sum(1 for _, _, c in rows if c is None)
-    needs_review = sum(1 for t, _, _ in rows if t.status != "verified")
+class _Summary:
+    """Totals for the Summary sheet, added up as rows go by."""
 
-    ws.append(["Summary"]); ws["A1"].font = Font(bold=True, size=14)
-    ws.append([])
-    for label, value, fmt in [
-        ("Total tickets", len(rows), "0"),
-        ("Verified tons", float(total_tons), "#,##0.00"),
-        ("Total calculated material cost", float(total_cost), '"$"#,##0.00'),
-        ("Records requiring review", needs_review, "0"),
-        ("Records without a calculated cost", unpriced, "0"),
-    ]:
-        ws.append([label, value]); ws.cell(ws.max_row, 2).number_format = fmt; ws.cell(ws.max_row, 1).font = bold
-    ws.append(["Unverified tons (excluded from actuals)", float(pending_tons)])
-    ws.cell(ws.max_row, 2).number_format = "#,##0.00"
-    ws.cell(ws.max_row, 1).font = bold
-    ws.append([])
-    ws.append(["Note: calculated cost covers verified material only (tons x unit price). Delivery charges, taxes and other invoice items are not included."])
-    ws.cell(ws.max_row, 1).font = Font(italic=True, color="6B7280")
+    def __init__(self) -> None:
+        self.total = self.needs_review = self.unpriced = 0
+        self.tons = self.pending = self.cost = Decimal(0)
+        self.groups: dict[str, dict] = {"Totals by supplier": defaultdict(lambda: [0, Decimal(0), Decimal(0)]),
+                                        "Totals by material type": defaultdict(lambda: [0, Decimal(0), Decimal(0)]),
+                                        "Totals by job location": defaultdict(lambda: [0, Decimal(0), Decimal(0)])}
 
-    for title, key in [("Totals by supplier", lambda t: t.supplier or "(unknown)"),
-                       ("Totals by material type", lambda t: t.material_type or "(unknown)"),
-                       ("Totals by job location", lambda t: t.job_location or "(unknown)")]:
-        groups: dict[str, list] = defaultdict(lambda: [0, Decimal(0), Decimal(0)])
-        for t, _, c in rows:
-            g = groups[key(t)]
-            g[0] += 1
-            if t.status == "verified" and t.tonnage_confirmed:
-                g[1] += t.tonnage or Decimal(0)
-            g[2] += c or Decimal(0)
+    def add(self, t, cost: Decimal | None) -> None:
+        self.total += 1
+        counted = t.status == "verified" and t.tonnage_confirmed
+        if t.status == "verified" and t.tonnage_confirmed and t.tonnage is not None:
+            self.tons += t.tonnage
+        if t.status != "verified":
+            self.needs_review += 1
+            if t.tonnage is not None:
+                self.pending += t.tonnage
+        if cost is None:
+            self.unpriced += 1
+        else:
+            self.cost += cost
+        for title, name in (("Totals by supplier", t.supplier), ("Totals by material type", t.material_type), ("Totals by job location", t.job_location)):
+            group = self.groups[title][name or "(unknown)"]
+            group[0] += 1
+            if counted:
+                group[1] += t.tonnage or Decimal(0)
+            group[2] += cost or Decimal(0)
+
+    def write(self, wb: Workbook) -> None:
+        ws = wb.create_sheet("Summary")
+        ws.column_dimensions["A"].width = 38
+        for col in "BCD":
+            ws.column_dimensions[col].width = 18
+
+        def cell(value, *, bold=False, size=None, italic=False, number_format=None, header=False, color=None):
+            item = WriteOnlyCell(ws, value=value)
+            if header:
+                item.font, item.fill = Font(bold=True, color="FFFFFF"), HEADER_FILL
+            elif bold or size or italic or color:
+                item.font = Font(bold=bold, size=size, italic=italic, color=color)
+            if number_format:
+                item.number_format = number_format
+            return item
+
+        ws.append([cell("Summary", bold=True, size=14)])
         ws.append([])
-        ws.append([title]); ws.cell(ws.max_row, 1).font = Font(bold=True, size=12)
-        ws.append(["Name", "Tickets", "Tons", "Calculated cost"])
-        for c in ws[ws.max_row]:
-            c.font, c.fill = Font(bold=True, color="FFFFFF"), HEADER_FILL
-        for name in sorted(groups):
-            n, tons, cost = groups[name]
-            ws.append([_safe_excel_text(name), n, float(tons), float(cost)])
-            ws.cell(ws.max_row, 3).number_format = "#,##0.00"
-            ws.cell(ws.max_row, 4).number_format = '"$"#,##0.00'
-    ws.column_dimensions["A"].width = 38
-    for col in "BCD":
-        ws.column_dimensions[col].width = 18
+        for label, value, fmt in [
+            ("Total tickets", self.total, "0"),
+            ("Verified tons", float(self.tons), "#,##0.000"),
+            ("Total calculated material cost", float(self.cost), '"$"#,##0.00'),
+            ("Records requiring review", self.needs_review, "0"),
+            ("Records without a calculated cost", self.unpriced, "0"),
+            ("Unverified tons (excluded from actuals)", float(self.pending), "#,##0.000"),
+        ]:
+            ws.append([cell(label, bold=True), cell(value, number_format=fmt)])
+        ws.append([])
+        ws.append([cell("Note: calculated cost covers verified material only (tons x unit price). Delivery charges, taxes and other invoice items are not included.",
+                        italic=True, color="6B7280")])
+        for title, groups in self.groups.items():
+            ws.append([])
+            ws.append([cell(title, bold=True, size=12)])
+            ws.append([cell(text, header=True) for text in ("Name", "Tickets", "Tons", "Calculated cost")])
+            for name in sorted(groups):
+                count, tons, cost = groups[name]
+                ws.append([_safe_excel_text(name), count, cell(float(tons), number_format="#,##0.000"), cell(float(cost), number_format='"$"#,##0.00')])

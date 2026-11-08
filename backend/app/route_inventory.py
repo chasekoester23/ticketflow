@@ -13,12 +13,13 @@ from dataclasses import dataclass
 from fastapi.routing import APIRoute
 
 from .main import app
-from .routers import api, auth, invoice_documents, invoices, pricing, projects, records, reports, scans, system, team
+from .routers import api, auth, invoice_documents, invoices, pricing, projects, records, reports, scans, setup, system, team
 
-ROUTERS = (auth.router, api.router, pricing.router, invoices.router,
+ROUTERS = (auth.router, setup.router, api.router, pricing.router, invoices.router,
            projects.router, reports.router, records.router, system.router, team.router, scans.router, invoice_documents.router)
-# Sign-in, sign-out and changing your own password act on the caller alone.
-SELF_SERVICE = {"/api/auth/login", "/api/auth/logout", "/api/auth/password"}
+# Sign-in, sign-out and changing your own password act on the caller alone. First-run
+# setup works only while no user exists, so there's nobody yet to need a permission.
+SELF_SERVICE = {"/api/auth/login", "/api/auth/logout", "/api/auth/password", "/api/setup"}
 MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 # Declared directly on the app (read-only, requires sign-in; see main.py).
 APP_LEVEL = {("GET", "/api/status")}

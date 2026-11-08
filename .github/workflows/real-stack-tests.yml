@@ -5,12 +5,17 @@ name: Real-stack tests
 # beyond localhost.
 on:
   pull_request:
+    branches: [main]
     paths:
       - "backend/**"
       - "frontend/**"
       - ".github/workflows/real-stack-tests.yml"
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/real-stack-tests.yml"
 
 permissions:
   contents: read
@@ -20,20 +25,22 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements-dev.txt
-      - uses: actions/setup-node@v4
+          cache-dependency-path: |
+            backend/requirements-dev.txt
+            backend/constraints.txt
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install backend
         working-directory: backend
-        run: pip install -r requirements-dev.txt
+        run: pip install -r requirements-dev.txt -c constraints.txt
       - name: Install frontend
         working-directory: frontend
         run: |
@@ -44,3 +51,10 @@ jobs:
         env:
           PYTHON: python
         run: frontend/tests/e2e/run.sh
+      - name: Keep the report when something fails
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: real-stack-report
+          path: frontend/test-results
+          retention-days: 14

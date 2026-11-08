@@ -99,11 +99,16 @@ class AnthropicExtractor:
             raise ExtractionError(f"Extraction service error: {type(exc).__name__}") from exc
         text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
         raw = parse_model_json(text)
-        try:
-            ticket = ExtractedTicket.model_validate({k: raw.get(k) for k in ExtractedTicket.model_fields})
-        except Exception as exc:
-            raise ExtractionError(f"Model JSON failed validation: {exc}") from exc
-        return ticket, raw
+        return validated_ticket(raw), raw
+
+
+def validated_ticket(raw: dict) -> ExtractedTicket:
+    """The reader's answer as ticket fields. A validation error quotes what it was given,
+    which is a ticket's values, so the message saved on the ticket doesn't repeat it."""
+    try:
+        return ExtractedTicket.model_validate({k: raw.get(k) for k in ExtractedTicket.model_fields})
+    except Exception as exc:
+        raise ExtractionError("The reader's answer didn't fit the ticket's fields. Enter it by hand or retry.") from exc
 
 
 def get_extractor() -> Extractor:

@@ -1,20 +1,25 @@
 """Rate lookup and cost calculation. Money is always Decimal; we never invent a price."""
-import re
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Material, NameAlias, Supplier, SupplierRate, Ticket
+from ..models import Material, NameAlias, Supplier, SupplierRate, Ticket, normal_name
 
 CENTS = Decimal("0.01")
+
+
+def to_cents(amount: Decimal) -> Decimal:
+    """Half a cent rounds up, as supplier invoices and spreadsheets do. Decimal's
+    default rounds it to even, which made false one-cent invoice differences."""
+    return amount.quantize(CENTS, rounding=ROUND_HALF_UP)
 
 
 @lru_cache(maxsize=4096)  # Pure, and called for every ticket on every list.
 def norm(name: str | None) -> str:
     """Case/punctuation/space-insensitive key so 'ABC Aggregates.' matches 'abc  aggregates'."""
-    return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+    return normal_name(name)
 
 
 def rate_table(db: Session, organization_id: int) -> dict[tuple[str, str], Decimal]:
@@ -26,7 +31,19 @@ def rate_table(db: Session, organization_id: int) -> dict[tuple[str, str], Decim
                Supplier.organization_id == organization_id,
                Material.organization_id == organization_id)
     ).all()
-    return {(norm(s), norm(m)): p for s, m, p in rows}
+    table: dict[tuple[str, str], Decimal] = {}
+    conflicting: set[tuple[str, str]] = set()
+    for s, m, p in rows:
+        key = (norm(s), norm(m))
+        if key in table and table[key] != p:
+            conflicting.add(key)
+        table.setdefault(key, p)
+    # "Sand" and "SAND" read as one material. With two different prices for it,
+    # picking either would lock an arbitrary rate, so neither is used: those
+    # tickets stay unpriced until a person removes the duplicate.
+    for key in conflicting:
+        del table[key]
+    return table
 
 
 def unit_price_for(t: Ticket, table: dict[tuple[str, str], Decimal]) -> tuple[Decimal | None, str | None]:
@@ -54,7 +71,7 @@ def cost_for(t: Ticket, price: Decimal | None) -> Decimal | None:
     """Cost only for a currently verified ticket with confirmed tonnage and a rate."""
     if t.status != "verified" or price is None or t.tonnage is None or not t.tonnage_confirmed:
         return None
-    return (t.tonnage * price).quantize(CENTS)
+    return to_cents(t.tonnage * price)
 
 
 def alias_suggestions(

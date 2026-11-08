@@ -3,12 +3,18 @@ import os
 # Tests must NEVER open the developer's real backend/ticketflow.db. Point the
 # global engine at an in-memory database before any app module is imported
 # (an explicit environment variable overrides backend/.env).
-os.environ["DATABASE_URL"] = "sqlite://"
+#
+# TEST_DATABASE_URL runs the same suite on an empty, disposable PostgreSQL
+# database. Its name must contain "test": every table in it is erased repeatedly.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+if TEST_DATABASE_URL and "test" not in TEST_DATABASE_URL.rsplit("/", 1)[-1]:
+    raise RuntimeError("TEST_DATABASE_URL must name a disposable database with 'test' in its name.")
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL or "sqlite://"
 
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -17,6 +23,7 @@ from app import main as main_module
 from app.auth import current_user
 from app.models import Organization, User
 from app.config import settings
+from app.db import enforce_references, engine_options, normalized_url
 from app.main import app
 from app.routers import api as api_module
 from app.services.validation import ExtractedTicket
@@ -38,11 +45,60 @@ class FixtureExtractor:
         return ExtractedTicket.model_validate(raw), dict(raw)
 
 
+# Tests insert fixed ids. On PostgreSQL that doesn't advance the id sequence, so
+# the next automatic id would collide. This test-only trigger keeps them in step.
+_ADVANCE_SEQUENCE = """
+CREATE OR REPLACE FUNCTION test_advance_sequence() RETURNS trigger AS $$
+DECLARE
+  name text := pg_get_serial_sequence(TG_TABLE_NAME, 'id');
+  seen bigint;
+BEGIN
+  EXECUTE format('SELECT last_value FROM %s', name) INTO seen;
+  IF NEW.id >= seen THEN PERFORM setval(name, NEW.id); END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql"""
+
+
+@pytest.fixture(scope="session")
+def postgres_engine():
+    """The disposable PostgreSQL database, built by the real migrations."""
+    if not TEST_DATABASE_URL:
+        yield None
+        return
+    from .migration_helpers import alembic_config
+    from alembic import command
+    engine = create_engine(normalized_url(TEST_DATABASE_URL), **engine_options(TEST_DATABASE_URL))
+    with engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+    command.upgrade(alembic_config(TEST_DATABASE_URL), "head")
+    with engine.begin() as connection:
+        connection.execute(text(_ADVANCE_SEQUENCE))
+        for table in db_module.Base.metadata.sorted_tables:
+            if "id" in table.columns:
+                connection.execute(text(
+                    f"CREATE TRIGGER test_advance AFTER INSERT ON {table.name} "
+                    "FOR EACH ROW EXECUTE FUNCTION test_advance_sequence()"))
+    yield engine
+    engine.dispose()
+
+
+def _reset_postgres(engine) -> None:
+    names = ", ".join(table.name for table in db_module.Base.metadata.sorted_tables)
+    with engine.begin() as connection:
+        connection.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+
+
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+def client(tmp_path, monkeypatch, postgres_engine):
+    if postgres_engine is not None:
+        engine = postgres_engine
+        _reset_postgres(engine)
+    else:
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        enforce_references(engine)
+        db_module.Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-    db_module.Base.metadata.create_all(engine)
     with Session() as session:
         session.add(Organization(id=1, name="Test Company"))
         # A real stored owner, so audit actor IDs refer to an actual account.

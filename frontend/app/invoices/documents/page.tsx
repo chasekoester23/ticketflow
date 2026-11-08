@@ -95,7 +95,7 @@ function LineForm({ line, document, projects, canManage, onDone, onError }: {
       <button type="button" className="tf-secondary-button" disabled={busy || !dirty} onClick={() => void run(save)}>Save changes</button>
       <button type="button" className="tf-primary-button" disabled={busy || dirty || line.blockers.length > 0}
         title={dirty ? "Save your changes first" : undefined}
-        onClick={() => void run(() => confirmDraftLine(document.id, line.id))}>Confirm line</button>
+        onClick={() => void run(() => confirmDraftLine(document.id, line.id, line.revision))}>Confirm line</button>
       <button type="button" className="tf-secondary-button" disabled={busy}
         onClick={() => void run(() => rejectDraftLine(document.id, line.id))}>Reject</button>
     </div>}

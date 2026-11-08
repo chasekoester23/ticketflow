@@ -71,7 +71,7 @@ def test_companies_cannot_read_modify_or_price_each_others_data(client):
         assert client.get("/api/batches").json() == []
         assert client.get("/api/records").json() == []
         assert client.get("/api/records/export.xlsx").status_code == 200
-        assert client.get("/api/dashboard").json()["total_tons"] in (0, "0")
+        assert client.get("/api/dashboard").json()["total_tons"] in (0, "0", "0.000", "0.00")
         assert client.get("/api/suppliers").json() == []
         assert client.get("/api/materials").json() == []
         assert client.get("/api/rates").json() == []

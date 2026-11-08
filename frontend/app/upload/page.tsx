@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Batch,
   Ticket,
@@ -19,11 +19,15 @@ import {
   retryBatch,
   ticketImageUrl,
 } from "../../lib/api";
+import { isSigningOut, removeTicketDrafts } from "../../lib/drafts";
+import { lastPlace, rememberPlace } from "../../lib/places";
 import { useAccount } from "../account-context";
+import { Dialog } from "../Dialog";
 import { BatchQueue } from "./BatchQueue";
-import { ReviewForm, STATUS_LABEL, STATUS_STYLE, previousValues } from "./ReviewForm";
+import { ActionFailure, ReviewForm, STATUS_LABEL, previousValues } from "./ReviewForm";
 import { ScanCheck } from "./ScanCheck";
 import { ScanViewer, zoomIn, zoomOut } from "./ScanViewer";
+import { QueueFilter, TicketQueue, pendingStatus } from "./TicketQueue";
 import { UploadPanel } from "./UploadPanel";
 
 const BATCH_LABEL: Record<string, string> = {
@@ -37,14 +41,34 @@ const isTyping = (target: EventTarget | null) => {
   const element = target as HTMLElement | null;
   return Boolean(element?.isContentEditable || element?.closest?.("input, textarea, select, [contenteditable], [role=dialog]"));
 };
-const pendingStatus = (t: Ticket) => t.status === "needs_review" || t.status === "failed";
+/** The next ticket after `from` that passes `test`, wrapping round to the start; -1 if none. */
+const nextMatching = (tickets: Ticket[], from: number, test: (t: Ticket) => boolean) => {
+  const later = tickets.findIndex((t, i) => i > from && test(t));
+  return later >= 0 ? later : tickets.findIndex((t, i) => i < from && test(t));
+};
+
+/** What the scan check depends on. It's reloaded when this changes. */
+const statesOf = (tickets: Ticket[]) => tickets.map((t) => `${t.id}:${t.status}:${t.ticket_number ?? ""}`).join("|");
+/** Keep the objects of unchanged tickets, so reloading a list doesn't re-render every row of it. */
+const reuseUnchanged = (old: Ticket[], fresh: Ticket[]) => {
+  const before = new Map(old.map((t) => [t.id, t]));
+  return fresh.map((t) => {
+    const same = before.get(t.id);
+    return same && JSON.stringify(same) === JSON.stringify(t) ? same : t;
+  });
+};
+// On Windows and Linux, Alt+Left is the browser's Back button. On a Mac it moves
+// the cursor by a word, which people use while correcting a value.
+const altArrowsGoBack = () => !/Mac|iPhone|iPad/.test(navigator.platform);
 
 const SHORTCUTS: [string, string][] = [
   ["⌘/Ctrl + Enter", "Accept (or save) and go to the next ticket"],
   ["Enter", "Next field, then the Accept button"],
   ["Alt + D", "Material, supplier and job: same as previous ticket"],
   ["Alt + ↑ / ↓", "Previous or next ticket, even while typing"],
-  ["J / K, Alt + ← / →", "Next or previous ticket, outside a field"],
+  ["J / K, Alt + ← / →", "Next or previous ticket"],
+  ["N", "Next ticket that still needs review"],
+  ["F", "Next flagged ticket"],
   ["+ / −  ·  0", "Zoom the scan in or out  ·  fit to width"],
   ["R", "Rotate the view (the stored scan isn't changed)"],
   ["/", "Search the ticket queue"],
@@ -53,7 +77,8 @@ const SHORTCUTS: [string, string][] = [
 ];
 
 export default function Home() {
-  const { can } = useAccount();
+  const { account, can } = useAccount();
+  const accountId = account?.id ?? 0;
   const canUpload = can("tickets.upload");
   const [batch, setBatch] = useState<Batch | null>(null);
   const [opening, setOpening] = useState(false);
@@ -61,13 +86,35 @@ export default function Home() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState(0);
   const [formDirty, setFormDirty] = useState(false);
-  const [reviewFilter, setReviewFilter] = useState<"pending" | "flagged" | "all">("pending");
-  const [queueSearch, setQueueSearch] = useState("");
+  // What the keyboard handler reads. Set before the browser can deliver another
+  // key, so a fast key press can never act on the previous ticket or miss unsaved work.
+  const dirtyNow = useRef(false);
+  const reportDirty = useCallback((dirty: boolean) => {
+    dirtyNow.current = dirty;
+    setFormDirty(dirty);
+  }, []);
+  // Leaving a ticket with unsaved work takes a person's say-so. Choosing to
+  // discard it also drops its crash-recovery copy, or it would come back later.
+  const shownTicket = useRef<number | undefined>(undefined);
+  const busyNow = useRef(false);
+  const reportBusy = useCallback((busy: boolean) => { busyNow.current = busy; }, []);
+  const mayLeaveTicket = useCallback((question: string = DISCARD) => {
+    // A save or approval is on its way. Its answer decides what happens next.
+    if (busyNow.current) return false;
+    if (!dirtyNow.current) return true;
+    if (!window.confirm(question)) return false;
+    if (shownTicket.current !== undefined) removeTicketDrafts(shownTicket.current);
+    return true;
+  }, []);
+  const [reviewFilter, setReviewFilter] = useState<QueueFilter>("pending");
   const [queueOpen, setQueueOpen] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ActionFailure | null>(null);
+  const [jumpStatus, setJumpStatus] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -101,11 +148,13 @@ export default function Home() {
     }).catch(() => setConfigured(null));
   }, []);
 
+  const manifestStates = useRef("");
   const refresh = useCallback(async (id: number) => {
     const [b, t] = await Promise.all([getBatch(id), getTickets(id)]);
     setBatch(b);
-    setTickets(t);
+    setTickets((old) => reuseUnchanged(old, t));
     // The scan check adds evidence; failing to load it must not stop review.
+    manifestStates.current = statesOf(t);
     getManifest(id).then(setManifest).catch(() => setManifest(null));
     return { batch: b, tickets: t };
   }, []);
@@ -113,13 +162,21 @@ export default function Home() {
   // Edits and approvals happen in the review form, so keep the scan check in
   // step with them. A stale count here would defeat its purpose.
   const batchId = batch?.id;
-  const ticketStates = tickets.map((t) => `${t.id}:${t.status}:${t.ticket_number ?? ""}`).join("|");
+  const ticketStates = useMemo(() => statesOf(tickets), [tickets]);
   useEffect(() => {
-    if (batchId === undefined || !ticketStates) return;
-    getManifest(batchId).then(setManifest).catch(() => undefined);
+    if (batchId === undefined || !ticketStates || manifestStates.current === ticketStates) return;
+    // A brief pause, so someone working quickly through a stack doesn't reload it per ticket.
+    const timer = setTimeout(() => {
+      manifestStates.current = ticketStates;
+      getManifest(batchId).then(setManifest).catch(() => undefined);
+    }, 400);
+    return () => clearTimeout(timer);
   }, [batchId, ticketStates]);
 
-  // Open the batch and ticket in the address, or the first one needing work.
+  // Open the ticket in the address. Failing that, pick up where this person left
+  // off in the batch, or at the next ticket to review after it. Failing that, the
+  // first ticket needing work.
+  const [resumedAt, setResumedAt] = useState<number | null>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const id = Number(params.get("batch"));
@@ -129,17 +186,27 @@ export default function Home() {
     refresh(id).then(({ tickets: loaded }) => {
       const wanted = loaded.findIndex((t) => t.id === ticketId);
       const firstOpen = loaded.findIndex(pendingStatus);
-      if (wanted >= 0) setSelected(wanted);
-      else if (firstOpen >= 0) setSelected(firstOpen);
+      if (wanted >= 0) return setSelected(wanted);
+      const place = lastPlace(accountId, id);
+      const left = place === null ? -1 : loaded.findIndex((t) => t.id === place);
+      const resume = left < 0 ? -1 : pendingStatus(loaded[left]) ? left : nextMatching(loaded, left, pendingStatus);
+      if (resume >= 0 && resume !== firstOpen) {
+        setSelected(resume);
+        setResumedAt(loaded[resume].id);
+      } else if (firstOpen >= 0) {
+        setSelected(firstOpen);
+      }
     }).catch((e) => setError(e.message)).finally(() => setOpening(false));
-  }, [refresh]);
+  }, [refresh]); // eslint-disable-line react-hooks/exhaustive-deps -- the account is set before this page renders
 
   // Keep the address on the current ticket, so a reload or a shared link lands here.
   const current = tickets[selected];
+  shownTicket.current = current?.id;
   useEffect(() => {
     if (batchId === undefined) return;
     const suffix = current ? `&ticket=${current.id}` : "";
     window.history.replaceState(null, "", `/upload?batch=${batchId}${suffix}`);
+    if (current) rememberPlace(accountId, batchId, current.id);
   }, [batchId, current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll the real backend status until processing actually finishes.
@@ -150,11 +217,10 @@ export default function Home() {
   }, [batch, refresh]);
 
   async function onUploaded(uploaded: Batch) {
-    if (formDirty && !window.confirm("You have unsaved ticket corrections. Discard them and open the new upload?")) return;
+    if (!mayLeaveTicket("You have unsaved ticket corrections. Discard them and open the new upload?")) return;
     setSelected(0);
-    setFormDirty(false);
+    reportDirty(false);
     setReviewFilter("pending");
-    setQueueSearch("");
     setShowUpload(false);
     setBatch(uploaded);
     await refresh(uploaded.id);
@@ -188,7 +254,26 @@ export default function Home() {
   useEffect(() => {
     if (current && openedAt.current[current.id] === undefined) openedAt.current[current.id] = Date.now();
     setNotice(null);
+    setFailure(null);
+    setJumpStatus(null);
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On a phone the queue would push the scan a screen down. It starts tucked away
+  // there, one tap from the scan's header.
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 767px)").matches) setQueueOpen(false);
+  }, []);
+
+  useEffect(() => {
+    const update = () => setOffline(!navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
 
   // Fetch the next scans early, so moving on feels instant.
   useEffect(() => {
@@ -201,77 +286,118 @@ export default function Home() {
     });
   }, [selected, tickets]);
 
-  function onAccepted(ticketId: number) {
+  const timingOn = useRef(false);
+  timingOn.current = timingEnabled;
+  const onAccepted = useCallback((ticketId: number) => {
     const started = openedAt.current[ticketId];
     if (started === undefined) return;
     const seconds = Math.min(3600, Math.max(0.1, Math.round((Date.now() - started) / 100) / 10));
     delete openedAt.current[ticketId];
     setSession((s) => ({ accepted: s.accepted + 1, seconds: s.seconds + seconds }));
     // Opt-in pilot measurement. It can never block or fail an approval.
-    if (timingEnabled) recordReviewTiming(ticketId, seconds).catch(() => undefined);
-  }
+    if (timingOn.current) recordReviewTiming(ticketId, seconds).catch(() => undefined);
+  }, []);
+  const onTicketChange = useCallback((updated: Ticket) => {
+    setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t));
+  }, []);
 
   // Someone else changed this ticket. Show them the latest values rather than
   // quietly applying the person's stale view on top.
+  const shownBatch = useRef<number | undefined>(undefined);
+  shownBatch.current = batchId;
   const onStale = useCallback((message: string) => {
-    setFormDirty(false);
+    reportDirty(false);
     setNotice(message);
-    if (batchId !== undefined) refresh(batchId).catch((e) => setError(e.message));
-  }, [batchId, refresh]);
+    if (shownBatch.current !== undefined) refresh(shownBatch.current).catch((e) => setError(e.message));
+  }, [refresh, reportDirty]);
+  const onScanCheckChanged = useCallback((next: Manifest) => {
+    setManifest(next);
+    setImageVersion((v) => v + 1);
+    if (shownBatch.current !== undefined) refresh(shownBatch.current).catch((e) => setError(e.message));
+  }, [refresh]);
 
-  const counts = {
-    review: tickets.filter(pendingStatus).length,
-    flagged: tickets.filter((t) => t.status === "flagged").length,
-    verified: tickets.filter((t) => t.status === "verified").length,
-    skipped: tickets.filter((t) => t.status === "skipped").length,
-  };
+  const counts = useMemo(() => {
+    const tally = { review: 0, flagged: 0, verified: 0, skipped: 0 };
+    tickets.forEach((t) => {
+      if (pendingStatus(t)) tally.review += 1;
+      else if (t.status === "flagged") tally.flagged += 1;
+      else if (t.status === "verified") tally.verified += 1;
+      else if (t.status === "skipped") tally.skipped += 1;
+    });
+    return tally;
+  }, [tickets]);
   const done = counts.verified + counts.skipped;
   const progress = tickets.length ? (done / tickets.length) * 100 : 0;
-  const queue = tickets.map((t, index) => ({ t, index })).filter(({ t }) => {
-    if (reviewFilter === "pending" && !pendingStatus(t)) return false;
-    if (reviewFilter === "flagged" && t.status !== "flagged") return false;
-    const search = queueSearch.trim().toLowerCase();
-    if (!search) return true;
-    return [t.ticket_number, t.material_type, t.supplier, t.job_location]
-      .some((field) => (field ?? "").toLowerCase().includes(search));
+  // One listener for the life of the page, reading the current state from here.
+  // Re-subscribing on every change left moments when a key saw the old ticket.
+  // Callbacks read it too, so they stay the same from one render to the next.
+  const keyState = useRef({ selected, tickets, help });
+  useLayoutEffect(() => {
+    keyState.current = { selected, tickets, help };
   });
 
-  function selectTicket(index: number) {
-    if (index === selected) return;
-    if (formDirty && !window.confirm(DISCARD)) return;
+  const selectTicket = useCallback((index: number) => {
+    if (index === keyState.current.selected) return;
+    if (!mayLeaveTicket()) return;
     setSelected(index);
-    setFormDirty(false);
-  }
+    reportDirty(false);
+  }, [mayLeaveTicket, reportDirty]);
+  const hideQueue = useCallback(() => setQueueOpen(false), []);
 
+  // N and F: straight to the next ticket that needs a person. Never approves anything.
+  const jumpTo = useCallback((kind: "review" | "flagged") => {
+    const { tickets, selected } = keyState.current;
+    const test = kind === "review" ? pendingStatus : (t: Ticket) => t.status === "flagged";
+    const next = nextMatching(tickets, selected, test);
+    if (next < 0) {
+      setJumpStatus(kind === "review" ? "No other ticket in this batch needs review."
+        : tickets[selected] && test(tickets[selected]) ? "This is the only flagged ticket in this batch." : "No flagged tickets in this batch.");
+      return;
+    }
+    if (!mayLeaveTicket()) return;
+    setJumpStatus(null);
+    setReviewFilter(kind === "review" ? "pending" : "flagged");
+    setSelected(next);
+    reportDirty(false);
+  }, [mayLeaveTicket, reportDirty]);
+  const onOpenFromScanCheck = useCallback((ticketId: number) => {
+    const index = keyState.current.tickets.findIndex((t) => t.id === ticketId);
+    if (index >= 0) selectTicket(index);
+  }, [selectTicket]);
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.ctrlKey || event.metaKey) return;
+      const { selected, tickets, help } = keyState.current;
+      const count = tickets.length;
       if (event.key === "Escape") {
         if (help) setHelp(false);
         else if (isTyping(event.target)) (event.target as HTMLElement).blur();
         return;
       }
-      if (!tickets.length) return;
+      if (!count) return;
       const typing = isTyping(event.target);
       const move = (step: number) => {
         event.preventDefault();
         const next = selected + step;
-        if (next < 0 || next >= tickets.length) return;
-        if (formDirty && !window.confirm(DISCARD)) return;
+        if (next < 0 || next >= count) return;
+        if (!mayLeaveTicket()) return;
         setSelected(next);
-        setFormDirty(false);
+        reportDirty(false);
       };
       if (event.altKey) {
         // Alt+↑/↓ means nothing in a one-line field, so they work while typing.
-        // Alt+←/→ move by word there, so those never steal from typing.
+        // Alt+←/→ only give way to typing on a Mac, where they move by word.
+        // Elsewhere they'd leave the page, so they always move between tickets.
         if (event.key === "ArrowDown") move(1);
         else if (event.key === "ArrowUp") move(-1);
-        else if (!typing && event.key === "ArrowRight") move(1);
-        else if (!typing && event.key === "ArrowLeft") move(-1);
+        else if ((!typing || altArrowsGoBack()) && event.key === "ArrowRight") move(1);
+        else if ((!typing || altArrowsGoBack()) && event.key === "ArrowLeft") move(-1);
         return;
       }
       if (typing) return;
       if (event.key === "j") move(1);
+      else if (event.key === "n" || event.key === "N") { event.preventDefault(); jumpTo("review"); }
+      else if (event.key === "f" || event.key === "F") { event.preventDefault(); jumpTo("flagged"); }
       else if (event.key === "k") move(-1);
       else if (event.key === "+" || event.key === "=") setZoom(zoomIn);
       else if (event.key === "-") setZoom(zoomOut);
@@ -286,12 +412,13 @@ export default function Home() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, tickets.length, formDirty, help]);
+  }, [reportDirty, mayLeaveTicket, jumpTo]);
 
   // Complete the pending queue first, then automatically revisit flagged tickets.
   // A ticket is never auto-accepted; only the explicit Accept action verifies.
-  function advance() {
-    setFormDirty(false);
+  const advance = useCallback(() => {
+    const { tickets, selected } = keyState.current;
+    reportDirty(false);
     const findNext = (predicate: (ticket: Ticket) => boolean): number => {
       const later = tickets.findIndex((t, i) => i > selected && predicate(t));
       return later >= 0 ? later : tickets.findIndex((t, i) => i < selected && predicate(t));
@@ -304,7 +431,7 @@ export default function Home() {
       setReviewFilter("pending");
     }
     if (next >= 0) setSelected(next);
-  }
+  }, [reportDirty]);
 
   // Everything for one ticket fits on one screen: the panes take whatever height
   // is left under the batch summary, so Accept and the scan are always in view.
@@ -331,6 +458,7 @@ export default function Home() {
   useEffect(() => {
     if (!formDirty) return;
     const warn = (event: BeforeUnloadEvent) => {
+      if (isSigningOut()) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -338,6 +466,7 @@ export default function Home() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [formDirty]);
 
+  const previous = useMemo(() => previousValues(tickets, selected), [tickets, selected]);
   const allResolved = tickets.length > 0 && counts.review === 0 && counts.flagged === 0;
   const project = batch ? projects.find((p) => p.id === batch.project_id) : undefined;
   const failedFiles = batch?.files.filter((f) => f.error) ?? [];
@@ -363,11 +492,25 @@ export default function Home() {
           {error} <button type="button" className="ml-3 font-semibold underline" onClick={() => setError(null)}>Dismiss</button>
         </div>
       )}
+      {resumedAt !== null && current?.id === resumedAt && (
+        <p role="status" data-testid="resumed" className="tf-notice flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span>Picked up where you left off in this batch.</span>
+          <button type="button" className="tf-link" onClick={() => {
+            const first = tickets.findIndex(pendingStatus);
+            setResumedAt(null);
+            if (first >= 0) selectTicket(first);
+          }}>Go to the first ticket to review</button>
+        </p>
+      )}
       {notice && (
         <div role="alert" data-testid="stale-notice" className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
           {notice}
         </div>
       )}
+
+      {offline && <p role="status" data-testid="offline-notice" className="rounded border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900">
+        This computer has lost its connection. You can keep typing: it&apos;s kept here until you can save.
+      </p>}
 
       {!canUpload && !opening && (
         <p className="tf-notice" role="note">Your role is view-only. You can open batches and ticket images, but uploads and edits are disabled.</p>
@@ -376,10 +519,10 @@ export default function Home() {
       {canUpload && !opening && (!batch || showUpload) && <UploadPanel projects={projects} onUploaded={onUploaded} onError={setError} />}
 
       {batch && (
-        <section className="tf-panel px-4 py-3" aria-live="polite">
+        <section className="tf-panel px-4 py-3" aria-label="Batch summary">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
-              <a href="/upload" className="tf-link" onClick={(event) => { if (formDirty && !window.confirm(DISCARD)) event.preventDefault(); }}>← All uploads</a>
+              <a href="/upload" className="tf-link" onClick={(event) => { if (!mayLeaveTicket()) event.preventDefault(); }}>← All uploads</a>
               <h1 className="mt-0.5 text-[15px] font-bold text-[#1d2b38]">
                 Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}
                 {project && <span className="ml-2 font-medium text-[#657182]">{project.code} · {project.name}</span>}
@@ -438,15 +581,7 @@ export default function Home() {
           </ul>}
           {manifest && manifest.batch_id === batch.id && (
             <ScanCheck key={batch.id} manifest={manifest} onError={setError}
-              onChanged={(next) => {
-                setManifest(next);
-                setImageVersion((v) => v + 1);
-                refresh(batch.id).catch((e) => setError(e.message));
-              }}
-              onOpenTicket={(ticketId) => {
-                const index = tickets.findIndex((t) => t.id === ticketId);
-                if (index >= 0) selectTicket(index);
-              }} />
+              onChanged={onScanCheckChanged} onOpenTicket={onOpenFromScanCheck} />
           )}
         </section>
       )}
@@ -468,52 +603,18 @@ export default function Home() {
 
       {tickets.length > 0 && current && (
         <section ref={workspace} className={`tf-review-grid ${queueOpen ? "" : "tf-review-grid-noqueue"}`} aria-label="Ticket review workspace">
-          {queueOpen && <section className="tf-panel tf-review-pane" aria-label="Ticket queue">
-            <div className="border-b border-[#e7eaee] p-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-xs font-bold text-[#3c4b5b]">Ticket queue</h2>
-                <button type="button" className="tf-link text-[11px]" onClick={() => setQueueOpen(false)}>Hide</button>
-              </div>
-              <div className="tf-segmented mt-2 flex" role="group" aria-label="Filter ticket queue">
-                {(["pending", "flagged", "all"] as const).map((filter) => (
-                  <button type="button" key={filter} className="flex-1" aria-pressed={reviewFilter === filter} onClick={() => setReviewFilter(filter)}>
-                    {filter === "pending" ? "To review" : filter === "flagged" ? "Flagged" : "All"}
-                  </button>
-                ))}
-              </div>
-              <label htmlFor="queue-search" className="sr-only">Search tickets in queue</label>
-              <input id="queue-search" type="search" value={queueSearch} onChange={(e) => setQueueSearch(e.target.value)}
-                placeholder="Number, supplier, material…" className="tf-field mt-2 w-full !min-h-0 !py-1.5 !text-xs" />
-              <p className="mt-1.5 text-[11px] text-[#7a8794]">{queue.length} matching ticket(s) · {tickets.length} total</p>
-            </div>
-            {queue.length === 0 ? (
-              <div className="p-3 text-xs text-[#526273]">
-                No tickets match the current view.
-                {queueSearch && <button type="button" className="tf-link ml-2" onClick={() => setQueueSearch("")}>Clear search</button>}
-                <button type="button" className="tf-link ml-2" onClick={() => setReviewFilter("all")}>Show all</button>
-              </div>
-            ) : (
-              <div className="tf-review-pane-scroll max-h-72 divide-y divide-[#edf0f2] overflow-auto xl:max-h-none">
-                {queue.map(({ t, index }) => (
-                  <button type="button" key={t.id} onClick={() => selectTicket(index)}
-                    aria-current={selected === index ? "true" : undefined}
-                    className={`tf-queue-row block w-full border-l-[3px] px-2.5 py-2 text-left ${selected === index ? "border-[#df702f] bg-[#fff8f2]" : "border-transparent hover:bg-[#f8f9fa]"}`}>
-                    <span className="flex items-center justify-between gap-1.5">
-                      <span className="min-w-0 truncate text-xs font-bold tabular-nums text-[#1d2b38]">#{index + 1} · {t.ticket_number || "No number yet"}</span>
-                      <span className={`tf-status shrink-0 !px-1 !py-0.5 !text-[9px] ${STATUS_STYLE[t.status] ?? ""}`}>{STATUS_LABEL[t.status] ?? t.status}</span>
-                    </span>
-                    <span className="mt-0.5 block truncate text-[11px] text-[#7a8794]">{t.flag_note || `${t.material_type || "Material not entered"} · ${t.tonnage ?? "—"} t`}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>}
+          <p className="sr-only" aria-live="polite" data-testid="position-announcement">
+            Showing {selected + 1} of {tickets.length}: ticket number {current.ticket_number || "not entered"}, {(STATUS_LABEL[current.status] ?? current.status).toLowerCase()}.
+          </p>
+          {queueOpen && <TicketQueue key={batch?.id} tickets={tickets} selected={selected} filter={reviewFilter}
+            onFilter={setReviewFilter} onSelect={selectTicket} onHide={hideQueue} />}
 
           <section className="tf-panel tf-review-pane flex flex-col">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e7eaee] px-3 py-2">
               <div className="min-w-0">
                 <h2 className="text-[13px] font-bold text-[#1d2b38]">Original scanned ticket</h2>
-                <p className="text-[11px] text-[#657182]">Ticket {selected + 1} of {tickets.length} · Page {current.source_page}, crop {current.position + 1}</p>
+                <p className="text-[11px] text-[#657182]" data-testid="position"><strong className="font-bold text-[#293948]">Ticket {selected + 1} of {tickets.length}</strong> · {counts.review} to review · Page {current.source_page}, crop {current.position + 1}</p>
+                <div role="status" data-testid="jump-status" className="text-[11px] font-semibold text-[#8a4f14]">{jumpStatus}</div>
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 {!queueOpen && <button type="button" className="tf-secondary-button !min-h-0 !px-2 !py-1" onClick={() => setQueueOpen(true)}>Show queue</button>}
@@ -528,7 +629,7 @@ export default function Home() {
               alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
               zoom={zoom} rotation={rotation} onZoom={setZoom} />
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e7eaee] px-3 py-1.5">
-              <p className="text-[11px] text-[#7a8794]">Click to zoom on a spot, drag to pan. Zoom and rotation carry to the next ticket.</p>
+              <p className="text-[11px] text-[#5f6c7b]">Click to zoom on a spot, drag to pan. Zoom and rotation carry to the next ticket.</p>
               <div className="flex items-center gap-1.5">
                 <button type="button" disabled={selected === 0} onClick={() => selectTicket(selected - 1)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40">Previous</button>
                 <button type="button" disabled={selected >= tickets.length - 1} onClick={() => selectTicket(selected + 1)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40">Next</button>
@@ -541,28 +642,30 @@ export default function Home() {
             ticket={current}
             manual={batch?.intake_mode === "manual"}
             catalog={catalog}
-            previous={previousValues(tickets, selected)}
-            onChange={(updated) => setTickets((previous) => previous.map((t) => t.id === updated.id ? updated : t))}
+            previous={previous}
+            failure={failure?.ticketId === current.id ? failure : null}
+            onChange={onTicketChange}
             onAdvance={advance}
             onAccepted={onAccepted}
-            onDirtyChange={setFormDirty}
+            onDirtyChange={reportDirty}
+            onBusyChange={reportBusy}
             onError={setError}
+            onFailure={setFailure}
             onStale={onStale}
           />
         </section>
       )}
 
-      {help && <div className="tf-dialog-scrim" onClick={() => setHelp(false)}>
-        <div role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" className="tf-dialog" onClick={(e) => e.stopPropagation()}>
-          <div className="tf-panel-heading">
-            <h2 className="tf-panel-title">Keyboard shortcuts</h2>
-            <button type="button" className="tf-link" onClick={() => setHelp(false)} autoFocus>Close</button>
-          </div>
-          <table className="tf-table"><tbody>
-            {SHORTCUTS.map(([keys, what]) => <tr key={keys}><td className="whitespace-nowrap"><kbd className="tf-kbd">{keys}</kbd></td><td>{what}</td></tr>)}
-          </tbody></table>
+      {help && <Dialog label="Keyboard shortcuts" onClose={() => setHelp(false)}>
+        <div className="tf-panel-heading">
+          <h2 className="tf-panel-title">Keyboard shortcuts</h2>
+          <button type="button" className="tf-link" onClick={() => setHelp(false)}>Close</button>
         </div>
-      </div>}
+        <table className="tf-table"><tbody>
+          {SHORTCUTS.map(([keys, what]) => <tr key={keys}><td className="whitespace-nowrap"><kbd className="tf-kbd">{keys}</kbd></td><td>{what}</td></tr>)}
+        </tbody></table>
+        <p className="border-t border-[#e9edf0] px-4 py-2.5 text-[11px] text-[#5f6c7b]">Single keys work when the cursor isn&apos;t in a field. No key approves more than the ticket in front of you.</p>
+      </Dialog>}
     </div>
   );
 }

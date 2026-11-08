@@ -28,22 +28,19 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing: set DATABASE_URL to a SQLite file with 'demo' in its name.", file=sys.stderr)
         return 1
 
-    from app.config import settings
     from app.db import SessionLocal
     from app.models import Organization
+    from app.services import storage
     from tests.sample_data import make_ticket_image
     from tests.scan_conditions import STYLES
     from tests.synthetic_dataset import build, plant_invoices
 
-    crops = settings.storage_dir / "synthetic"
-    crops.mkdir(parents=True, exist_ok=True)
+    store = storage.current()
     paths = []
     base = dict(ticket_number="100482", delivery_date="2026-04-15", material_type="No. 57 Stone", tonnage="22.40",
                 supplier="Example Aggregates", job_location="Fictional Site")
     for name, style in STYLES.items():
-        path = crops / f"{name}.png"
-        style(make_ticket_image(base).resize((680, 880))).save(path)
-        paths.append(str(path))
+        paths.append(store.save_png(f"crops/synthetic/{name}.png", style(make_ticket_image(base).resize((680, 880))), replace=True))
     with SessionLocal() as db:
         organization = db.query(Organization).first()
         if organization is None:

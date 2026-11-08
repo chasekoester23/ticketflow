@@ -5,7 +5,7 @@ from alembic import context
 from sqlalchemy import create_engine, pool
 
 from app.config import settings
-from app.db import Base
+from app.db import Base, normalized_url
 from app import models  # noqa: F401 - register ORM tables with Base.metadata
 
 config = context.config
@@ -13,7 +13,7 @@ if config.config_file_name and config.get_section("loggers"):
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-url = config.get_main_option("sqlalchemy.url") or settings.database_url
+url = normalized_url(config.get_main_option("sqlalchemy.url") or settings.database_url)
 
 
 def run_migrations_offline() -> None:

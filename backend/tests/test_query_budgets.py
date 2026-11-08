@@ -24,8 +24,10 @@ def _seed(count: int, *, identical: bool = False, organization_id: int = 1, batc
     with _session() as db:
         if db.get(Project, organization_id) is None:
             db.add(Project(id=organization_id, organization_id=organization_id, code=f"P{organization_id}", name="Fictional"))
+            db.flush()
         db.add(Batch(id=batch_id, organization_id=organization_id, project_id=organization_id, layout="single",
                      status="ready_for_review", intake_mode="manual"))
+        db.flush()
         db.add(UploadedFile(id=batch_id, batch_id=batch_id, original_name="f.pdf", storage_path="x", sha256="0" * 64,
                             status="ready_for_review"))
         db.flush()

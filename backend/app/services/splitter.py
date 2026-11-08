@@ -47,6 +47,9 @@ def render_pdf_pages(
                 f"PDF contains {doc.page_count} pages; the per-file limit is {max_pages}. "
                 "Split this scan into smaller PDFs."
             )
+        damaged = incomplete_reason(doc, data)
+        if damaged:
+            raise PdfError(damaged)
         pages: list[Image.Image] = []
         total_pixels = 0
         for page in doc:
@@ -73,6 +76,28 @@ def render_pdf_pages(
         raise PdfError("Could not render PDF. Check the scan and try again.") from exc
     finally:
         doc.close()
+
+
+def incomplete_reason(doc, data: bytes) -> str | None:
+    """Why a PDF looks cut short, or None.
+
+    MuPDF quietly rebuilds a damaged file and shows whatever survived, so a scan
+    cut off mid-download would show half its tickets with nothing to say so.
+    Only a rebuilt file is checked: it's refused when it has no end marker at all
+    or a page has no content. A complete file with a slightly wrong index, which
+    some scanners write, or with junk after its end, is rebuilt too, but every
+    page is intact, so it passes.
+    """
+    if not doc.is_repaired:
+        return None
+    message = ("This PDF can't be opened completely. It looks cut off or damaged, so pages or "
+               "tickets may be missing. Upload the original file again.")
+    if b"%%EOF" not in data:
+        return message
+    for page in doc:
+        if not page.get_contents():
+            return message
+    return None
 
 
 def render_pdf_page(data: bytes, page_no: int, dpi: int = 100, *, max_page_pixels: int = 14_000_000) -> Image.Image:
