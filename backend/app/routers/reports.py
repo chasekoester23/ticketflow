@@ -16,6 +16,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import AuditEvent, Batch, InvoiceComparison, Project, ReviewTiming, Ticket, UploadedFile, User, as_utc
 from ..permissions import require
+from ..rate_limit import limited
 from ..schemas import TicketOut
 from ..services import aggregates
 from ..services import export as export_svc
@@ -103,7 +104,7 @@ def records(
     return [_out(db, t, organization_id, table, duplicate_index=index, catalog=names, aliases=aliases) for t in ts]
 
 
-@router.get("/records/export.xlsx")
+@router.get("/records/export.xlsx", dependencies=[Depends(limited("exports"))])
 def export_records(
     project_id: int | None = None, supplier: str | None = None, material: str | None = None,
     status: str | None = None, date_from: date | None = None, date_to: date | None = None, q: str | None = None,
@@ -189,13 +190,13 @@ def _pilot(db: Session, organization_id: int, project_id: int | None) -> dict:
     return pilot_report.build_report(db, organization_id, project_id, statuses)
 
 
-@router.get("/reports/project/{project_id}")
+@router.get("/reports/project/{project_id}", dependencies=[Depends(limited("reports"))])
 def project_report_view(project_id: int, db: Session = Depends(get_db),
                         organization_id: int = Depends(current_organization_id)):
     return _project_report(db, organization_id, project_id)
 
 
-@router.get("/reports/project/{project_id}/report.xlsx")
+@router.get("/reports/project/{project_id}/report.xlsx", dependencies=[Depends(limited("exports"))])
 def project_report_xlsx(project_id: int, db: Session = Depends(get_db),
                         organization_id: int = Depends(current_organization_id)):
     report = _project_report(db, organization_id, project_id)
@@ -223,14 +224,14 @@ def _project_filter(db: Session, organization_id: int, project_id: int | None) -
         raise HTTPException(404, "Project not found")
 
 
-@router.get("/reports/pilot")
+@router.get("/reports/pilot", dependencies=[Depends(limited("reports"))])
 def pilot(project_id: int | None = None, db: Session = Depends(get_db),
           organization_id: int = Depends(current_organization_id)):
     _project_filter(db, organization_id, project_id)
     return _pilot(db, organization_id, project_id)
 
 
-@router.get("/reports/pilot.csv")
+@router.get("/reports/pilot.csv", dependencies=[Depends(limited("exports"))])
 def pilot_csv(project_id: int | None = None, db: Session = Depends(get_db),
               organization_id: int = Depends(current_organization_id)):
     _project_filter(db, organization_id, project_id)

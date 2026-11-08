@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import threading
@@ -49,6 +50,30 @@ _failures: dict[str, tuple[int, float]] = {}
 _account_failures: dict[int, tuple[int, float]] = {}
 
 _USERNAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,99}$")
+# Activity is written at most this often, so reading pages doesn't mean a write each time.
+_SEEN_EVERY = timedelta(seconds=60)
+
+# What guessing tries first, once a minimum length rules out the short ones. Kept short
+# on purpose: the aim is the passwords everyone tries, not a dictionary.
+_COMMON_WORDS = frozenset({
+    "password", "passw0rd", "qwerty", "qwertyuiop", "letmein", "welcome", "admin", "administrator", "iloveyou", "monkey",
+    "dragon", "football", "baseball", "sunshine", "princess", "master", "shadow", "superman", "trustno", "changeme",
+    "default", "secret", "login", "access", "ticketflow", "construction", "asdfghjkl", "zxcvbnm", "abc", "qwe", "passwordpassword",
+})
+_RUNS = ("0123456789" * 4, "abcdefghijklmnopqrstuvwxyz", "qwertyuiopasdfghjklzxcvbnm", "1q2w3e4r5t6y7u8i9o0p", "1qaz2wsx3edc4rfv5tgb")
+
+
+def too_common(password: str) -> bool:
+    """One of the first passwords anyone guessing would try."""
+    lowered = password.casefold()
+    if len(set(lowered)) <= 2:
+        return True  # aaaaaaaaaaaa, abababababab
+    if any(lowered in run or lowered in run[::-1] for run in _RUNS):
+        return True  # 123456789012, abcdefghijkl, qwertyuiopas
+    letters = re.sub(r"[^a-z0-9]", "", lowered).rstrip("0123456789")
+    rest = len(lowered) - len(letters)
+    # A common word with a few digits or symbols tacked on: Password123!, welcome2026
+    return (letters in _COMMON_WORDS or re.sub(r"[0-9]", "", letters) in _COMMON_WORDS) and rest <= 8
 
 
 def validate_new_password(password: str) -> None:
@@ -58,6 +83,9 @@ def validate_new_password(password: str) -> None:
         )
     if not password.strip():
         raise ValueError("Password cannot be only spaces.")
+    if too_common(password):
+        raise ValueError("That password is too common: it's among the first anyone guessing would try. "
+                         "A few unrelated words make a strong one.")
 
 
 def password_hash(password: str) -> str:
@@ -213,8 +241,18 @@ def authenticated_user(request: Request, db: Session = Depends(get_db)) -> User:
     if token is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in to access TicketFlow")
     session = db.get(LoginSession, digest_token(token))
-    if not session or session.expires_at <= _naive_utc_now():
+    now = _naive_utc_now()
+    if not session or session.expires_at <= now:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired; sign in again")
+    if session.last_seen_at is not None and now - session.last_seen_at > timedelta(minutes=settings.session_idle_minutes):
+        # Ended, not just refused, so the same cookie can't come back later.
+        db.delete(session)
+        db.commit()
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Signed out after a while without activity; sign in again")
+    if session.last_seen_at is None or now - session.last_seen_at >= _SEEN_EVERY:
+        # Its own short transaction, before the request does anything else.
+        session.last_seen_at = now
+        db.commit()
     user = db.get(User, session.user_id)
     if not user or not user.active or user.organization_id is None or user.role not in KNOWN_ROLES:
         # Unknown roles fail closed rather than defaulting to any access.
@@ -222,6 +260,7 @@ def authenticated_user(request: Request, db: Session = Depends(get_db)) -> User:
     if db.get(Organization, user.organization_id) is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account organization unavailable")
     request.state.session_digest = session.token_digest
+    request.state.user_id = user.id  # For the request log. Never anything from a record.
     return user
 
 
@@ -271,7 +310,7 @@ def login(request: Request, response: Response, body: Credentials, db: Session) 
     token = secrets.token_urlsafe(32)
     db.add(LoginSession(
         token_digest=digest_token(token), user_id=user.id,
-        expires_at=now + timedelta(hours=SESSION_HOURS),
+        expires_at=now + timedelta(hours=SESSION_HOURS), last_seen_at=now,
     ))
     db.commit()
     response.set_cookie(

@@ -59,6 +59,8 @@ class LoginSession(Base):
     token_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), index=True, nullable=False)
+    # Naive UTC, like expires_at. NULL for a session made before this was recorded.
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
 
 
 class AccountEvent(Base):

@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import settings  # noqa: E402
+from app.config import configuration_problems, settings  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.services import job_log  # noqa: E402
 from app.services.extraction import get_extractor  # noqa: E402
@@ -43,6 +43,11 @@ def _heartbeat(stop: threading.Event) -> None:
 
 
 def run(*, once: bool, poll_seconds: float) -> int:
+    problems = configuration_problems(settings)
+    if problems:
+        # The same settings the API refuses to start with: the worker shares its database and documents.
+        print("Refusing to start: " + " ".join(problems), file=sys.stderr)
+        return 2
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     lock_path = settings.storage_dir / "worker.lock"
     # The OS automatically releases flock() when a worker dies, including

@@ -61,10 +61,22 @@ class Settings(BaseSettings):
     session_secure_cookie: bool = False
     # "production" makes startup refuse anything unsafe for a hosted deployment.
     ticketflow_env: str = "development"
+    # /docs, /redoc and /openapi.json describe every endpoint to anyone who asks. Off unless wanted.
+    enable_api_docs: bool = False
+    # A signed-in session ends after this long with no requests, as well as 12 hours after sign-in.
+    session_idle_minutes: int = Field(default=120, ge=5, le=720)
+    # Per person, per minute, in each API process. 0 turns one off. See app/rate_limit.py.
+    rate_limit_uploads_per_minute: int = Field(default=30, ge=0)
+    rate_limit_exports_per_minute: int = Field(default=30, ge=0)
+    rate_limit_reports_per_minute: int = Field(default=120, ge=0)
+
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver", "0.0.0.0"}
 
 
 def configuration_problems(config: Settings) -> list[str]:
-    """Settings that are never safe, whichever environment this is. Startup refuses to run with any."""
+    """Settings startup refuses to run with. Some are never safe. Production adds the rest
+    of what a hosted deployment needs, and fails closed on anything it doesn't recognise."""
     problems = []
     if not config.trusted_hosts or any("*" in host for host in config.trusted_hosts):
         problems.append("TRUSTED_HOSTS must list explicit API hostnames, never wildcards.")
@@ -72,6 +84,21 @@ def configuration_problems(config: Settings) -> list[str]:
         not origin.startswith(("http://localhost:", "http://127.0.0.1:")) for origin in config.cors_origins
     ):
         problems.append("Set SESSION_SECURE_COOKIE=true before using a non-localhost frontend.")
+    if config.ticketflow_env not in ("development", "production"):
+        problems.append("TICKETFLOW_ENV must be 'development' or 'production'.")
+    elif config.ticketflow_env == "production":
+        if not config.database_url.startswith(("postgresql://", "postgres://", "postgresql+psycopg://")):
+            problems.append("Production needs PostgreSQL: set DATABASE_URL to a postgresql:// URL.")
+        if not config.session_secure_cookie:
+            problems.append("Production needs SESSION_SECURE_COOKIE=true, so sessions only travel over HTTPS.")
+        if not config.cors_origins or any(not origin.startswith("https://") or "*" in origin
+                                          or origin.split("//", 1)[1].split(":")[0].strip("[]") in _LOCAL_HOSTS
+                                          for origin in config.cors_origins):
+            problems.append("Production needs CORS_ORIGINS to list the exact https:// address of the frontend, with no wildcards or local addresses.")
+        if not config.trusted_hosts or any(host.split(":")[0].strip("[]") in _LOCAL_HOSTS for host in config.trusted_hosts):
+            problems.append("Production needs TRUSTED_HOSTS to list only the API's real hostnames, with no local addresses.")
+        if config.enable_api_docs:
+            problems.append("Production needs ENABLE_API_DOCS=false.")
     return problems
 
 

@@ -172,10 +172,10 @@ A unique index can't be created over rows that already break it, and migration `
 The API writes one JSON line per request to stderr:
 
 ```json
-{"request_id": "3ce7954ebebe", "method": "POST", "route": "/api/rates/import", "status": 422, "ms": 1.3}
+{"request_id": "3ce7954ebebe", "method": "POST", "route": "/api/rates/import", "status": 422, "ms": 1.3, "user_id": 4}
 ```
 
-Logs hold route templates and never the query string, so filters containing names stay out. Unhandled errors also log a stack trace, which can include internal detail, so treat log files as private.
+Logs hold route templates and never the query string, so filters containing names stay out. `user_id` is the signed-in person's id, or null. An unhandled error adds a line with the error's type and where in the code it happened, and leaves out its message, because that can quote a record. Treat log files as private anyway.
 
 When someone sees "quote reference abc123", search the log for that id. Every response carries it in `X-Request-ID`.
 
@@ -186,6 +186,16 @@ The worker also writes one JSON line per event to stderr, with ids and no docume
 ```
 
 Events: `worker_started`, `worker_stopped`, `worker_lock_held`, `job_started`, `job_finished`, `job_failed`, `job_requeued`, `job_gave_up`, `jobs_recovered`, `file_failed`, `heartbeat_failed`. An error line gives the error's type and where in the code it happened, and leaves out its message, because an error's text can quote a ticket.
+
+## Settings that matter for security
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `TICKETFLOW_ENV` | `development` | `production` refuses to start without PostgreSQL, secure cookies, exact https origins and real hostnames, and API docs off |
+| `ENABLE_API_DOCS` | `false` | Serves `/docs`, `/redoc` and `/openapi.json` |
+| `SESSION_IDLE_MINUTES` | `120` | Signed out after this long with no requests. The 12-hour limit applies as well |
+| `RATE_LIMIT_UPLOADS_PER_MINUTE`, `..._EXPORTS_...`, `..._REPORTS_...` | 30, 30, 120 | Per person, in each API process. 0 turns one off, which a load test needs |
+| `MAX_JOB_ATTEMPTS` | `3` | How many times one upload may stop the worker before it's set aside |
 
 ## When something goes wrong
 
@@ -199,4 +209,7 @@ Events: `worker_started`, `worker_stopped`, `worker_lock_held`, `job_started`, `
 | "The stored file is missing" on a ticket or scan | The database refers to a document that isn't in `STORAGE_DIR` | See [Missing documents](#missing-documents) |
 | "Someone else changed this ticket" | A teammate saved first | Check the values now shown, then accept |
 | API refuses to start, naming a migration | Code is newer than the database | Follow Upgrading above |
+| API or worker refuses to start in production | A setting is unsafe for hosting | The message names it. `python scripts/doctor.py` lists them all |
+| "Too many exports in a short time" | One person passed a per-minute limit | Wait the seconds it says. Raise the limit if it's normal work |
+| Signed out "after a while without activity" | Idle longer than `SESSION_IDLE_MINUTES` | Sign in again |
 | A number looks wrong | Open the ticket's **Change history** | Every edit and approval is recorded with a name |

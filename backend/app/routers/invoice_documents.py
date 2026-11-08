@@ -27,6 +27,7 @@ from ..models import (
     InvoiceComparison, InvoiceDocument, InvoiceDocumentEvent, InvoiceDraftLine, Project, Supplier, User, as_utc, utcnow,
 )
 from ..permissions import require
+from ..rate_limit import limited
 from ..services import invoice_extraction, pipeline, splitter, storage
 from ..services.accounts import names_by_id
 from ..services.invoice_extraction import InvoiceExtractionError
@@ -140,7 +141,7 @@ def list_documents(db: Session = Depends(get_db), organization_id: int = Depends
     return [_document_out(db, d) for d in documents]
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(limited("uploads"))])
 def upload_document(file: UploadFile = File(...), project_id: int | None = Form(None),
                     db: Session = Depends(get_db), user: User = Depends(require("invoices.manage"))):
     # Not async: parsing a PDF here would otherwise stop every other request.

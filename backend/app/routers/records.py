@@ -26,6 +26,7 @@ from ..auth import current_organization_id
 from ..db import get_db
 from ..models import Batch, Material, Project, SavedView, Supplier, Ticket, User, as_utc
 from ..permissions import has_permission, require
+from ..rate_limit import limited
 from ..schemas import TicketOut
 from ..services import aggregates
 from ..services import duplicates as dup_svc
@@ -117,7 +118,7 @@ def _columns(columns: str | None) -> list[str] | None:
     return keys
 
 
-@router.get("/records/export.csv")
+@router.get("/records/export.csv", dependencies=[Depends(limited("exports"))])
 def export_records_csv(
     project_id: int | None = None, supplier: str | None = None, material: str | None = None,
     status: str | None = None, date_from: date | None = None, date_to: date | None = None, q: str | None = None,

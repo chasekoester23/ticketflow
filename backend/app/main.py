@@ -1,10 +1,12 @@
 import json
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, Request
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy import inspect
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 from sqlalchemy.orm.exc import StaleDataError
@@ -12,10 +14,12 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from . import rate_limit
 from .config import configuration_problems, settings
 from .db import Base, engine
 from .routers import api, auth as auth_router, invoice_documents, invoices, pricing, projects, records, reports, system, team, scans
 from .services import system_health
+from .services.job_log import frames
 from .auth import current_user
 
 request_log = logging.getLogger("ticketflow.request")
@@ -31,6 +35,7 @@ async def lifespan(app: FastAPI):
     problems = configuration_problems(settings)
     if problems:
         raise RuntimeError(" ".join(problems))
+    rate_limit.reset()
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     if engine.dialect.name == "sqlite":
         Base.metadata.create_all(engine)  # new local installs only; never alters existing tables
@@ -92,10 +97,24 @@ async def lifespan(app: FastAPI):
             "Scan check migration required: back up backend/ticketflow.db, "
             "then run 'cd backend && python -m alembic upgrade head'."
         )
+    if "last_seen_at" not in {c["name"] for c in inspector.get_columns("login_sessions")}:
+        raise RuntimeError(
+            "Session migration required: back up backend/ticketflow.db, "
+            "then run 'cd backend && python -m alembic upgrade head'."
+        )
     yield
 
 
-app = FastAPI(title="TicketFlow", lifespan=lifespan)
+def _documentation() -> dict:
+    """Off unless ENABLE_API_DOCS=true. app.openapi() still works either way, which
+    the route inventory relies on."""
+    if settings.enable_api_docs:
+        return {}
+    return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+
+
+app = FastAPI(title="TicketFlow", lifespan=lifespan, **_documentation())
+_PLAIN_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 
 @app.middleware("http")
@@ -105,7 +124,9 @@ async def log_requests(request: Request, call_next):
     Logs the route's template and never its query, since filters can hold names.
     Added first, so errors pass back through CORS and the browser can read them.
     """
-    request_id = request.headers.get("X-Request-ID", "")[:64] or uuid.uuid4().hex[:12]
+    supplied = request.headers.get("X-Request-ID", "")
+    # Kept only if it's plain, so it can't break a log line or a header.
+    request_id = supplied if _PLAIN_ID.fullmatch(supplied) else uuid.uuid4().hex[:12]
     started = time.perf_counter()
     status, failure = 500, None
     try:
@@ -113,7 +134,8 @@ async def log_requests(request: Request, call_next):
         status = response.status_code
     except Exception as exc:
         failure = type(exc).__name__
-        request_log.exception("Unhandled error %s", json.dumps({"request_id": request_id, "error": failure}))
+        # The error's type and where it happened. Never its message, which can quote a record.
+        request_log.error(json.dumps({"request_id": request_id, "error": failure, "trace": frames(exc.__traceback__)}))
         response = JSONResponse({"detail": "Something went wrong on our side, and nothing further was changed. "
                                            f"If it keeps happening, quote reference {request_id}.", "request_id": request_id},
                                 status_code=500)
@@ -121,6 +143,7 @@ async def log_requests(request: Request, call_next):
     request_log.info(json.dumps({
         "request_id": request_id, "method": request.method, "route": getattr(route, "path", "unmatched"),
         "status": status, "ms": round((time.perf_counter() - started) * 1000, 1),
+        "user_id": getattr(request.state, "user_id", None),
         **({"error": failure} if failure else {}),
     }))
     response.headers["X-Request-ID"] = request_id
@@ -130,6 +153,14 @@ async def log_requests(request: Request, call_next):
 # Database refusals become clear answers. In every case the request's transaction
 # is rolled back, so nothing was saved. The database's message is never shown or
 # logged, because it can quote the values involved.
+@app.exception_handler(RequestValidationError)
+async def _invalid_request(_request: Request, exc: RequestValidationError):
+    """Which fields, and why. FastAPI's default also repeats what was sent, which here is
+    a ticket's values, so that's left out."""
+    return JSONResponse({"detail": [{"type": error.get("type"), "loc": list(error.get("loc", ())), "msg": error.get("msg")}
+                                    for error in exc.errors()]}, status_code=422)
+
+
 @app.exception_handler(StaleDataError)
 async def _changed_at_once(_request: Request, _exc: StaleDataError):
     return JSONResponse({"detail": {"code": "record_changed", "message": "Someone else saved a change to this at the same moment. "
@@ -183,6 +214,9 @@ async def csrf_header_gate(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
+    if settings.session_secure_cookie:
+        # Secure cookies mean this is served over HTTPS: keep browsers from ever trying plain HTTP.
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     if request.url.path.startswith("/api/"):
         # No browser/proxy cache may serve a previous owner's tickets, images,
         # financial summaries, or login responses.

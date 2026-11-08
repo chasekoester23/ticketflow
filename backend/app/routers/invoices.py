@@ -25,6 +25,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
+from ..rate_limit import limited
 from ..models import (
     InvoiceComparison, InvoiceComparisonEvent, InvoiceTicketLink, InvoiceTicketRef,
     Project, Ticket, User, as_utc,
@@ -533,7 +534,7 @@ def _owned_or_404(db: Session, organization_id: int, line_id: int) -> InvoiceCom
     return item
 
 
-@router.get("/overview")
+@router.get("/overview", dependencies=[Depends(limited("reports"))])
 def overview(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     """Across all lines: what's billed against what's approved, and billing
     patterns worth a question. Possible problems for a person to check, never findings."""
@@ -734,7 +735,7 @@ def _csv_text(value: str | None) -> str:
     return value
 
 
-@router.get("/{line_id}/report.csv")
+@router.get("/{line_id}/report.csv", dependencies=[Depends(limited("exports"))])
 def export_comparison_report(line_id: int, db: Session = Depends(get_db),
                              organization_id: int = Depends(current_organization_id)):
     """Download a human-reviewable snapshot, never a payment authorization."""

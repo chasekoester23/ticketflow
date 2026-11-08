@@ -17,6 +17,7 @@ from ..config import settings
 from ..db import SessionLocal, get_db
 from ..models import AuditEvent, Batch, InvoiceTicketLink, Project, ScanEvent, ScanSlot, Ticket, UploadedFile, User, as_utc
 from ..permissions import has_permission, require
+from ..rate_limit import limited
 from ..schemas import BatchOut, BatchQueueRow, FlagIn, TicketOut, TicketPatch, VerifyIn
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
@@ -66,7 +67,7 @@ def _drain_job_for_tests() -> None:
         jobqueue.execute_claimed(db, job_id, token, extractor_factory=get_extractor)
 
 
-@router.post("/batches", response_model=BatchOut)
+@router.post("/batches", response_model=BatchOut, dependencies=[Depends(limited("uploads"))])
 def create_batch(
     background: BackgroundTasks,
     layout: str = Form("single"),
@@ -276,7 +277,7 @@ def move_batch(batch_id: int, body: BatchProjectIn, db: Session = Depends(get_db
     return batch
 
 
-@router.post("/batches/{batch_id}/retry", response_model=BatchOut)
+@router.post("/batches/{batch_id}/retry", response_model=BatchOut, dependencies=[Depends(limited("uploads"))])
 def retry_batch(batch_id: int, background: BackgroundTasks, db: Session = Depends(get_db),
                 user: User = Depends(require("tickets.upload"))):
     organization_id = user.organization_id
@@ -632,7 +633,7 @@ def ticket_audit(ticket_id: int, db: Session = Depends(get_db), organization_id:
     ]
 
 
-@router.get("/batches/{batch_id}/export.xlsx")
+@router.get("/batches/{batch_id}/export.xlsx", dependencies=[Depends(limited("exports"))])
 def export_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     if db.scalar(select(Batch.id).where(
         Batch.id == batch_id, Batch.organization_id == organization_id
