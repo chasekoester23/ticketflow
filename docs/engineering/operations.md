@@ -10,6 +10,8 @@ For whoever runs an installation. Everything here is local. Hosting is covered i
 | Worker | `python scripts/run_worker.py` | Uploads wait in the queue. Nothing is lost |
 | Web | `npm run dev` or `npm start`, from `frontend/` | Nothing to look at |
 
+**First run.** With no users at all, the sign-in page offers setup: a company name and the first owner's account. It works only from the computer TicketFlow runs on, including through the local web server, and only until the first user exists. To do this one step from another machine, set `ALLOW_REMOTE_SETUP=true`, then remove it. The terminal scripts `create_owner.py` and `create_company.py` still work.
+
 **System health** in the sidebar (managers and owners) shows whether the worker is alive, what's queued, the database version, disk space and how old the latest backup is. Each problem says how to fix it.
 
 ## Backups
@@ -196,6 +198,7 @@ Events: `worker_started`, `worker_stopped`, `worker_lock_held`, `job_started`, `
 | `SESSION_IDLE_MINUTES` | `120` | Signed out after this long with no requests. The 12-hour limit applies as well |
 | `RATE_LIMIT_UPLOADS_PER_MINUTE`, `..._EXPORTS_...`, `..._REPORTS_...` | 30, 30, 120 | Per person, in each API process. 0 turns one off, which a load test needs |
 | `MAX_JOB_ATTEMPTS` | `3` | How many times one upload may stop the worker before it's set aside |
+| `ALLOW_REMOTE_SETUP` | `false` | Lets first-run setup come from another machine. Only matters until the first user exists |
 
 ## When something goes wrong
 

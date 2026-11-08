@@ -114,8 +114,15 @@ def rows(db: Session, query, order=(Ticket.delivery_date, Ticket.id)) -> Iterato
     yield from db.execute(query.order_by(*order).execution_options(yield_per=2000))
 
 
+def headers(keys: list[str], labels: dict[str, str] | None = None) -> list[str]:
+    """Each column's header: a saved view's own label if it has one. A label is a
+    person's text, so it's made formula-safe like any other."""
+    labels = labels or {}
+    return [_safe_excel_text(labels[key]) if key in labels else COLUMNS[key].header for key in keys]
+
+
 def build_workbook(tickets: Iterable, approvers: dict[int, str] | None = None, columns: list[str] | None = None, *,
-                   price_of: Callable[[Any], Decimal | None]) -> bytes:
+                   price_of: Callable[[Any], Decimal | None], labels: dict[str, str] | None = None) -> bytes:
     """``approvers`` maps user id -> display name for the exporting company. Rows go
     straight to a temporary file as they're written, so memory stays flat."""
     approvers = approvers or {}
@@ -137,7 +144,7 @@ def build_workbook(tickets: Iterable, approvers: dict[int, str] | None = None, c
             styled.append(cell)
         return styled
 
-    ws.append(header([column.header for column in chosen]))
+    ws.append(header(headers(keys, labels)))
     formatted = [column.number_format for column in chosen]
     summary = _Summary()
     for t in tickets:
@@ -161,10 +168,11 @@ def build_workbook(tickets: Iterable, approvers: dict[int, str] | None = None, c
     return buf.getvalue()
 
 
-def csv_lines(tickets: Iterable, keys: list[str], approvers: dict[int, str], price_of: Callable[[Any], Decimal | None]) -> Iterator[list]:
+def csv_lines(tickets: Iterable, keys: list[str], approvers: dict[int, str], price_of: Callable[[Any], Decimal | None],
+              labels: dict[str, str] | None = None) -> Iterator[list]:
     """Rows for a CSV: exact decimal text, never floats, and formula-safe text."""
     exact = {"tons": lambda t, _p, _c: t.tonnage, "unit_price": lambda t, p, _c: p, "cost": lambda t, _p, c: c}
-    yield [COLUMNS[key].header for key in keys]
+    yield headers(keys, labels)
     for t in tickets:
         if t.status == "skipped":
             continue

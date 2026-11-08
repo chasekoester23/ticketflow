@@ -370,6 +370,8 @@ class SavedView(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     filters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     columns: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # {column key: header text}, so an export can match a team's own spreadsheet.
+    labels: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 

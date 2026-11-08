@@ -108,13 +108,12 @@ def records(
 def export_records(
     project_id: int | None = None, supplier: str | None = None, material: str | None = None,
     status: str | None = None, date_from: date | None = None, date_to: date | None = None, q: str | None = None,
-    columns: str | None = None,
+    columns: str | None = None, view_id: int | None = None,
     db: Session = Depends(get_db),
     organization_id: int = Depends(current_organization_id),
 ):
-    keys = [key.strip() for key in columns.split(",") if key.strip()] if columns else None
-    if keys is not None and (not keys or set(keys) - set(export_svc.COLUMNS)):
-        raise HTTPException(422, "Unknown export column.")
+    from .records import view_choice
+    keys, labels = view_choice(db, organization_id, view_id, columns)
     filters = dict(organization_id=organization_id, project_id=project_id, supplier=supplier, material=material,
                    status=status, date_from=date_from, date_to=date_to, q=q)
     matching = db.scalar(filtered_query(select(func.count()), **filters))
@@ -124,7 +123,8 @@ def export_records(
     table = pricing_svc.rate_table(db, organization_id)
     return Response(
         export_svc.build_workbook(export_svc.rows(db, filtered_query(export_svc.row_query(), **filters)),
-                                  names_by_id(db, organization_id), keys, price_of=lambda t: pricing_svc.effective_price_for(t, table)[0]),
+                                  names_by_id(db, organization_id), keys, price_of=lambda t: pricing_svc.effective_price_for(t, table)[0],
+                                  labels=labels),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="delivery-records.xlsx"'})
 

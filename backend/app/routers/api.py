@@ -634,15 +634,19 @@ def ticket_audit(ticket_id: int, db: Session = Depends(get_db), organization_id:
 
 
 @router.get("/batches/{batch_id}/export.xlsx", dependencies=[Depends(limited("exports"))])
-def export_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+def export_batch(batch_id: int, view_id: int | None = None, db: Session = Depends(get_db),
+                 organization_id: int = Depends(current_organization_id)):
+    from .records import view_choice
     if db.scalar(select(Batch.id).where(
         Batch.id == batch_id, Batch.organization_id == organization_id
     )) is None:
         raise HTTPException(404, "Batch not found")
+    keys, labels = view_choice(db, organization_id, view_id, None)
     table = pricing_svc.rate_table(db, organization_id)
     query = export_svc.row_query().where(Ticket.batch_id == batch_id)
     data = export_svc.build_workbook(export_svc.rows(db, query, order=(Ticket.file_id, Ticket.source_page, Ticket.position)),
-                                     names_by_id(db, organization_id), price_of=lambda t: pricing_svc.effective_price_for(t, table)[0])
+                                     names_by_id(db, organization_id), keys, price_of=lambda t: pricing_svc.effective_price_for(t, table)[0],
+                                     labels=labels)
     return Response(
         data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="delivery-records-batch-{batch_id}.xlsx"'})

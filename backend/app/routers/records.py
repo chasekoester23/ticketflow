@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import difflib
+import re
 from collections import Counter
 from datetime import date
 from decimal import Decimal
@@ -108,6 +109,18 @@ def search_records(
     )
 
 
+def view_choice(db: Session, organization_id: int, view_id: int | None, columns: str | None) -> tuple[list[str] | None, dict[str, str]]:
+    """The columns and headers an export uses. A saved view supplies both. Columns named
+    in the request win over the view's, and the view's labels still apply."""
+    keys = _columns(columns)
+    if view_id is None:
+        return keys, {}
+    view = db.scalar(select(SavedView).where(SavedView.id == view_id, SavedView.organization_id == organization_id))
+    if view is None:
+        raise HTTPException(404, "Saved view not found")
+    return keys or list(view.columns) or None, dict(view.labels or {})
+
+
 def _columns(columns: str | None) -> list[str] | None:
     if not columns:
         return None
@@ -122,10 +135,12 @@ def _columns(columns: str | None) -> list[str] | None:
 def export_records_csv(
     project_id: int | None = None, supplier: str | None = None, material: str | None = None,
     status: str | None = None, date_from: date | None = None, date_to: date | None = None, q: str | None = None,
-    columns: str | None = None, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id),
+    columns: str | None = None, view_id: int | None = None, db: Session = Depends(get_db),
+    organization_id: int = Depends(current_organization_id),
 ):
     """Exact decimal text, for import into an accounting system. Skipped tickets are left out."""
-    keys = _columns(columns) or list(export_svc.DEFAULT_COLUMNS)
+    keys, labels = view_choice(db, organization_id, view_id, columns)
+    keys = keys or list(export_svc.DEFAULT_COLUMNS)
     table = pricing_svc.rate_table(db, organization_id)
     approvers = names_by_id(db, organization_id)
     query = filtered_query(export_svc.row_query(), organization_id=organization_id, project_id=project_id, supplier=supplier,
@@ -135,7 +150,7 @@ def export_records_csv(
     def stream():
         buffer = StringIO(newline="")
         writer = csv.writer(buffer)
-        for number, row in enumerate(export_svc.csv_lines(export_svc.rows(db, query), keys, approvers, price_of), start=1):
+        for number, row in enumerate(export_svc.csv_lines(export_svc.rows(db, query), keys, approvers, price_of, labels), start=1):
             writer.writerow(row)
             if number % 1000 == 0:  # One network chunk per row would be far slower.
                 yield buffer.getvalue()
@@ -262,10 +277,28 @@ class SavedViewIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     filters: dict[str, str] = {}
     columns: list[str] = []
+    # {column key: header text}, so exports can match a team's own spreadsheet headers.
+    labels: dict[str, str] = Field(default_factory=dict, max_length=len(export_svc.COLUMNS))
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _labels(labels: dict[str, str]) -> dict[str, str]:
+    unknown = sorted(set(labels) - set(export_svc.COLUMNS))
+    if unknown:
+        raise HTTPException(422, "Labels can only be given for known export columns: " + ", ".join(unknown[:5]) + " isn't one.")
+    cleaned = {}
+    for key, label in labels.items():
+        text = label.strip()
+        if not 1 <= len(text) <= 100 or _CONTROL.search(text):
+            raise HTTPException(422, f"The header for {key} must be 1 to 100 ordinary characters.")
+        cleaned[key] = text
+    return cleaned
 
 
 def _view_out(view: SavedView, people: dict[int, str]) -> dict:
-    return {"id": view.id, "name": view.name, "filters": view.filters, "columns": view.columns,
+    return {"id": view.id, "name": view.name, "filters": view.filters, "columns": view.columns, "labels": view.labels or {},
             "created_by": people.get(view.created_by_user_id), "created_at": as_utc(view.created_at)}
 
 
@@ -289,7 +322,7 @@ def create_view(body: SavedViewIn, db: Session = Depends(get_db), user: User = D
             SavedView.organization_id == user.organization_id)) >= MAX_VIEWS:
         raise HTTPException(409, f"This company already has {MAX_VIEWS} saved views. Remove one first.")
     view = SavedView(organization_id=user.organization_id, name=name, filters=body.filters, columns=body.columns,
-                     created_by_user_id=user.id)
+                     labels=_labels(body.labels), created_by_user_id=user.id)
     db.add(view)
     try:
         db.commit()
