@@ -29,6 +29,7 @@ from .conftest import TEST_DATABASE_URL, _reset_postgres
 from .fixtures_stack import Stack, build_stack, scan_batch, wait_until
 from .sample_data import TICKETS, make_page, make_pdf
 from .sample_invoices import letterhead_supplier
+from .test_concurrency import race  # noqa: F401  (a fixture: real file database, real threads)
 from .test_query_budgets import _seed, _session
 
 postgres_only = pytest.mark.skipif(not TEST_DATABASE_URL, reason="Needs PostgreSQL's own connection handling")
@@ -281,19 +282,20 @@ def test_the_same_scan_and_invoice_uploaded_at_once_cant_double_count(stack):
 
 
 @pytest.mark.xfail(strict=True, reason="BUG: upload_document writes the file before db.flush(), and a simultaneous duplicate fails at that flush, outside the try that deletes the file, so each refused copy stays in storage")
-def test_refused_simultaneous_invoice_copies_leave_no_file_behind(stack):
-    client = stack.signed_in()
+def test_refused_simultaneous_invoice_copies_leave_no_file_behind(race, monkeypatch):
+    """Both requests are held until each has passed the duplicate check and stored its
+    file, so the race happens every time, on either database."""
+    from app.config import settings
+    from app.routers import invoice_documents
     invoice = letterhead_supplier()
-    answers: list[int] = []
 
-    def upload_invoice():
-        answers.append(client.post("/api/invoice-documents", files={"file": ("same.pdf", invoice, "application/pdf")}).status_code)
+    def send():
+        return race.client.post("/api/invoice-documents", files={"file": ("same.pdf", invoice, "application/pdf")})
 
-    threads = [threading.Thread(target=upload_invoice) for _ in range(4)]
-    [t.start() for t in threads]
-    [t.join(60) for t in threads]
-    assert sorted(answers) == [201, 409, 409, 409]
-    files = [p for p in (stack.storage / "invoices").rglob("*") if p.is_file()]
+    with race.meeting_at(monkeypatch, invoice_documents.invoice_extraction, "get_invoice_extractor"):
+        results = race.run(send, send)
+    assert sorted(r.status_code for r in results) == [201, 409]
+    files = [p for p in (settings.storage_dir / "invoices").rglob("*") if p.is_file()]
     assert len(files) == 1, f"{len(files)} stored copies of one kept document"
 
 
