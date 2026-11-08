@@ -79,7 +79,7 @@ export default function AccountPage() {
               aria-invalid={tooShort} aria-describedby="new-password-hint"
               value={next} onChange={(e) => { setNext(e.target.value); setSaved(false); }} />
           </label>
-          <span id="new-password-hint" aria-live="polite" className={`text-[11px] ${tooShort ? "text-[#a73631]" : "text-[#7a8796]"}`}>
+          <span id="new-password-hint" aria-live="polite" className={`text-[11px] ${tooShort ? "text-[#a73631]" : "text-[#5f6c7b]"}`}>
             {tooShort ? `${MIN_LENGTH - next.length} more character${MIN_LENGTH - next.length === 1 ? "" : "s"} needed` : "A short phrase of several words works well."}
           </span>
         </div>

@@ -52,13 +52,13 @@ export function BatchQueue() {
             <td className="whitespace-nowrap font-bold tabular-nums">#{row.id}</td>
             <td className="min-w-[120px]">{row.project_code ? `${row.project_code} · ${row.project_name}` : <span className="text-[#a14c1c]">No project</span>}</td>
             <td><span className={`tf-status ${step.tone}`}>{step.text}</span></td>
-            <td className="tf-hide-narrow whitespace-nowrap">{when(row.created_at)}{row.created_by && <span className="block text-[11px] text-[#7a8796]">{row.created_by}</span>}</td>
+            <td className="tf-hide-narrow whitespace-nowrap">{when(row.created_at)}{row.created_by && <span className="block text-[11px] text-[#5f6c7b]">{row.created_by}</span>}</td>
             <td className="tf-hide-narrow text-right tabular-nums">{row.tickets}</td>
             <td className="tf-hide-narrow min-w-[110px]">
               <div className="tf-progress" role="progressbar" aria-label={`Batch ${row.id} resolved`} aria-valuenow={resolved} aria-valuemin={0} aria-valuemax={row.tickets || 0}>
                 <div style={{ width: `${row.tickets ? (resolved / row.tickets) * 100 : 0}%` }} />
               </div>
-              <span className="mt-1 block text-[11px] tabular-nums text-[#7a8796]">{resolved} of {row.tickets}</span>
+              <span className="mt-1 block text-[11px] tabular-nums text-[#5f6c7b]">{resolved} of {row.tickets}</span>
             </td>
             <td className="whitespace-nowrap text-right"><a href={`/upload?batch=${row.id}`} aria-label={`Open batch ${row.id}`}>Open →</a></td>
           </tr>;

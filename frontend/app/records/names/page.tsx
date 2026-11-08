@@ -28,7 +28,7 @@ function VariantRow({ row, catalog, canRemember, onApply }: {
     <td className="text-right tabular-nums">{row.unverified}</td>
     <td className="text-right tabular-nums">{row.verified}</td>
     <td className="min-w-[320px]">
-      {row.state === "catalog" ? <span className="text-[#7a8796]">Nothing to do</span>
+      {row.state === "catalog" ? <span className="text-[#5f6c7b]">Nothing to do</span>
         : <div className="flex flex-wrap items-center gap-2">
           <label className="sr-only" htmlFor={`target-${row.value}`}>Change {row.value} to</label>
           <select id={`target-${row.value}`} className="tf-field !min-h-0 !py-1 !text-xs" value={target} onChange={(e) => setTarget(e.target.value)}>
@@ -119,6 +119,6 @@ export default function NameCleanupPage() {
         <tbody>{rows.map((row) => <VariantRow key={row.value} row={row} catalog={catalog} canRemember={canRemember} onApply={apply} />)}</tbody>
       </table></div> : rows && <p className="tf-empty">No {field} names on record yet.</p>}
     </section>
-    <p className="text-[11px] text-[#768391]">{canEdit ? "Approved tickets are never changed from here: open one to correct it, and it will need approving again." : "View-only access. Ask a clerk or manager to make changes."} The closest match is only a suggestion. Add missing names under <a className="tf-link" href="/pricing">Suppliers &amp; rates</a>.</p>
+    <p className="text-[11px] text-[#5f6c7b]">{canEdit ? "Approved tickets are never changed from here: open one to correct it, and it will need approving again." : "View-only access. Ask a clerk or manager to make changes."} The closest match is only a suggestion. Add missing names under <a className="tf-link" href="/pricing">Suppliers &amp; rates</a>.</p>
   </div>;
 }

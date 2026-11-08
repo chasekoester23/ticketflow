@@ -163,7 +163,7 @@ test("same-as-previous never replaces something already typed", async ({ page })
 });
 
 test("a stale approval is refused, the latest values appear, and nothing advances", async ({ page }) => {
-  const tickets = [ticket(101, { ticket_number: "1", tonnage: "20.000" }), ticket(102)];
+  const tickets = [ticket(101, { ticket_number: "1", tonnage: "20.000", delivery_date: "2026-10-15", material_type: "Sand", supplier: "S", job_location: "J" }), ticket(102)];
   const log = await mock(page, tickets);
   await page.goto("/upload?batch=5&ticket=101");
   await expect(page.getByLabel("Tonnage (tons)")).toHaveValue("20.000");

@@ -50,11 +50,11 @@ export default function ProjectsPage() {
     {canManage && <section className="tf-panel">
       <div className="tf-panel-heading">
         <div><h2 className="tf-panel-title">Create a project</h2><p className="tf-panel-description">Enter the job number and name used by your team</p></div>
-        <span className="text-[10px] font-semibold uppercase tracking-[.08em] text-[#87929f]">PROJECT SETUP</span>
+        <span className="text-[10px] font-semibold uppercase tracking-[.08em] text-[#5f6c7b]">PROJECT SETUP</span>
       </div>
       <form className="grid items-end gap-4 p-5 md:grid-cols-2 xl:grid-cols-[150px_1.2fr_1fr_1fr_auto]"
         onSubmit={(event) => { event.preventDefault(); void add(); }}>
-        <label className="tf-field-label">Project ID <span className="text-[10px] font-normal text-[#8793a0]">Required</span>
+        <label className="tf-field-label">Project ID <span className="text-[10px] font-normal text-[#5f6c7b]">Required</span>
           <input className="tf-field w-full" required placeholder="24-105" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
         </label>
         <label className="tf-field-label">Project name
@@ -93,8 +93,11 @@ export default function ProjectsPage() {
             </button>}
           </div></td>
         </tr>)}</tbody>
-      </table></div> : <div className="tf-empty">
-        {showArchived ? "No projects found." : "No active projects yet. Use the form above to add your first job."}
+      </table></div> : <div className="tf-empty" data-testid="projects-empty">
+        {showArchived ? "No projects found."
+          : canManage ? <>No projects yet. Add your first job above with the number your team already uses for it.
+            Every ticket upload and invoice line belongs to a project, so this comes first.</>
+          : "No projects yet. A manager or owner adds each job here. Ask one to add the job you're working on."}
       </div>}
     </section>
   </div>;
