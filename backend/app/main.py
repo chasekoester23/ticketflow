@@ -9,6 +9,7 @@ from fastapi import FastAPI, Depends, Request
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm.exc import StaleDataError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -190,10 +191,18 @@ async def _database_unavailable(_request: Request, exc: OperationalError):
                         status_code=503, headers={"Retry-After": "5"})
 
 
+@app.exception_handler(PoolTimeoutError)
+async def _no_free_connection(_request: Request, _exc: PoolTimeoutError):
+    request_log.warning(json.dumps({"event": "database_pool_exhausted"}))
+    return JSONResponse({"detail": "The database is busy or unavailable. Nothing was saved. Try again in a moment."},
+                        status_code=503, headers={"Retry-After": "5"})
+
+
 app.add_middleware(
     CORSMiddleware, allow_origins=settings.cors_origins,
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
-    expose_headers=["X-Request-ID"],
+    # Retry-After lets the page say how long to wait after a 429 or 503.
+    expose_headers=["X-Request-ID", "Retry-After"],
 )
 app.add_middleware(
     TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts, www_redirect=False,

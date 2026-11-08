@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services import jobqueue, pipeline, scan_manifest  # noqa: E402
+from app.services import jobqueue, pipeline, scan_manifest, storage  # noqa: E402
 from app.services.validation import ExtractedTicket  # noqa: E402
 from scripts import run_worker  # noqa: E402
 
@@ -43,7 +43,7 @@ class LoggedReader:
 real_batch = jobqueue.pipeline.process_batch
 real_file = pipeline.process_file
 real_slot = scan_manifest.record_slot
-real_png = scan_manifest.write_private_png
+real_save = storage.LocalStorage.save
 
 
 def process_batch(*args, **kwargs):
@@ -68,25 +68,24 @@ def record_slot(*args, **kwargs):
     return real_slot(*args, **kwargs)
 
 
-def write_private_png(path, image):
-    """Dies with the file half written, as a kill during the write would leave it."""
-    counts["writes"] += 1
-    if POINT == "mid_crop_write" and counts["writes"] == 6:
-        import io
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        data = buffer.getvalue()
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        os.write(descriptor, data[: len(data) // 2])
-        os.close(descriptor)
-        arrive()
-    return real_png(path, image)
+def save(self, key, data, *, replace=False):
+    """Dies with a crop half written, where a kill during the write would leave it:
+    in the store's private partial file, before it's moved into place."""
+    if key.startswith("crops/"):
+        counts["writes"] += 1
+        if POINT == "mid_crop_write" and counts["writes"] == 6:
+            partial = self._writable(key).with_name(".killed-mid-write.partial")
+            descriptor = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.write(descriptor, data[: len(data) // 2])
+            os.close(descriptor)
+            arrive()
+    return real_save(self, key, data, replace=replace)
 
 
 jobqueue.pipeline.process_batch = process_batch
 pipeline.process_file = process_file
 scan_manifest.record_slot = record_slot
-scan_manifest.write_private_png = write_private_png
+storage.LocalStorage.save = save
 run_worker.get_extractor = LoggedReader
 
 if __name__ == "__main__":

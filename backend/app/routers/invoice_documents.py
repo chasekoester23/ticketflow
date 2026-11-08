@@ -159,6 +159,11 @@ def upload_document(file: UploadFile = File(...), project_id: int | None = Form(
             if doc.needs_pass:
                 raise HTTPException(400, "This PDF is password protected.")
             page_count = doc.page_count
+            if page_count == 0:
+                raise HTTPException(400, "This PDF has no pages.")
+            damaged = splitter.incomplete_reason(doc, data)
+            if damaged:
+                raise HTTPException(400, damaged)
     except HTTPException:
         raise
     except Exception:

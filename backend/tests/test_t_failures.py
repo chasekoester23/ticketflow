@@ -53,12 +53,18 @@ def _job(stack: Stack, batch_id: int) -> ProcessingJob:
         return db.scalar(select(ProcessingJob).where(ProcessingJob.batch_id == batch_id).order_by(ProcessingJob.id.desc()))
 
 
+def _on_disk(reference: str, root: Path | None = None) -> Path:
+    """Where a stored document is. New rows keep a key relative to the storage folder."""
+    path = Path(reference)
+    return path if path.is_absolute() else (root or settings.storage_dir) / path
+
+
 def _all_crops_are_readable(stack: Stack, batch_id: int) -> list[str]:
     bad = []
     with stack.Session() as db:
         for path, sha in db.execute(select(ScanSlot.crop_path, ScanSlot.crop_sha256).where(ScanSlot.batch_id == batch_id)):
             try:
-                with Image.open(path) as image:
+                with Image.open(_on_disk(path, stack.storage)) as image:
                     image.load()
             except OSError:
                 bad.append(Path(path).name)
@@ -108,7 +114,6 @@ def test_a_worker_killed_mid_batch_finishes_after_restart_with_nothing_lost_or_d
     assert stack.approvals_on_record(approved["id"]) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: record_slot keeps a crop file that a killed worker left half written, so the ticket's image is broken for good and its hash isn't the crop's")
 def test_a_worker_killed_while_writing_a_crop_doesnt_leave_a_broken_image(stack):
     """write_private_png writes straight to the final name, and record_slot trusts any
     file that exists. Writing to a temporary name and renaming would close this."""
@@ -309,8 +314,8 @@ def _approved_scan(client) -> tuple[dict, dict]:
 
 def _stored_paths(batch_id: int) -> tuple[Path, list[Path]]:
     with _session() as db:
-        upload = Path(db.scalar(select(UploadedFile.storage_path).where(UploadedFile.batch_id == batch_id)))
-        crops = [Path(p) for p in db.scalars(select(ScanSlot.crop_path).where(ScanSlot.batch_id == batch_id))]
+        upload = _on_disk(db.scalar(select(UploadedFile.storage_path).where(UploadedFile.batch_id == batch_id)))
+        crops = [_on_disk(p) for p in db.scalars(select(ScanSlot.crop_path).where(ScanSlot.batch_id == batch_id))]
     return upload, crops
 
 
@@ -324,7 +329,7 @@ def test_a_deleted_scan_image_says_so_and_changes_no_record(client):
     totals = _totals(client)
     _, crops = _stored_paths(approved["batch_id"])
     with _session() as db:
-        Path(db.get(Ticket, approved["id"]).crop_path).unlink()
+        _on_disk(db.get(Ticket, approved["id"]).crop_path).unlink()
     response = client.get(f"/api/tickets/{approved['id']}/image")
     assert response.status_code == 404 and "missing" in response.json()["detail"]
     assert str(settings.storage_dir) not in response.text
@@ -350,7 +355,6 @@ def test_a_deleted_original_scan_gives_a_clear_page_error_and_a_retry_that_fails
     assert client.get(f"/api/tickets/{second['id']}/image").status_code == 200, "crops don't depend on the original"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: pipeline.process_file stores str(OSError) as the file's error, and the API returns it, so people see the server's full storage path")
 def test_a_retry_of_a_deleted_scan_doesnt_show_the_server_path(client):
     approved, _ = _approved_scan(client)
     upload, _ = _stored_paths(approved["batch_id"])
@@ -392,7 +396,7 @@ def test_rotating_a_damaged_crop_gets_a_clear_answer(client):
     _approved, second = _approved_scan(client)
     with _session() as db:
         slot = db.scalar(select(ScanSlot).where(ScanSlot.file_id == second["file_id"], ScanSlot.position == second["position"]))
-        Path(slot.crop_path).write_bytes(b"not an image")
+        _on_disk(slot.crop_path).write_bytes(b"not an image")
         slot_id = slot.id
     response = client.post(f"/api/scan-slots/{slot_id}/rotate", json={"rotation": 90})
     assert response.status_code == 409, response.status_code
@@ -403,7 +407,7 @@ def test_a_damaged_invoice_original_says_so_and_its_lines_still_work(client):
     document = client.post("/api/invoice-documents", data={"project_id": str(project)},
                            files={"file": ("i.pdf", letterhead_supplier(), "application/pdf")}).json()
     with _session() as db:
-        path = Path(db.get(InvoiceDocument, document["id"]).storage_path)
+        path = _on_disk(db.get(InvoiceDocument, document["id"]).storage_path)
     path.write_bytes(b"damaged")
     page = client.get(f"/api/invoice-documents/{document['id']}/pages/1/image")
     assert page.status_code == 404 and str(path) not in page.text
@@ -438,7 +442,6 @@ def test_an_invoice_cut_off_early_is_refused_cleanly(client, fraction):
     assert client.get("/api/invoice-documents").json() == []
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: a truncated invoice PDF that MuPDF can repair is drafted from whatever survived, with no warning, so rows silently vanish from the bill")
 @pytest.mark.parametrize("fraction", [0.6, 0.8])
 def test_an_invoice_cut_off_late_isnt_drafted_as_if_it_were_whole(client, fraction):
     """15 rows on paper. PyMuPDF's is_repaired says the file was damaged; nothing uses it."""
@@ -455,13 +458,7 @@ def _scan_of_two_pages() -> bytes:
     return make_pdf([make_page(TICKETS), make_page(TICKETS)])
 
 
-_SILENT_LOSS = pytest.mark.xfail(strict=True, reason=(
-    "BUG: a scan PDF cut off after its first page opens as 'repaired', page 2 renders blank, its slots read as "
-    "empty, and the batch is ready for review with 4 of 8 tickets and no warning. Nothing checks doc.is_repaired"))
-
-
-@pytest.mark.parametrize("fraction", [0.01, 0.3, 0.5, pytest.param(0.6, marks=_SILENT_LOSS),
-                                      pytest.param(0.8, marks=_SILENT_LOSS), pytest.param(0.95, marks=_SILENT_LOSS)])
+@pytest.mark.parametrize("fraction", [0.01, 0.3, 0.5, 0.6, 0.8, 0.95])
 def test_a_cut_off_scan_never_passes_for_a_complete_one(client, fraction):
     """Eight tickets on paper. Refused, failed, or with its missing slots held for a person.
     Showing fewer tickets with nothing to say so is what must never happen."""
@@ -768,7 +765,6 @@ def test_postgres_connection_dying_mid_request_gets_a_clean_503(stack):
     assert client.get("/api/dashboard").status_code == 200
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: main.py maps OperationalError to 503, but SQLAlchemy's pool TimeoutError isn't one, so running out of connections under load gives a generic 500")
 def test_running_out_of_database_connections_gets_a_503_not_a_500(tmp_path, monkeypatch, postgres_engine):
     from fastapi.testclient import TestClient
     from sqlalchemy.pool import QueuePool
@@ -897,7 +893,6 @@ def test_a_full_disk_refuses_an_upload_cleanly(tmp_path, postgres_engine):
             stack.engine.dispose()
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: upload_document doesn't remove a partly written file when the write fails, so a full disk leaves half an invoice in storage, unreferenced and using the space that ran out")
 def test_a_full_disk_leaves_no_half_written_invoice(tmp_path, postgres_engine):
     stack = build_stack(tmp_path, postgres_engine, TEST_DATABASE_URL, _reset_postgres)
     stack.start_server(largest_file_bytes=DISK_LIMIT)

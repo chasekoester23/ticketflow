@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent
@@ -77,7 +77,7 @@ def _keys(values: dict) -> dict:
     if "lock_version" in columns:
         values["lock_version"] = 1
     if "approved_cost" in columns:  # Every row of a bulk insert needs the same columns.
-        values["approved_cost"] = (values["tonnage"] * values["applied_unit_price"]).quantize(Decimal("0.01")) \
+        values["approved_cost"] = (values["tonnage"] * values["applied_unit_price"]).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) \
             if values["status"] == "verified" else None
     return values
 

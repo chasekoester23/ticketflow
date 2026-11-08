@@ -206,7 +206,6 @@ def test_suppliers_one_letter_apart_keep_their_own_rates_and_records(client):
     assert set(variants.values()) == {"catalog"}, "nothing suggests merging three real suppliers"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: suppliers and materials are unique only by exact text, but rates are looked up by normalized name, so 'Sand' and 'SAND' can both carry a rate and which one an approval locks depends on row order")
 @pytest.mark.parametrize("first, second", [("Sand", "SAND"), ("Sand", "Sand."), ("No. 57 Stone", "No 57 Stone")])
 def test_two_catalog_names_that_match_the_same_tickets_cant_both_be_saved(client, first, second):
     client.post("/api/suppliers", json={"name": "Example Aggregates"})
@@ -367,7 +366,6 @@ def test_a_huge_invoice_page_is_kept_but_never_rendered_whole(client):
     assert preview.status_code == 404 and "not available" in preview.json()["detail"]
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: upload_document checks 1 <= page_count <= 20 in one test, so an invoice PDF with no pages is refused with 413 'Invoices can have at most 20 pages'")
 def test_an_invoice_with_no_pages_is_refused_for_having_no_pages(client):
     response = client.post("/api/invoice-documents", files={"file": ("empty.pdf", ZERO_PAGES, "application/pdf")})
     assert response.status_code == 400 and "no pages" in response.json()["detail"], response.text
