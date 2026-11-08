@@ -18,13 +18,16 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from ..config import BASE_DIR, settings
-from ..models import Batch, ProcessingJob, UploadedFile, as_utc
+from ..models import Batch, InvoiceDocument, ProcessingJob, ScanSlot, Ticket, UploadedFile, as_utc
+from . import storage
 
 HEARTBEAT_NAME = "worker.heartbeat"
 # The worker touches this every few seconds, even during a long job.
 WORKER_STALE_SECONDS = 30
 LOW_DISK_BYTES = 2 * 1024 ** 3
 BACKUP_OLD_DAYS = 7
+# The newest of each kind of document are looked for on every visit. scripts/check_documents.py checks all of them.
+DOCUMENT_SAMPLE = 50
 
 
 def heartbeat_path() -> Path:
@@ -96,6 +99,42 @@ def _check(name: str, state: str, message: str, action: str | None = None) -> di
     return {"name": name, "state": state, "message": message, "action": action}
 
 
+def _stored_documents(db: Session, organization_id: int) -> dict:
+    """Whether this company's newest documents are where the database says. A sample,
+    so the page stays fast. Says how many, never which file or where."""
+    company_batches = select(Batch.id).where(Batch.organization_id == organization_id)
+    references = [
+        *db.scalars(select(UploadedFile.storage_path).where(UploadedFile.batch_id.in_(company_batches))
+                    .order_by(UploadedFile.id.desc()).limit(DOCUMENT_SAMPLE)),
+        *db.scalars(select(ScanSlot.crop_path).where(ScanSlot.batch_id.in_(company_batches)).order_by(ScanSlot.id.desc()).limit(DOCUMENT_SAMPLE)),
+        *db.scalars(select(Ticket.crop_path).where(Ticket.organization_id == organization_id).order_by(Ticket.id.desc()).limit(DOCUMENT_SAMPLE)),
+        *db.scalars(select(InvoiceDocument.storage_path).where(InvoiceDocument.organization_id == organization_id)
+                    .order_by(InvoiceDocument.id.desc()).limit(DOCUMENT_SAMPLE)),
+    ]
+    action = "From the backend folder, run: python scripts/check_documents.py. Then see 'Missing documents' in docs/engineering/operations.md."
+    if not settings.storage_dir.is_dir():
+        return _check("Stored documents", "problem", "The storage folder is missing, so no scan or invoice can open.",
+                      "Check STORAGE_DIR, and that its drive is connected. " + action)
+    if not references:
+        return _check("Stored documents", "ok", "No documents stored yet.")
+    store = storage.current()
+    missing = sum(1 for reference in references if not store.exists(reference))
+    if missing:
+        return _check("Stored documents", "problem", f"{missing} of the {len(references)} newest documents checked are missing.", action)
+    return _check("Stored documents", "ok", f"The {len(references)} newest documents checked are all there.")
+
+
+def _failed_jobs(db: Session, organization_id: int) -> dict:
+    """Uploads the worker gave up on, or failed unexpectedly, that nobody has retried successfully."""
+    count = db.scalar(select(func.count()).select_from(ProcessingJob).join(Batch, Batch.id == ProcessingJob.batch_id).where(
+        Batch.organization_id == organization_id, ProcessingJob.status == "failed", Batch.status == "failed")) or 0
+    if not count:
+        return _check("Failed jobs", "ok", "No uploads are waiting on a person.")
+    return _check("Failed jobs", "attention", f"{count} upload(s) couldn't be processed and were set aside.",
+                  "Open Ticket intake, retry them once, or enter those tickets by hand. The worker's log names each "
+                  "job: look for job_gave_up or job_failed.")
+
+
 def build(db: Session, organization_id: int) -> dict:
     checks = []
 
@@ -122,6 +161,8 @@ def build(db: Session, organization_id: int) -> dict:
                              "Open Ticket intake and retry them, or enter those tickets by hand."))
     else:
         checks.append(_check("Uploads", "ok", "No failed files."))
+    checks.append(_failed_jobs(db, organization_id))
+    checks.append(_stored_documents(db, organization_id))
 
     oldest = db.scalar(select(func.min(ProcessingJob.created_at)).where(
         ProcessingJob.status == "pending", ProcessingJob.batch_id.in_(company_batches)))

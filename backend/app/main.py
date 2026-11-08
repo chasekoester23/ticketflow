@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, Request
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 from sqlalchemy.orm.exc import StaleDataError
 from fastapi.responses import JSONResponse
@@ -240,7 +240,21 @@ app.include_router(invoice_documents.router, dependencies=[Depends(current_user)
 
 @app.get("/health")
 def health():
+    """Liveness: the process answers. It doesn't touch the database, so a database
+    outage doesn't make a supervisor restart a healthy API."""
     return {"ok": True}
+
+
+@app.get("/health/ready")
+def ready():
+    """Readiness, for a load balancer: the database answers. Says nothing else, to anyone."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:  # Any failure at all means not ready.
+        request_log.warning(json.dumps({"event": "not_ready", "error": type(exc).__name__}))
+        return JSONResponse({"ok": False}, status_code=503, headers={"Cache-Control": "no-store", "Retry-After": "5"})
+    return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/status", dependencies=[Depends(current_user)])
