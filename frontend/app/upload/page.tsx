@@ -22,6 +22,7 @@ import {
 import { isSigningOut, removeTicketDrafts } from "../../lib/drafts";
 import { lastPlace, rememberPlace } from "../../lib/places";
 import { useAccount } from "../account-context";
+import { Dialog } from "../Dialog";
 import { BatchQueue } from "./BatchQueue";
 import { ActionFailure, ReviewForm, STATUS_LABEL, previousValues } from "./ReviewForm";
 import { ScanCheck } from "./ScanCheck";
@@ -512,7 +513,7 @@ export default function Home() {
       {canUpload && !opening && (!batch || showUpload) && <UploadPanel projects={projects} onUploaded={onUploaded} onError={setError} />}
 
       {batch && (
-        <section className="tf-panel px-4 py-3" aria-live="polite">
+        <section className="tf-panel px-4 py-3" aria-label="Batch summary">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
               <a href="/upload" className="tf-link" onClick={(event) => { if (!mayLeaveTicket()) event.preventDefault(); }}>← All uploads</a>
@@ -622,7 +623,7 @@ export default function Home() {
               alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
               zoom={zoom} rotation={rotation} onZoom={setZoom} />
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e7eaee] px-3 py-1.5">
-              <p className="text-[11px] text-[#7a8794]">Click to zoom on a spot, drag to pan. Zoom and rotation carry to the next ticket.</p>
+              <p className="text-[11px] text-[#5f6c7b]">Click to zoom on a spot, drag to pan. Zoom and rotation carry to the next ticket.</p>
               <div className="flex items-center gap-1.5">
                 <button type="button" disabled={selected === 0} onClick={() => selectTicket(selected - 1)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40">Previous</button>
                 <button type="button" disabled={selected >= tickets.length - 1} onClick={() => selectTicket(selected + 1)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40">Next</button>
@@ -649,17 +650,16 @@ export default function Home() {
         </section>
       )}
 
-      {help && <div className="tf-dialog-scrim" onClick={() => setHelp(false)}>
-        <div role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" className="tf-dialog" onClick={(e) => e.stopPropagation()}>
-          <div className="tf-panel-heading">
-            <h2 className="tf-panel-title">Keyboard shortcuts</h2>
-            <button type="button" className="tf-link" onClick={() => setHelp(false)} autoFocus>Close</button>
-          </div>
-          <table className="tf-table"><tbody>
-            {SHORTCUTS.map(([keys, what]) => <tr key={keys}><td className="whitespace-nowrap"><kbd className="tf-kbd">{keys}</kbd></td><td>{what}</td></tr>)}
-          </tbody></table>
+      {help && <Dialog label="Keyboard shortcuts" onClose={() => setHelp(false)}>
+        <div className="tf-panel-heading">
+          <h2 className="tf-panel-title">Keyboard shortcuts</h2>
+          <button type="button" className="tf-link" onClick={() => setHelp(false)}>Close</button>
         </div>
-      </div>}
+        <table className="tf-table"><tbody>
+          {SHORTCUTS.map(([keys, what]) => <tr key={keys}><td className="whitespace-nowrap"><kbd className="tf-kbd">{keys}</kbd></td><td>{what}</td></tr>)}
+        </tbody></table>
+        <p className="border-t border-[#e9edf0] px-4 py-2.5 text-[11px] text-[#5f6c7b]">Single keys work when the cursor isn&apos;t in a field. No key approves more than the ticket in front of you.</p>
+      </Dialog>}
     </div>
   );
 }

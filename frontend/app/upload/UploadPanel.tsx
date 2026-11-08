@@ -98,11 +98,11 @@ export function UploadPanel({ projects, onUploaded, onError }: {
             <div className="mt-1 grid gap-2">
               <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
                 <input type="radio" name="intake-mode" value="manual" checked={intakeMode === "manual"} onChange={() => setIntakeMode("manual")} />
-                <span><strong>Manual entry</strong><span className="mt-0.5 block text-[#718090]">Create blank fields beside each scan. No AI calls.</span></span>
+                <span><strong>Manual entry</strong><span className="mt-0.5 block text-[#5f6c7b]">Create blank fields beside each scan. No AI calls.</span></span>
               </label>
               <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
                 <input type="radio" name="intake-mode" value="extract" checked={intakeMode === "extract"} onChange={() => setIntakeMode("extract")} />
-                <span><strong>AI extraction</strong><span className="mt-0.5 block text-[#718090]">Requires a configured provider key. Always review before approval.</span></span>
+                <span><strong>AI extraction</strong><span className="mt-0.5 block text-[#5f6c7b]">Requires a configured provider key. Always review before approval.</span></span>
               </label>
             </div>
           </fieldset>

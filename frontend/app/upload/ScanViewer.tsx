@@ -83,7 +83,8 @@ export function ScanViewer({ src, alt, zoom, rotation, onZoom }: {
     });
   }
 
-  return <div ref={box} data-testid="scan-box"
+  // A tab stop, so arrow keys can scroll a zoomed scan without a mouse.
+  return <div ref={box} data-testid="scan-box" tabIndex={0} role="region" aria-label="Scanned ticket. When zoomed, arrow keys scroll it."
     onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
     className={`min-h-[320px] flex-1 touch-none select-none overflow-auto bg-[#e6e9eb] p-3 ${zoom > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"}`}>
     {failed

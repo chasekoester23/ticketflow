@@ -2,8 +2,10 @@
 
 :root {
   color-scheme: light;
+  /* The brand orange marks things. Text and buttons use the deeper orange, which white text reads on. */
   --tf-orange: #e66b2d;
-  --tf-orange-hover: #c95922;
+  --tf-orange-action: #c2541c;
+  --tf-orange-hover: #a64716;
   --tf-ink: #19232e;
   --tf-muted: #657182;
   --tf-border: #dce1e6;
@@ -57,13 +59,13 @@ a { text-underline-offset: 3px; }
 
 .tf-shell-content { min-width: 0; flex: 1; }
 .tf-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 65px; padding: 0 34px; background: white; border-bottom: 1px solid var(--tf-border); }
-.tf-topbar-context { display: flex; align-items: center; gap: 10px; white-space: nowrap; color: #8792a0; font-size: 12px; }
+.tf-topbar-context { display: flex; align-items: center; gap: 10px; white-space: nowrap; color: #5f6c7b; font-size: 12px; }
 .tf-topbar-context strong { font-size: 13px; color: #344252; font-weight: 680; }
 .tf-topbar-right { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .tf-organization-name { max-width: 225px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; padding-right: 19px; margin-right: 8px; border-right: 1px solid var(--tf-border); color: #4d5968; font-size: 12px; font-weight: 650; }
 .tf-account-avatar { flex-shrink: 0; display: grid; place-items: center; width: 29px; height: 29px; border-radius: 50%; background: #e9edf0; color: #334251; font-size: 12px; font-weight: 750; }
 .tf-account-name { color: #344252; font-size: 12px; font-weight: 650; }
-.tf-account-name small { display: block; margin-top: 1px; color: #7a8796; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
+.tf-account-name small { display: block; margin-top: 1px; color: #5f6c7b; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .tf-account-link { display: flex; align-items: center; gap: 9px; padding: 3px 6px; border-radius: 4px; text-decoration: none; line-height: 1.2; }
 .tf-account-link:hover { background: #f3f5f7; }
 .tf-account-link:focus-visible { outline: 2px solid #e6a97b; outline-offset: 2px; }
@@ -73,6 +75,8 @@ a { text-underline-offset: 3px; }
 .tf-sign-out { display: flex; align-items: center; gap: 7px; padding: 7px 10px; margin-left: 5px; border: 1px solid var(--tf-border); border-radius: 4px; background: #fff; color: #536274; font-size: 12px; font-weight: 600; }
 .tf-sign-out:hover { background: #f4f5f6; color: #202a34; }
 .tf-main { max-width: 1530px; margin: 0 auto; padding: 20px 28px 48px; }
+.tf-skip-link { position: absolute; left: 8px; top: -60px; z-index: 60; padding: 9px 14px; border-radius: 4px; background: #1d2b38; color: white; font-size: 13px; font-weight: 700; text-decoration: none; }
+.tf-skip-link:focus { top: 8px; }
 .tf-menu-toggle { display: none; padding: 8px; border: 1px solid var(--tf-border); background: white; border-radius: 4px; color: #344252; }
 .tf-mobile-scrim { display: none; }
 
@@ -85,7 +89,7 @@ a { text-underline-offset: 3px; }
 .tf-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--tf-border); }
 .tf-panel-title { font-size: 14px; font-weight: 750; letter-spacing: -.012em; }
 .tf-panel-description { color: var(--tf-muted); font-size: 12px; margin-top: 4px; }
-.tf-primary-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 38px; padding: 9px 14px; border: 1px solid #cd6229; border-radius: 4px; color: white; background: var(--tf-orange); font-size: 12px; font-weight: 750; line-height: 1.25; text-decoration: none; white-space: nowrap; }
+.tf-primary-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 38px; padding: 9px 14px; border: 1px solid #a94815; border-radius: 4px; color: white; background: var(--tf-orange-action); font-size: 12px; font-weight: 750; line-height: 1.25; text-decoration: none; white-space: nowrap; }
 .tf-primary-button:hover { background: var(--tf-orange-hover); }
 .tf-primary-button:disabled { opacity: .5; }
 .tf-secondary-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 38px; padding: 9px 14px; border: 1px solid #cfd6de; border-radius: 4px; background: white; color: #334253; font-weight: 650; font-size: 12px; text-decoration: none; white-space: nowrap; }
@@ -100,14 +104,14 @@ a { text-underline-offset: 3px; }
 .tf-table td { padding: 8px 12px; border-bottom: 1px solid #e9edf0; color: #354454; vertical-align: middle; }
 .tf-table tbody tr:last-child td { border-bottom: 0; }
 .tf-table tbody tr:hover { background: #fbfcfc; }
-.tf-table td a { color: #c65a23; font-weight: 700; text-decoration: none; }
+.tf-table td a { color: #a9501d; font-weight: 700; text-decoration: none; }
 .tf-table td a:hover { text-decoration: underline; }
 .tf-status { display: inline-flex; gap: 5px; align-items: center; border: 1px solid #cdd4db; background: #f3f5f7; color: #455467; border-radius: 3px; padding: 4px 7px; font-size: 10px; font-weight: 750; white-space: nowrap; }
 .tf-status-open { background: #edf5ef; border-color: #cce4d2; color: #216c43; }
 .tf-status-attention { background: #fff5e7; border-color: #f2d6aa; color: #995a18; }
 .tf-status-error { background: #fff1f1; border-color: #f4c3c2; color: #a73631; }
 .tf-empty { text-align: center; color: #6b7787; font-size: 13px; padding: 40px 22px; line-height: 1.6; }
-.tf-link { color: #bf5927; font-size: 12px; font-weight: 750; text-decoration: none; }
+.tf-link { color: #a9501d; font-size: 12px; font-weight: 750; text-decoration: none; }
 .tf-link:hover { text-decoration: underline; }
 
 /* Review workspace: everything for one ticket fits on one screen. */

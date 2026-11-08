@@ -99,7 +99,7 @@ export const ScanCheck = memo(function ScanCheck({ manifest, onChanged, onOpenTi
         <figure>
           <img src={pageImageUrl(file.id, page.page)} alt={"Original page " + page.page + " of " + file.original_name}
             loading="lazy" className="w-full rounded border border-[#dce1e6] bg-white"/>
-          <figcaption className="mt-1 break-words text-[11px] text-[#718091]">{file.original_name} · page {page.page}</figcaption>
+          <figcaption className="mt-1 break-words text-[11px] text-[#5f6c7b]">{file.original_name} · page {page.page}</figcaption>
         </figure>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {page.slots.map((slot) => <article key={slot.id} aria-label={"Page " + page.page + " slot " + (slot.position + 1)}
@@ -120,7 +120,7 @@ export const ScanCheck = memo(function ScanCheck({ manifest, onChanged, onOpenTi
           </article>)}
         </div>
       </div>))}
-      {open && counts.slots === 0 && <p className="px-4 pb-3 text-[12px] text-[#718091]">No slots on record for this batch yet.</p>}
+      {open && counts.slots === 0 && <p className="px-4 pb-3 text-[12px] text-[#5f6c7b]">No slots on record for this batch yet.</p>}
     </details>
   </section>;
 });

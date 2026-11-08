@@ -7,6 +7,7 @@ import {
   searchRecords,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
+import { Dialog } from "../Dialog";
 
 const STATUS_LABEL: Record<string, string> = {
   needs_review: "Needs review", verified: "Verified", flagged: "Flagged",
@@ -341,10 +342,9 @@ export default function RecordsPage() {
         </div>
       </nav>}
     </section>
-    <p className="text-[11px] text-[#768391]">Verified tonnage and costs include approved tickets only. Unverified values may be visible in the register but are not included in financial totals.</p>
+    <p className="text-[11px] text-[#5f6c7b]">Verified tonnage and costs include approved tickets only. Unverified values may be visible in the register but are not included in financial totals.</p>
 
-    {dialog === "export" && <div className="tf-dialog-scrim" onClick={() => setDialog(null)}>
-      <div role="dialog" aria-modal="true" aria-label="Export columns" className="tf-dialog" onClick={(e) => e.stopPropagation()}>
+    {dialog === "export" && <Dialog label="Export columns" onClose={() => setDialog(null)}>
         <div className="tf-panel-heading"><h2 className="tf-panel-title">Export columns</h2>
           <button type="button" className="tf-link" onClick={() => setColumns(DEFAULT_EXPORT)}>Reset</button></div>
         <div className="grid grid-cols-2 gap-2 p-5 text-xs text-[#354454]">
@@ -360,10 +360,8 @@ export default function RecordsPage() {
           <p className="text-[11px] text-[#657182]">Save this view to keep these columns with your filters.</p>
           <button type="button" className="tf-primary-button" disabled={!columns.length} onClick={() => setDialog(null)} autoFocus>Done</button>
         </div>
-      </div>
-    </div>}
-    {dialog === "save" && <div className="tf-dialog-scrim" onClick={() => setDialog(null)}>
-      <form role="dialog" aria-modal="true" aria-label="Save this view" className="tf-dialog" onClick={(e) => e.stopPropagation()}
+    </Dialog>}
+    {dialog === "save" && <Dialog label="Save this view" onClose={() => setDialog(null)}
         onSubmit={(e) => { e.preventDefault(); void saveView(); }}>
         <div className="tf-panel-heading"><h2 className="tf-panel-title">Save this view</h2></div>
         <div className="p-5">
@@ -376,7 +374,6 @@ export default function RecordsPage() {
           <button type="button" className="tf-secondary-button" onClick={() => setDialog(null)}>Cancel</button>
           <button type="submit" className="tf-primary-button" disabled={!viewName.trim()}>Save view</button>
         </div>
-      </form>
-    </div>}
+    </Dialog>}
   </div>;
 }

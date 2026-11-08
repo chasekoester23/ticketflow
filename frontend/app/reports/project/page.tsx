@@ -17,8 +17,8 @@ function GroupCells({ row }: { row: ReportGroup }) {
     <td className="text-right tabular-nums">{row.verified_tickets}</td>
     <td className="text-right tabular-nums">{tons(row.verified_tons)}</td>
     <td className="text-right tabular-nums">{money(row.cost)}{row.unpriced > 0 && <span className="block text-[10px] font-bold text-[#a14c1c]">{row.unpriced} with no locked price</span>}</td>
-    <td className="text-right tabular-nums text-[#7a8796]">{row.pending_tickets}</td>
-    <td className="text-right tabular-nums text-[#7a8796]">{tons(row.pending_tons)}</td>
+    <td className="text-right tabular-nums text-[#5f6c7b]">{row.pending_tickets}</td>
+    <td className="text-right tabular-nums text-[#5f6c7b]">{tons(row.pending_tons)}</td>
   </>;
 }
 const GROUP_HEADERS = <>
@@ -29,8 +29,8 @@ const GROUP_HEADERS = <>
 function Tile({ label, value, note, attention }: { label: string; value: string; note: string; attention?: boolean }) {
   return <div className="min-w-0 px-5 py-4">
     <p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">{label}</p>
-    <p className={`mt-1.5 text-[22px] font-bold tabular-nums ${attention ? "text-[#b85c2b]" : "text-[#192632]"}`}>{value}</p>
-    <p className="mt-1 text-[11px] text-[#7b8794]">{note}</p>
+    <p className={`mt-1.5 text-[22px] font-bold tabular-nums ${attention ? "text-[#a3511d]" : "text-[#192632]"}`}>{value}</p>
+    <p className="mt-1 text-[11px] text-[#5f6c7b]">{note}</p>
   </div>;
 }
 

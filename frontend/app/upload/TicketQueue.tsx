@@ -20,7 +20,7 @@ const QueueRow = memo(function QueueRow({ ticket, index, isCurrent, onSelect }: 
       <span className="min-w-0 truncate text-xs font-bold tabular-nums text-[#1d2b38]">#{index + 1} · {ticket.ticket_number || "No number yet"}</span>
       <span className={`tf-status shrink-0 !px-1 !py-0.5 !text-[9px] ${STATUS_STYLE[ticket.status] ?? ""}`}>{STATUS_LABEL[ticket.status] ?? ticket.status}</span>
     </span>
-    <span className="mt-0.5 block truncate text-[11px] text-[#7a8794]">{ticket.flag_note || `${ticket.material_type || "Material not entered"} · ${ticket.tonnage ?? "—"} t`}</span>
+    <span className="mt-0.5 block truncate text-[11px] text-[#5f6c7b]">{ticket.flag_note || `${ticket.material_type || "Material not entered"} · ${ticket.tonnage ?? "—"} t`}</span>
   </button>;
 });
 
@@ -78,7 +78,7 @@ export const TicketQueue = memo(function TicketQueue({ tickets, selected, filter
       <label htmlFor="queue-search" className="sr-only">Search tickets in queue</label>
       <input id="queue-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)}
         placeholder="Number, supplier, material…" className="tf-field mt-2 w-full !min-h-0 !py-1.5 !text-xs" />
-      <p className="mt-1.5 text-[11px] text-[#7a8794]">{rows.length} matching ticket(s) · {tickets.length} total</p>
+      <p className="mt-1.5 text-[11px] text-[#5f6c7b]">{rows.length} matching ticket(s) · {tickets.length} total</p>
     </div>
     {rows.length === 0 ? (
       <div className="p-3 text-xs text-[#526273]">

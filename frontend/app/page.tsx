@@ -11,8 +11,8 @@ const date = (v: string) => new Date(v).toLocaleDateString(undefined, { month: "
 function Metric({ label, value, note, attention = false }: { label: string; value: string | number; note: string; attention?: boolean }) {
   return <div className={`min-w-0 border-r border-[#e1e5e9] px-5 py-5 last:border-r-0 ${attention ? "bg-[#fffaf5]" : "bg-white"}`}>
     <p className="text-[11px] font-bold tracking-[0.055em] text-[#637181] uppercase">{label}</p>
-    <p className={`mt-2 text-[27px] font-bold leading-none tracking-[-0.045em] tabular-nums ${attention ? "text-[#b85c2b]" : "text-[#192632]"}`}>{value}</p>
-    <p className="mt-3 text-[11px] leading-5 text-[#7b8794]">{note}</p>
+    <p className={`mt-2 text-[27px] font-bold leading-none tracking-[-0.045em] tabular-nums ${attention ? "text-[#a3511d]" : "text-[#192632]"}`}>{value}</p>
+    <p className="mt-3 text-[11px] leading-5 text-[#5f6c7b]">{note}</p>
   </div>;
 }
 
@@ -45,11 +45,11 @@ function GettingStarted() {
     </div>
     <ol className="grid divide-y divide-[#e8ebee] md:grid-cols-2 md:divide-y-0 xl:grid-cols-3">
       {state.steps.map((step) => <li key={step.key} className="flex items-start gap-3 px-5 py-3.5">
-        <span aria-hidden="true" className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[11px] font-bold ${step.done ? "border-[#2f855a] bg-[#2f855a] text-white" : "border-[#cfd6de] text-[#7a8796]"}`}>{step.done ? "✓" : ""}</span>
+        <span aria-hidden="true" className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[11px] font-bold ${step.done ? "border-[#2f855a] bg-[#2f855a] text-white" : "border-[#cfd6de] text-[#5f6c7b]"}`}>{step.done ? "✓" : ""}</span>
         <span className="min-w-0">
           {step.done ? <span className="text-[13px] font-semibold text-[#657182]">{step.title}<span className="sr-only"> (done)</span></span>
-            : <a href={step.href} className={`text-[13px] font-bold ${step.key === next?.key ? "text-[#bf5927]" : "text-[#253342]"}`}>{step.title}</a>}
-          <span className="mt-0.5 block text-[11px] leading-5 text-[#7a8796]">{step.detail}</span>
+            : <a href={step.href} className={`text-[13px] font-bold ${step.key === next?.key ? "text-[#a9501d]" : "text-[#253342]"}`}>{step.title}</a>}
+          <span className="mt-0.5 block text-[11px] leading-5 text-[#5f6c7b]">{step.detail}</span>
         </span>
       </li>)}
     </ol>
@@ -97,7 +97,7 @@ export default function DashboardPage() {
       <section className="tf-panel">
         <div className="border-b border-[#dce1e6] px-5 py-3.5 flex items-center justify-between gap-3">
           <h2 className="text-[12px] font-bold text-[#344352]">Portfolio snapshot</h2>
-          <span className="text-[11px] text-[#788493]">Confirmed figures only where indicated</span>
+          <span className="text-[11px] text-[#5f6c7b]">Confirmed figures only where indicated</span>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-5">
           <Metric label="Tickets received" value={data.tickets.toLocaleString()} note="All uploaded ticket records" />
@@ -137,11 +137,11 @@ export default function DashboardPage() {
           </div>
           <div className="divide-y divide-[#e8ebee]">
             <a href="/records?status=needs_review" className="flex items-center justify-between gap-4 px-5 py-5 hover:bg-[#fafbfc]">
-              <div><p className="text-[13px] font-bold text-[#253342]">Awaiting verification</p><p className="mt-1 text-[11px] text-[#7c8996]">Confirm each extracted delivery</p></div>
-              <span className={`rounded border px-2.5 py-1 text-[15px] font-bold tabular-nums ${data.needs_review ? "border-[#efcb9b] bg-[#fff5e6] text-[#b26828]" : "border-[#dce1e6] bg-[#f5f6f7] text-[#657182]"}`}>{data.needs_review.toLocaleString()}</span>
+              <div><p className="text-[13px] font-bold text-[#253342]">Awaiting verification</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Confirm each extracted delivery</p></div>
+              <span className={`rounded border px-2.5 py-1 text-[15px] font-bold tabular-nums ${data.needs_review ? "border-[#efcb9b] bg-[#fff5e6] text-[#a9501d]" : "border-[#dce1e6] bg-[#f5f6f7] text-[#657182]"}`}>{data.needs_review.toLocaleString()}</span>
             </a>
             <a href="/records?status=flagged" className="flex items-center justify-between gap-4 px-5 py-5 hover:bg-[#fafbfc]">
-              <div><p className="text-[13px] font-bold text-[#253342]">Flagged for follow-up</p><p className="mt-1 text-[11px] text-[#7c8996]">Questions or missing information</p></div>
+              <div><p className="text-[13px] font-bold text-[#253342]">Flagged for follow-up</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Questions or missing information</p></div>
               <span className="rounded border border-[#dce1e6] bg-[#f5f6f7] px-2.5 py-1 text-[15px] font-bold tabular-nums text-[#455263]">{data.flagged.toLocaleString()}</span>
             </a>
           </div>
@@ -155,10 +155,10 @@ export default function DashboardPage() {
         <Breakdown title="Deliveries by supplier" description="Tickets received, with verified quantities and costs" rows={data.by_supplier} />
         <Breakdown title="Deliveries by material" description="Approved tonnage and material cost by type" rows={data.by_material} />
       </div>
-      <p className="text-[11px] leading-5 text-[#718091]">
+      <p className="text-[11px] leading-5 text-[#5f6c7b]">
         Quantity and cost summaries exclude unverified deliveries. Material cost excludes taxes and delivery charges.
         {data.pending_cost_tickets > 0 ? ` ${data.pending_cost_tickets} tickets are not yet eligible for cost reporting.` : ""}
       </p>
-    </> : !error && <div role="status" className="tf-panel p-8 text-sm text-[#718091]">Loading operations overview…</div>}
+    </> : !error && <div role="status" className="tf-panel p-8 text-sm text-[#5f6c7b]">Loading operations overview…</div>}
   </div>;
 }

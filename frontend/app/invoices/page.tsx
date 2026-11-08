@@ -82,7 +82,7 @@ function RecordLinks({ ticket }: { ticket: Pick<CheckedTicket, "ticket_id" | "ba
 function RecordSummary({ ticket }: { ticket: CheckedTicket }) {
   return <span>
     <span className="font-semibold">{ticket.ticket_number ?? "Unnumbered"}</span>
-    <span className="block text-[11px] text-[#778493]">
+    <span className="block text-[11px] text-[#5f6c7b]">
       {[ticket.delivery_date ?? "no date", ticket.material ?? "no material",
         ticket.project ? "project " + ticket.project : "no project",
         ticket.review_status === "verified" ? "verified" : ticket.review_status.replaceAll("_", " ")].join(" · ")}
@@ -103,7 +103,7 @@ function WhyThisResult({ diagnosis, status }: { diagnosis: InvoiceDiagnosis; sta
         <table className="tf-table" aria-label="From approved tons to billed tons"><tbody>
           <tr><td>Approved tons in this line&apos;s scope</td><td className="text-right font-semibold tabular-nums">{tons(bridge.start)}</td></tr>
           {bridge.items.map((item) => <tr key={item.kind}>
-            <td>{item.label} <span className="text-[#7a8796]">({item.count})</span>
+            <td>{item.label} <span className="text-[#5f6c7b]">({item.count})</span>
               {item.tickets.length > 0 && <span className="block font-mono text-[11px] text-[#657182]">{item.tickets.join(", ")}{item.count > item.tickets.length && " …"}</span>}
             </td>
             <td className="whitespace-nowrap text-right font-semibold tabular-nums text-[#a14c1c]">{signed(item.tons)}</td>
@@ -334,14 +334,14 @@ export default function InvoiceComparisonPage() {
     {overview && overview.lines > 0 && <section className="tf-panel" aria-label="Invoice overview">
       <div className="grid divide-y divide-[#e7eaee] sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
         <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Billed material</p>
-          <p className="mt-1.5 text-[22px] font-bold tabular-nums text-[#192632]">{money(overview.billed)}</p><p className="mt-1 text-[11px] text-[#7b8794]">{overview.lines} lines</p></div>
+          <p className="mt-1.5 text-[22px] font-bold tabular-nums text-[#192632]">{money(overview.billed)}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">{overview.lines} lines</p></div>
         <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Approved cost</p>
           <p className="mt-1.5 text-[22px] font-bold tabular-nums text-[#192632]">{money(overview.verified)}</p>
-          <p className="mt-1 text-[11px] text-[#7b8794]">{overview.lines_unresolved ? overview.lines_unresolved + " line(s) unresolved and left out" : "At locked rates"}</p></div>
+          <p className="mt-1 text-[11px] text-[#5f6c7b]">{overview.lines_unresolved ? overview.lines_unresolved + " line(s) unresolved and left out" : "At locked rates"}</p></div>
         <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Differences found</p>
-          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + (overview.by_status.discrepancy ? "text-[#a73631]" : "text-[#192632]")}>{overview.by_status.discrepancy ?? 0}</p><p className="mt-1 text-[11px] text-[#7b8794]">Lines to take up with a supplier</p></div>
+          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + (overview.by_status.discrepancy ? "text-[#a73631]" : "text-[#192632]")}>{overview.by_status.discrepancy ?? 0}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Lines to take up with a supplier</p></div>
         <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Can&apos;t settle yet</p>
-          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + ((overview.by_status.incomplete || overview.by_status.no_verified_tickets) ? "text-[#b85c2b]" : "text-[#192632]")}>{(overview.by_status.incomplete ?? 0) + (overview.by_status.no_verified_tickets ?? 0)}</p><p className="mt-1 text-[11px] text-[#7b8794]">Waiting on deliveries or review</p></div>
+          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + ((overview.by_status.incomplete || overview.by_status.no_verified_tickets) ? "text-[#a3511d]" : "text-[#192632]")}>{(overview.by_status.incomplete ?? 0) + (overview.by_status.no_verified_tickets ?? 0)}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Waiting on deliveries or review</p></div>
       </div>
       {overview.by_supplier.length > 1 && <details className="border-t border-[#e7eaee]">
         <summary className="cursor-pointer select-none px-5 py-2 text-[12px] font-semibold text-[#46566a]">By supplier</summary>
@@ -436,7 +436,7 @@ export default function InvoiceComparisonPage() {
             aria-describedby="invoice-ticket-list-help" spellCheck={false} maxLength={200000}
             value={form.ticket_list} placeholder={"10482\t24.50\n10483\t22.10"}
             onChange={(e) => field("ticket_list", e.target.value)}/>
-          <p id="invoice-ticket-list-help" className="mt-1 text-[11px] text-[#718091]">
+          <p id="invoice-ticket-list-help" className="mt-1 text-[11px] text-[#5f6c7b]">
             Paste two columns from Excel: ticket number, then billed tons (tons optional). One ticket per row;
             a header row is fine. Leading zeros count. Leave blank if the invoice shows totals only.
             {pastedRows > 0 && <strong> {pastedRows} row{pastedRows === 1 ? "" : "s"} entered.</strong>}
@@ -446,7 +446,7 @@ export default function InvoiceComparisonPage() {
           <button type="submit" className="tf-primary-button" disabled={!required || saving}>
             {saving ? "Saving…" : editing === null ? "Compare invoice line" : "Save corrected line"}
           </button>
-          <span className="text-[11px] text-[#718091]">All comparisons update if the underlying ticket verification changes.</span>
+          <span className="text-[11px] text-[#5f6c7b]">All comparisons update if the underlying ticket verification changes.</span>
         </div>
       </form>
     </section>}
@@ -473,22 +473,24 @@ export default function InvoiceComparisonPage() {
             {["Invoice", "Result", "Supplier / material", "Dates", "Billed tons", "Verified tons", "Tons diff.", "Amount diff.", ""].map((h, i) => <th key={h} className={i >= 4 && i <= 7 ? "text-right" : ""}>{h}</th>)}
           </tr></thead>
           <tbody>{shownLines.map((row) => <tr key={row.id} aria-selected={selected === row.id} className={selected === row.id ? "bg-[#fff8f2]" : ""}>
-            <td className="max-w-[150px] [overflow-wrap:anywhere]"><span className="font-semibold">{row.invoice_number}</span><span className="block text-[11px] text-[#778493]">{projects.find((p) => p.id === row.project_id)?.code ?? row.project_id}</span></td>
+            <td className="max-w-[150px] [overflow-wrap:anywhere]"><span className="font-semibold">{row.invoice_number}</span><span className="block text-[11px] text-[#5f6c7b]">{projects.find((p) => p.id === row.project_id)?.code ?? row.project_id}</span></td>
             <td>
               <span className={"tf-status " + statusStyle(row.status)}>{statusLabel(row)}</span>
-              <span className="mt-0.5 block max-w-[150px] text-[11px] leading-4 text-[#778493]">
+              <span className="mt-0.5 block max-w-[150px] text-[11px] leading-4 text-[#5f6c7b]">
                 {row.comparison_mode === "itemized" ? "Tickets checked" : "Totals only — tickets not checked"}
               </span>
             </td>
-            <td><span className="font-semibold">{row.supplier_name}</span><span className="block text-[11px] text-[#778493]">{row.material_name}</span></td>
+            <td><span className="font-semibold">{row.supplier_name}</span><span className="block text-[11px] text-[#5f6c7b]">{row.material_name}</span></td>
             <td className="whitespace-nowrap text-[11px]">{row.date_from}<span className="block">{row.date_to}</span></td>
             <td className="text-right tabular-nums">{tons(row.billed_tons)}</td>
             <td className="text-right tabular-nums">{tons(row.verified_tons)}</td>
             <td className="text-right tabular-nums">{signed(row.quantity_difference)}</td>
             <td className="text-right tabular-nums">{row.subtotal_difference === null ? "Unresolved" : money(row.subtotal_difference)}</td>
             <td className="whitespace-nowrap text-right">
-              <button type="button" onClick={() => { setSelected(row.id); setHistory(null); }} className="tf-link block w-full text-right">Details</button>
-              {canManage && <button type="button" onClick={() => void edit(row)} className="tf-link mt-1 block w-full text-right">Correct</button>}
+              <div className="flex flex-col items-end gap-1">
+                <button type="button" onClick={() => { setSelected(row.id); setHistory(null); }} className="tf-link min-h-6 px-1">Details<span className="sr-only"> of {row.invoice_number}</span></button>
+                {canManage && <button type="button" onClick={() => void edit(row)} className="tf-link min-h-6 px-1">Correct<span className="sr-only"> {row.invoice_number}</span></button>}
+              </div>
             </td>
           </tr>)}</tbody>
         </table>
@@ -577,7 +579,7 @@ export default function InvoiceComparisonPage() {
           <thead><tr><th>Line</th><th>Invoice ticket</th><th className="text-right">Billed tons</th><th>Result</th><th>TicketFlow record</th><th className="text-right">Verified tons</th><th className="text-right">Difference</th><th>Evidence</th></tr></thead>
           <tbody>{chosen.ticket_check.map((row, index) => <tr key={index}>
             <td className="tabular-nums">{row.line ?? "—"}</td>
-            <td className="font-mono">{row.invoice_ticket_number ?? <span className="font-sans text-[#778493]">Not listed</span>}</td>
+            <td className="font-mono">{row.invoice_ticket_number ?? <span className="font-sans text-[#5f6c7b]">Not listed</span>}</td>
             <td className="text-right tabular-nums">{row.billed_tons ? tons(row.billed_tons) : "—"}</td>
             <td>
               <span className={"tf-status " + resultStyle(row)}>{RESULT_LABELS[row.result]}</span>
@@ -619,7 +621,7 @@ export default function InvoiceComparisonPage() {
             <td>{money(ticket.confirmed_price)}</td>
             <td><RecordLinks ticket={ticket}/></td>
           </tr>)}</tbody>
-        </table></div> : <p className="text-[12px] text-[#718091]">No matching tickets in this scope. Verify supplier spelling and delivery dates.</p>}
+        </table></div> : <p className="text-[12px] text-[#5f6c7b]">No matching tickets in this scope. Verify supplier spelling and delivery dates.</p>}
           </>;
         })()}
         {history && <div className="mt-4 border-t border-[#e2e7ec] pt-4">

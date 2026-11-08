@@ -422,7 +422,7 @@ export const ReviewForm = memo(function ReviewForm({
           const describedBy = [said && "message-" + f.key, showsAsRead && "as-read-" + f.key].filter(Boolean).join(" ") || undefined;
           return <div key={f.key}>
           <label htmlFor={"review-" + f.key} className={"mb-0.5 block text-[11px] text-[#526273] " + (f.critical ? "font-bold" : "font-medium")}>
-            {f.label}{f.critical && <span className="ml-1 font-normal text-[#7a8796]">· check against the scan</span>}
+            {f.label}{f.critical && <span className="ml-1 font-normal text-[#5f6c7b]">· check against the scan</span>}
           </label>
           <input
             id={"review-" + f.key}
@@ -534,7 +534,7 @@ export const ReviewForm = memo(function ReviewForm({
           title="Review and accept ticket (Cmd/Ctrl + Enter)"
           aria-describedby={needed.length > 0 ? "accept-needs" : undefined}
           onClick={accept}
-          className="w-full rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
+          className="w-full rounded bg-[#c2541c] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#a64716] disabled:opacity-40"
           disabled={saving || cannotSave || (ticket.status === "verified" && !dirty)}
         >
           {ticket.status === "verified" && !dirty ? "Accepted" : "Accept & next"}
@@ -542,7 +542,7 @@ export const ReviewForm = memo(function ReviewForm({
           ref={acceptButton}
           title="Save and go to the next ticket (Cmd/Ctrl + Enter)"
           onClick={() => void attempt("save", undefined, true)}
-          className="w-full rounded bg-[#dc6c30] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#c45922] disabled:opacity-40"
+          className="w-full rounded bg-[#c2541c] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#a64716] disabled:opacity-40"
           disabled={saving || cannotSave}
         >
           Save &amp; next
@@ -599,7 +599,7 @@ function TicketHistory({ ticketId, version }: { ticketId: number; version: strin
           : <ol className="space-y-1.5">
             {[...entries].reverse().map((e, i) => <li key={i} className="leading-5 text-[#3d4c5d]">
               <span className="font-semibold">{HISTORY_FIELD[e.field] ?? e.field}</span>: {show(e.old)} → {show(e.new)}
-              <span className="block text-[11px] text-[#7a8796]">
+              <span className="block text-[11px] text-[#5f6c7b]">
                 {e.actor ?? "Before individual accounts"} · {new Date(e.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
               </span>
             </li>)}

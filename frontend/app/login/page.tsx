@@ -65,7 +65,7 @@ export default function LoginPage() {
           {pending ? "Signing in…" : "Sign in"}
         </button>
       </form>
-      <p className="mt-8 border-t border-[#e4e8ed] pt-5 text-[11px] leading-5 text-[#7c8996]">
+      <p className="mt-8 border-t border-[#e4e8ed] pt-5 text-[11px] leading-5 text-[#5f6c7b]">
         Accounts are created by your company’s TicketFlow owner. Each person signs in with their own account so every approval is attributed correctly. Forgot your password? Ask an owner to reset it.
       </p>
     </section>

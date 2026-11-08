@@ -95,6 +95,43 @@ export default function AuthShell({ children }: { children: ReactNode }) {
 
   useEffect(() => { setMenuOpen(false); }, [pathname]);
 
+  // A table wider than a phone scrolls sideways inside its box. A keyboard can
+  // only scroll what it can reach, so a box that scrolls becomes a tab stop.
+  useEffect(() => {
+    if (checking) return;
+    let frame = 0;
+    const mark = () => {
+      frame = 0;
+      document.querySelectorAll<HTMLElement>(".tf-table-wrap").forEach((wrap) => {
+        const scrolls = wrap.scrollWidth > wrap.clientWidth + 1;
+        if (scrolls && !wrap.hasAttribute("tabindex")) {
+          const name = wrap.querySelector("table")?.getAttribute("aria-label")
+            ?? wrap.closest("section")?.querySelector("h2, h3")?.textContent ?? "Table";
+          wrap.tabIndex = 0;
+          wrap.setAttribute("role", "region");
+          wrap.setAttribute("aria-label", `${name}, scrolls sideways`);
+          wrap.dataset.tfScrolls = "1";
+        } else if (!scrolls && wrap.dataset.tfScrolls) {
+          wrap.removeAttribute("tabindex");
+          wrap.removeAttribute("role");
+          wrap.removeAttribute("aria-label");
+          delete wrap.dataset.tfScrolls;
+        }
+      });
+    };
+    const soon = () => { if (!frame) frame = requestAnimationFrame(mark); };
+    const main = document.getElementById("main-content");
+    const observer = new MutationObserver(soon);
+    if (main) observer.observe(main, { childList: true, subtree: true });
+    window.addEventListener("resize", soon);
+    soon();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", soon);
+      cancelAnimationFrame(frame);
+    };
+  }, [checking, pathname]);
+
   if (isLogin) return <main className="tf-login-layout">{children}</main>;
   if (checking || !account) {
     return <main className="flex min-h-screen items-center justify-center bg-[#f4f5f6] text-sm text-slate-600" role="status">
@@ -103,6 +140,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   }
 
   return <div className="tf-app-shell">
+    <a href="#main-content" className="tf-skip-link">Skip to main content</a>
     {menuOpen && <button aria-label="Close navigation" className="tf-mobile-scrim" onClick={() => setMenuOpen(false)} />}
     <aside className={`tf-sidebar ${menuOpen ? "tf-sidebar-open" : ""}`}>
       <a href="/" className="tf-sidebar-brand" aria-label="TicketFlow home">
@@ -149,7 +187,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <AccountContext.Provider value={account}>
-        <main id="main-content" className="tf-main">{children}</main>
+        <main id="main-content" tabIndex={-1} className="tf-main focus:outline-none">{children}</main>
       </AccountContext.Provider>
     </div>
   </div>;

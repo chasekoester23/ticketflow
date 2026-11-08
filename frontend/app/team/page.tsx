@@ -112,7 +112,7 @@ export default function TeamPage() {
           <input className="tf-field w-full" placeholder="Maria Lopez" maxLength={100} value={form.display_name}
             onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
         </label>
-        <label className="tf-field-label">Username <span className="text-[10px] font-normal text-[#8793a0]">Used to sign in</span>
+        <label className="tf-field-label">Username <span className="text-[10px] font-normal text-[#5f6c7b]">Used to sign in</span>
           <input className="tf-field w-full" required placeholder="mlopez" maxLength={100} autoCapitalize="none" autoCorrect="off" spellCheck={false}
             value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
         </label>
@@ -139,8 +139,8 @@ export default function TeamPage() {
               const confirmingThis = confirming?.id === m.id ? confirming.action : null;
               return <tr key={m.id} className={m.active ? "" : "opacity-60"}>
                 <td>
-                  <div className="font-semibold text-[#1d2b38]">{m.display_name || m.username}{m.is_you && <span className="ml-2 text-[11px] font-normal text-[#7a8796]">(you)</span>}</div>
-                  <div className="font-mono text-[11px] text-[#7a8796]">{m.username}</div>
+                  <div className="font-semibold text-[#1d2b38]">{m.display_name || m.username}{m.is_you && <span className="ml-2 text-[11px] font-normal text-[#5f6c7b]">(you)</span>}</div>
+                  <div className="font-mono text-[11px] text-[#5f6c7b]">{m.username}</div>
                 </td>
                 <td>
                   {m.is_you
@@ -195,7 +195,7 @@ export default function TeamPage() {
               {e.action === "role_changed" && <> ({roleLabel(e.old)} → {roleLabel(e.new)})</>}
               {e.action === "member_added" && e.new && <> as {roleLabel(e.new)}</>}
             </span>
-            <span className="text-[#7a8796]">{e.actor_kind === "terminal" ? "server administrator" : e.actor ?? "—"} · {when(e.at)}</span>
+            <span className="text-[#5f6c7b]">{e.actor_kind === "terminal" ? "server administrator" : e.actor ?? "—"} · {when(e.at)}</span>
           </li>)}
         </ul>}
     </section>

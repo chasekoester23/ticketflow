@@ -112,7 +112,7 @@ export default function PricingPage() {
         </form>}
         {materials.length ? <ul className="divide-y divide-[#edf0f2]">
           {materials.map((m) => <li key={m.id} className="flex items-center justify-between gap-4 px-5 py-3">
-            <div><span className="text-[12px] font-semibold text-[#354555]">{m.name}</span><span className="ml-2 text-[11px] text-[#8994a0]">/{m.unit}</span></div>
+            <div><span className="text-[12px] font-semibold text-[#354555]">{m.name}</span><span className="ml-2 text-[11px] text-[#5f6c7b]">/{m.unit}</span></div>
             {canManage && <button disabled={saving} onClick={() => void remove("materials", m.id, m.name)}
               className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}
           </li>)}
@@ -255,6 +255,6 @@ export default function PricingPage() {
         </tr>)}</tbody>
       </table></div>}
     </section>
-    <p className="text-[11px] leading-5 text-[#768391]">Supplier/material matching ignores case and punctuation. Calculated material costs are verified tons multiplied by the rate locked at acceptance; taxes and delivery charges are excluded.</p>
+    <p className="text-[11px] leading-5 text-[#5f6c7b]">Supplier/material matching ignores case and punctuation. Calculated material costs are verified tons multiplied by the rate locked at acceptance; taxes and delivery charges are excluded.</p>
   </div>;
 }
