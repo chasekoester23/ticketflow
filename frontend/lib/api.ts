@@ -465,6 +465,58 @@ export async function getProjectReport(id: string): Promise<ProjectReport> {
 }
 export const projectReportUrl = (id: string) => `${API}/api/reports/project/${id}/report.xlsx`;
 
+/** An endpoint this server doesn't have yet answers with the framework's own 404. */
+const missingEndpoint = (error: unknown) => error instanceof ApiError && error.status === 404 && error.message === "Not Found";
+
+// Approved deliveries no invoice line lists or covers. Rows stop at 500; totals cover everything.
+export type UnbilledRow = {
+  ticket_id: number; batch_id: number; ticket_number: string | null; delivery_date: string | null;
+  supplier: string | null; material: string | null; tons: string | null; cost: string | null;
+};
+export type UnbilledGap = { supplier: string; material: string; date_from: string; date_to: string; tickets: number; tons: string };
+export type UnbilledReport = {
+  project: { id: number; code: string; name: string };
+  total_tickets: number; total_tons: string; total_cost: string | null;
+  rows: UnbilledRow[]; truncated: boolean; gaps: UnbilledGap[];
+};
+/** Null when this server doesn't offer the check yet. */
+export async function getUnbilled(projectId: string): Promise<UnbilledReport | null> {
+  try {
+    return await (await check(await apiFetch(`${API}/api/reports/project/${projectId}/unbilled`))).json();
+  } catch (error) {
+    if (missingEndpoint(error)) return null;
+    throw error;
+  }
+}
+export const unbilledCsvUrl = (projectId: string) => `${API}/api/reports/project/${projectId}/unbilled.csv`;
+export const discrepanciesCsvUrl = (filters: { project_id?: string; supplier?: string }) => {
+  const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value) as [string, string][]);
+  const query = params.toString();
+  return `${API}/api/invoice-comparisons/discrepancies.csv${query ? `?${query}` : ""}`;
+};
+
+/** Fetch a file and hand it to the browser, so a refusal shows as a message, not an error page. */
+export async function downloadFile(url: string, filename: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await check(await apiFetch(url));
+  } catch (error) {
+    if (missingEndpoint(error)) throw new ApiError("This server doesn't offer that download yet. It arrives with the next server update.", "missing_endpoint", { status: 404 });
+    throw error;
+  }
+  const link = document.createElement("a");
+  const href = URL.createObjectURL(await response.blob());
+  try {
+    link.href = href;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(href), 1000);
+  }
+}
+
 export type Group = { name: string; tickets: number; tons: string | number; cost: string | number };
 export type Dashboard = {
   tickets: number; needs_review: number; flagged: number; verified: number; total_tons: string | number; total_cost: string | number;

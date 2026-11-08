@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ApiError, confirmTicketLinks, downloadInvoiceComparisonReport, getInvoiceComparison, getInvoiceComparisons, getInvoiceOverview, releaseTicketLink, getInvoiceHistory,
+  ApiError, confirmTicketLinks, discrepanciesCsvUrl, downloadFile, downloadInvoiceComparisonReport, getInvoiceComparison, getInvoiceComparisons, getInvoiceOverview, releaseTicketLink, getInvoiceHistory,
   InvoiceDiagnosis, InvoiceLineComparison, InvoiceLineInput, InvoiceOverview, listMaterials, listProjects, listSuppliers, Material,
   Project, saveInvoiceComparison, Supplier, CheckedTicket, TicketCheckRow, ticketImageUrl,
 } from "../../lib/api";
@@ -100,8 +100,9 @@ function WhyThisResult({ diagnosis, status }: { diagnosis: InvoiceDiagnosis; sta
     <div className="mt-4 grid gap-5 lg:grid-cols-2">
       {bridge && <div>
         <p className="mb-1.5 text-[12px] font-bold text-[#344352]">From approved tons to billed tons</p>
+        <p className="mb-1.5 text-[11px] text-[#5f6c7b]">Exact figures, as stored: each row adds to or takes from the one above.</p>
         <table className="tf-table" aria-label="From approved tons to billed tons"><tbody>
-          <tr><td>Approved tons in this line&apos;s scope</td><td className="text-right font-semibold tabular-nums">{tons(bridge.start)}</td></tr>
+          <tr><td>Approved tons in this line&apos;s scope</td><td className="text-right font-semibold tabular-nums">{bridge.start}</td></tr>
           {bridge.items.map((item) => <tr key={item.kind}>
             <td>{item.label} <span className="text-[#5f6c7b]">({item.count})</span>
               {item.tickets.length > 0 && <span className="block font-mono text-[11px] text-[#657182]">{item.tickets.join(", ")}{item.count > item.tickets.length && " …"}</span>}
@@ -112,7 +113,7 @@ function WhyThisResult({ diagnosis, status }: { diagnosis: InvoiceDiagnosis; sta
             <td>Not explained by the ticket list <span className="block text-[11px] text-[#657182]">The line&apos;s billed tons differ from the sum of its own tickets.</span></td>
             <td className="whitespace-nowrap text-right font-semibold tabular-nums text-[#a73631]">{signed(bridge.unexplained as string)}</td>
           </tr>}
-          <tr className="border-t-2 border-[#cfd6de]"><td className="font-bold">Billed tons</td><td className="text-right font-bold tabular-nums">{tons(bridge.billed)}</td></tr>
+          <tr className="border-t-2 border-[#cfd6de]"><td className="font-bold">Billed tons</td><td className="text-right font-bold tabular-nums">{bridge.billed}</td></tr>
         </tbody></table>
         {!bridge.complete && <p className="mt-1.5 text-[11px] text-[#995a18]">{bridge.rows_without_tons} ticket(s) have no billed tons on this invoice, so the tons can&apos;t be broken down exactly.</p>}
       </div>}
@@ -159,6 +160,9 @@ export default function InvoiceComparisonPage() {
   const [showForm, setShowForm] = useState(false);
   const [resultFilter, setResultFilter] = useState<"all" | "open" | "discrepancy" | "incomplete" | "matches">("all");
   const [lineSearch, setLineSearch] = useState("");
+  const [differencesFor, setDifferencesFor] = useState({ project_id: "", supplier: "" });
+  const [differencesError, setDifferencesError] = useState<string | null>(null);
+  const [downloadingDifferences, setDownloadingDifferences] = useState(false);
   const detail = useRef<HTMLElement>(null);
 
   const loadOverview = useCallback(() => {
@@ -185,6 +189,9 @@ export default function InvoiceComparisonPage() {
     }).catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
     loadOverview();
+    // A link from a report opens that line straight away.
+    const wanted = Number(new URLSearchParams(window.location.search).get("line"));
+    if (wanted > 0) setSelected(wanted);
   }, [loadOverview]);
 
   // Details sit below the list, so bring them into view when opened.
@@ -281,6 +288,21 @@ export default function InvoiceComparisonPage() {
     }
   }
 
+  async function downloadDifferences() {
+    if (downloadingDifferences) return;
+    setDownloadingDifferences(true);
+    setDifferencesError(null);
+    try {
+      const name = ["ticketflow-invoice-differences", projects.find((p) => String(p.id) === differencesFor.project_id)?.code, differencesFor.supplier]
+        .filter(Boolean).join("-").replace(/[^A-Za-z0-9._-]+/g, "_");
+      await downloadFile(discrepanciesCsvUrl(differencesFor), name + ".csv");
+    } catch (exc) {
+      setDifferencesError((exc as Error).message);
+    } finally {
+      setDownloadingDifferences(false);
+    }
+  }
+
   async function downloadReport(id: number) {
     if (exporting) return;
     setExporting(true);
@@ -339,9 +361,11 @@ export default function InvoiceComparisonPage() {
           <p className="mt-1.5 text-[22px] font-bold tabular-nums text-[#192632]">{money(overview.verified)}</p>
           <p className="mt-1 text-[11px] text-[#5f6c7b]">{overview.lines_unresolved ? overview.lines_unresolved + " line(s) unresolved and left out" : "At locked rates"}</p></div>
         <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Differences found</p>
-          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + (overview.by_status.discrepancy ? "text-[#a73631]" : "text-[#192632]")}>{overview.by_status.discrepancy ?? 0}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Lines to take up with a supplier</p></div>
+          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + (overview.by_status.discrepancy ? "text-[#a73631]" : "text-[#192632]")}>{overview.by_status.discrepancy ?? 0}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Lines to take up with a supplier
+            {(overview.by_status.discrepancy ?? 0) > 0 && <button type="button" className="tf-link ml-1.5" onClick={() => setResultFilter("discrepancy")}>Show them</button>}</p></div>
         <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Can&apos;t settle yet</p>
-          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + ((overview.by_status.incomplete || overview.by_status.no_verified_tickets) ? "text-[#a3511d]" : "text-[#192632]")}>{(overview.by_status.incomplete ?? 0) + (overview.by_status.no_verified_tickets ?? 0)}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Waiting on deliveries or review</p></div>
+          <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + ((overview.by_status.incomplete || overview.by_status.no_verified_tickets) ? "text-[#a3511d]" : "text-[#192632]")}>{(overview.by_status.incomplete ?? 0) + (overview.by_status.no_verified_tickets ?? 0)}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Waiting on deliveries or review
+            {((overview.by_status.incomplete ?? 0) + (overview.by_status.no_verified_tickets ?? 0)) > 0 && <button type="button" className="tf-link ml-1.5" onClick={() => setResultFilter("incomplete")}>Show them</button>}</p></div>
       </div>
       {overview.by_supplier.length > 1 && <details className="border-t border-[#e7eaee]">
         <summary className="cursor-pointer select-none px-5 py-2 text-[12px] font-semibold text-[#46566a]">By supplier</summary>
@@ -467,6 +491,27 @@ export default function InvoiceComparisonPage() {
           <span className="tf-status">{shownLines.length === lines.length ? lines.length : `${shownLines.length} of ${lines.length}`} material lines</span>
         </div>
       </div>
+      {lines.length > 0 && <div className="border-b border-[#e2e7ec] bg-[#f8f9fa] px-4 py-3" role="group" aria-label="Differences to send to a supplier">
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="tf-field-label">Project
+            <select className="tf-field !min-h-0 !py-1.5 !text-xs" value={differencesFor.project_id} onChange={(e) => setDifferencesFor((old) => ({ ...old, project_id: e.target.value }))}>
+              <option value="">All projects</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+            </select>
+          </label>
+          <label className="tf-field-label">Supplier
+            <select className="tf-field !min-h-0 !py-1.5 !text-xs" value={differencesFor.supplier} onChange={(e) => setDifferencesFor((old) => ({ ...old, supplier: e.target.value }))}>
+              <option value="">All suppliers</option>
+              {[...new Set(lines.map((line) => line.supplier_name))].sort().map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+          <button type="button" className="tf-secondary-button !min-h-[34px]" disabled={downloadingDifferences} onClick={() => void downloadDifferences()}>
+            {downloadingDifferences ? "Preparing CSV…" : "Download discrepancy list (CSV)"}
+          </button>
+        </div>
+        <p className="mt-1.5 text-[11px] leading-4 text-[#5f6c7b]">One row per difference, to send to a supplier: billed and approved tons, the dollar effect where known, and what to check. A list of questions, not approval for payment.</p>
+        {differencesError && <p role="alert" className="mt-1.5 text-[12px] font-semibold text-red-800">{differencesError}</p>}
+      </div>}
       <div className="tf-table-wrap">
         <table className="tf-table">
           <thead><tr>
