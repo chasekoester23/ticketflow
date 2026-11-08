@@ -6,9 +6,11 @@
 #
 # FLAKE_REPEAT    runs of each test (default 3)
 # FLAKE_THROTTLE  browser CPU slowdown; 4 means four times slower (default 1, none)
-# FLAKE_LOAD      busy processes competing for the CPU, stopped afterwards (default 0)
-# FLAKE_LOW_PRIORITY=1 on macOS runs everything at background priority: on the slow
-#                 cores and competing with the busy processes, leaving other work alone.
+# FLAKE_LOAD      busy processes competing for the CPU (default 0). Other work shares the
+#                 machine, so they stop on their own if this script dies, however it dies,
+#                 and after FLAKE_LOAD_SECONDS at the latest (default 3600).
+# FLAKE_NICE      niceness for the tests and busy processes alike, so they compete with
+#                 each other and yield to anything else on the machine (default 0)
 #
 # Works on a generated copy of the specs, so nothing in tests/browser changes. Finding a
 # flaky test here means fixing its cause, in the test or the app. Never raise a timeout.
@@ -19,9 +21,10 @@ WORK="$FRONTEND_DIR/tests/.flake-hunt"
 REPORT="${FLAKE_REPORT:-$WORK/report.json}"
 PIDS=()
 RUN=()
-if [ "${FLAKE_LOW_PRIORITY:-0}" = 1 ] && command -v taskpolicy >/dev/null; then RUN=(taskpolicy -b); fi
+if [ "${FLAKE_NICE:-0}" != 0 ]; then RUN=(nice -n "$FLAKE_NICE"); fi
 cleanup() { for pid in "${PIDS[@]:-}"; do [ -n "$pid" ] && kill "$pid" 2>/dev/null; done; }
 trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
@@ -33,10 +36,12 @@ import base from "../playwright.config.mjs";
 export default { ...base, testDir: "$WORK", outputDir: "$WORK/results", preserveOutput: "failures-only" };
 CONFIG
 
-for _ in $(seq 1 "${FLAKE_LOAD:-0}"); do
-  "${RUN[@]+"${RUN[@]}"}" sh -c 'while :; do :; done' &
+for ((n = 0; n < ${FLAKE_LOAD:-0}; n++)); do
+  # Busy until this script is gone or the time is up, even after a kill -9 here.
+  "${RUN[@]+"${RUN[@]}"}" sh -c 'owner=$1; end=$(($(date +%s) + $2)); while kill -0 "$owner" 2>/dev/null && [ "$(date +%s)" -lt "$end" ]; do i=0; while [ $i -lt 20000 ]; do i=$((i + 1)); done; done' busy $$ "${FLAKE_LOAD_SECONDS:-3600}" &
   PIDS+=($!)
 done
+echo "Busy processes: ${PIDS[*]:-none}"
 
 cd "$FRONTEND_DIR"
 PLAYWRIGHT_JSON_OUTPUT_NAME="$REPORT" FLAKE_THROTTLE="${FLAKE_THROTTLE:-1}" "${RUN[@]+"${RUN[@]}"}" npx playwright test \
