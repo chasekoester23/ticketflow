@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ApiError, Failure, HistoryEntry, Ticket, describeFailure, getTicketHistory, patchTicket, ticketAction } from "../../lib/api";
 import { TicketDraft, draftsFor, removeDraft, removeTicketDrafts, saveDraft } from "../../lib/drafts";
 import { useAccount } from "../account-context";
@@ -96,7 +96,7 @@ export function previousValues(tickets: Ticket[], index: number): PreviousValues
   return found;
 }
 
-export function ReviewForm({
+export const ReviewForm = memo(function ReviewForm({
   ticket, manual, catalog, previous, failure, onChange, onAdvance, onAccepted, onDirtyChange, onBusyChange, onError, onFailure, onStale,
 }: {
   ticket: Ticket;
@@ -326,6 +326,12 @@ export function ReviewForm({
     void attempt("verify", undefined, true);
   }
 
+  // A long catalog needn't be rebuilt for every key press.
+  const catalogLists = useMemo(() => <>
+    <datalist id="catalog-suppliers">{catalog.suppliers.map((name) => <option key={name} value={name} />)}</datalist>
+    <datalist id="catalog-materials">{catalog.materials.map((name) => <option key={name} value={name} />)}</datalist>
+  </>, [catalog]);
+
   function fillRepeats() {
     if (!canEdit) return;
     setValues((current) => {
@@ -453,8 +459,7 @@ export function ReviewForm({
           )}
         </div>;
         })}
-        <datalist id="catalog-suppliers">{catalog.suppliers.map((name) => <option key={name} value={name} />)}</datalist>
-        <datalist id="catalog-materials">{catalog.materials.map((name) => <option key={name} value={name} />)}</datalist>
+        {catalogLists}
         <div className="rounded border border-[#e2e7eb] bg-[#f7f8f9] p-3 text-xs">
           {ticket.status === "verified" && ticket.price_snapshot_state === "priced" && (
             <p className="mb-2 text-emerald-800">Unit price locked at verification. Later changes to supplier rates will not change this ticket.</p>
@@ -558,7 +563,7 @@ export function ReviewForm({
       </div>}
     </aside>
   );
-}
+});
 
 const HISTORY_FIELD: Record<string, string> = {
   status: "Status", verified_unit_price: "Locked unit price", ticket_number: "Ticket number",
