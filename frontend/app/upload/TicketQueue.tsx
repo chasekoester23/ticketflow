@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useDeferredValue, useMemo, useState } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { Ticket } from "../../lib/api";
 import { STATUS_LABEL, STATUS_STYLE } from "./ReviewForm";
 
@@ -51,6 +51,17 @@ export const TicketQueue = memo(function TicketQueue({ tickets, selected, filter
     return found;
   }, [tickets, filter, needle]);
 
+  // Keep the open ticket in sight in a long list. Only the list scrolls, never the
+  // page, so the keyboard can't pull a phone's screen away from the scan.
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = list.current;
+    const row = box?.querySelector<HTMLElement>("[aria-current=true]");
+    if (!box || !row) return;
+    if (row.offsetTop < box.scrollTop) box.scrollTop = row.offsetTop;
+    else if (row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = row.offsetTop + row.offsetHeight - box.clientHeight;
+  }, [selected, rows]);
+
   return <section className="tf-panel tf-review-pane" aria-label="Ticket queue">
     <div className="border-b border-[#e7eaee] p-2.5">
       <div className="flex items-center justify-between gap-2">
@@ -76,7 +87,7 @@ export const TicketQueue = memo(function TicketQueue({ tickets, selected, filter
         <button type="button" className="tf-link ml-2" onClick={() => onFilter("all")}>Show all</button>
       </div>
     ) : (
-      <div className="tf-review-pane-scroll max-h-72 divide-y divide-[#edf0f2] overflow-auto xl:max-h-none">
+      <div ref={list} className="tf-review-pane-scroll relative max-h-72 divide-y divide-[#edf0f2] overflow-auto xl:max-h-none">
         {rows.map(({ ticket, index }) => <QueueRow key={ticket.id} ticket={ticket} index={index} isCurrent={selected === index} onSelect={onSelect} />)}
       </div>
     )}
