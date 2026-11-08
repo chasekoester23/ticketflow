@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .config import settings
+from .config import configuration_problems, settings
 from .db import Base, engine
 from .routers import api, auth as auth_router, invoice_documents, invoices, pricing, projects, records, reports, system, team, scans
 from .services import system_health
@@ -28,13 +28,9 @@ if not request_log.handlers:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not settings.trusted_hosts or any("*" in host for host in settings.trusted_hosts):
-        raise RuntimeError("TRUSTED_HOSTS must list explicit API hostnames, never wildcards.")
-    if not settings.session_secure_cookie and any(
-        not origin.startswith(("http://localhost:", "http://127.0.0.1:"))
-        for origin in settings.cors_origins
-    ):
-        raise RuntimeError("Set SESSION_SECURE_COOKIE=true before using a non-localhost frontend.")
+    problems = configuration_problems(settings)
+    if problems:
+        raise RuntimeError(" ".join(problems))
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     if engine.dialect.name == "sqlite":
         Base.metadata.create_all(engine)  # new local installs only; never alters existing tables

@@ -59,6 +59,20 @@ class Settings(BaseSettings):
     trusted_hosts: list[str] = ["localhost", "127.0.0.1", "testserver"]
     # True for HTTPS production. False is allowed only for the localhost dev UI.
     session_secure_cookie: bool = False
+    # "production" makes startup refuse anything unsafe for a hosted deployment.
+    ticketflow_env: str = "development"
+
+
+def configuration_problems(config: Settings) -> list[str]:
+    """Settings that are never safe, whichever environment this is. Startup refuses to run with any."""
+    problems = []
+    if not config.trusted_hosts or any("*" in host for host in config.trusted_hosts):
+        problems.append("TRUSTED_HOSTS must list explicit API hostnames, never wildcards.")
+    if not config.session_secure_cookie and any(
+        not origin.startswith(("http://localhost:", "http://127.0.0.1:")) for origin in config.cors_origins
+    ):
+        problems.append("Set SESSION_SECURE_COOKIE=true before using a non-localhost frontend.")
+    return problems
 
 
 settings = Settings()

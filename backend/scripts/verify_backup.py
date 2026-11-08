@@ -7,11 +7,17 @@ Usage (from backend/):
 Never touches the live database. --restore-to refuses a folder that already has
 anything in it, so it can't overwrite real data. Switching to a restored copy is
 a separate, deliberate step: see docs/engineering/operations.md.
+
+An incomplete backup is caught too: every document the database refers to has to be
+in the archive, and match its recorded hash. For a full rehearsal that also starts
+the application against the copy, use scripts/restore_drill.py.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -19,7 +25,44 @@ import tarfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from backup import counts, sha256  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from backup import counts, sha256, sqlite_columns  # noqa: E402
+
+from app.services import document_audit  # noqa: E402
+
+_NAMED = 10
+
+
+def _named(refs: list[document_audit.DocumentRef]) -> str:
+    shown = ", ".join(f"{ref.table} {ref.row_id}" for ref in refs[:_NAMED])
+    return shown + (f" and {len(refs) - _NAMED} more" if len(refs) > _NAMED else "")
+
+
+def _check_documents(archive: Path, wanted: dict[str, document_audit.DocumentRef]) -> list[str]:
+    """Every referenced document is in the archive and matches its hash. Reading through
+    the archive once does both."""
+    remaining = dict(wanted)
+    damaged: list[document_audit.DocumentRef] = []
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            for member in tar:
+                ref = remaining.pop(member.name, None) if member.isfile() else None
+                if ref is None or not ref.sha256:
+                    continue
+                stream = tar.extractfile(member)
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                if digest.hexdigest() != ref.sha256:
+                    damaged.append(ref)
+    except (tarfile.TarError, OSError, EOFError) as exc:
+        return [f"The documents archive can't be read: {type(exc).__name__}"]
+    problems = []
+    if remaining:
+        problems.append(f"Incomplete: {len(remaining)} document(s) the database refers to aren't in the archive: {_named(list(remaining.values()))}.")
+    if damaged:
+        problems.append(f"Damaged: {len(damaged)} document(s) in the archive don't match their recorded hash: {_named(damaged)}.")
+    return problems
 
 
 def verify(folder: Path) -> list[str]:
@@ -34,6 +77,8 @@ def verify(folder: Path) -> list[str]:
     problems = []
     if sha256(database) != manifest["database_sha256"]:
         problems.append("The database copy has changed since the backup was taken.")
+    wanted: dict[str, document_audit.DocumentRef] | None = None
+    unknown: list[document_audit.DocumentRef] = []
     connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
     try:
         try:
@@ -47,21 +92,22 @@ def verify(folder: Path) -> list[str]:
             for name, expected in manifest["counts"].items():
                 if found.get(name) != expected:
                     problems.append(f"{name}: manifest says {expected}, copy has {found.get(name)}.")
+            wanted, unknown = document_audit.expected_keys(lambda sql: connection.execute(sql), sqlite_columns(connection))
     finally:
         connection.close()
     documents = manifest.get("documents")
+    archive = folder / "documents.tar.gz"
     if documents:
-        archive = folder / "documents.tar.gz"
         if not archive.is_file():
             problems.append("The documents archive is missing.")
         elif sha256(archive) != documents["sha256"]:
             problems.append("The documents archive has changed since the backup was taken.")
-        else:
-            try:
-                with tarfile.open(archive, "r:gz") as tar:
-                    tar.getmembers()
-            except tarfile.TarError as exc:
-                problems.append(f"The documents archive can't be read: {exc}")
+        elif wanted is not None:
+            problems.extend(_check_documents(archive, wanted))
+    elif wanted:
+        problems.append(f"Incomplete: this backup has no documents, but its database refers to {len(wanted)}.")
+    if unknown:
+        problems.append(f"Incomplete: {len(unknown)} row(s) refer to a document at an unrecognisable location, so it can't be in this backup: {_named(unknown)}.")
     return problems
 
 
@@ -77,6 +123,12 @@ def restore(folder: Path, destination: Path) -> None:
         storage.mkdir(mode=0o700)
         with tarfile.open(archive, "r:gz") as tar:
             tar.extractall(storage, filter="data")  # Refuses paths outside the folder.
+        # Whatever the modes were on the original disk, a restored copy is private.
+        for parent, folders, files in os.walk(storage):
+            for name in folders:
+                os.chmod(os.path.join(parent, name), 0o700)
+            for name in files:
+                os.chmod(os.path.join(parent, name), 0o600)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -635,7 +635,9 @@ def build_fictional_business(url: str, storage: Path, monkeypatch) -> dict:
         client.post(f"/api/tickets/{stone[3]['id']}/skip")
         client.patch(f"/api/tickets/{stone[2]['id']}", json={"unit_price_override": "21.0000"})
 
-        client.post(f"/api/scan-slots/{client.get('/api/batches/2/manifest').json()['files'][0]['pages'][0]['slots'][0]['id']}/rotate", json={"rotation": 90})
+        flagged_slot = next(slot for slot in client.get("/api/batches/1/manifest").json()["files"][0]["pages"][0]["slots"]
+                            if slot["ticket_id"] == sand[3]["id"])
+        assert client.post(f"/api/scan-slots/{flagged_slot['id']}/rotate", json={"rotation": 90}).status_code == 200
         assert client.patch("/api/batches/2/project", json={"project_id": project}).status_code == 200
 
         itemized = client.post("/api/invoice-comparisons", json={
