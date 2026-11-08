@@ -24,7 +24,7 @@ c4, c5 and c6 were built in parallel on c3. c7 merges them, which needed no conf
 | Backend, SQLite | Local, CI's pinned packages, Python 3.13 | 1188 passed, 18 skipped (PostgreSQL only), 8 xfailed (open bugs below) |
 | Mocked browser suite | Local, production build | 250 passed, 1 skipped (opt-in timing test) |
 | Real stack: whole workflow, then 3,000 records and two people | Local, merged backend | 1 of 1 and 7 of 7 passed |
-| Backend, PostgreSQL, load test, PostgreSQL benchmark, browser, real stack, dependency audit | GitHub Actions | CI_RESULTS |
+| Backend, PostgreSQL, load test, PostgreSQL benchmark, browser, real stack, dependency audit | GitHub Actions | All nine workflows green on d68c536. Results for the last two commits (index, docs) are on the pull request |
 
 ## Open bugs
 

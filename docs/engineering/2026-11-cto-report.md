@@ -88,7 +88,7 @@ Open: 7 bugs, all low or medium, none touching approved figures or tenancy. Each
 | Suite | Result |
 |---|---|
 | Backend, SQLite, CI's pinned packages | 1188 passed, 18 skipped (PostgreSQL only), 8 xfailed (the 7 open bugs) |
-| Backend, PostgreSQL 16 | CI_PG |
+| Backend, PostgreSQL 16 | Green in CI on d68c536 |
 | Mocked browser suite | 250 passed, 1 skipped |
 | Real stack, whole workflow then 3,000 records with two people | 8 of 8 passed |
 | Load: 1, 5, 20 simultaneous employees | No errors and exact totals on SQLite locally and PostgreSQL in CI. p99 at 20 employees: 2.4 s on SQLite, 1.7 s on PostgreSQL |
