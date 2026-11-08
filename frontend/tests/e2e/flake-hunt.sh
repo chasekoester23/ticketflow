@@ -73,6 +73,9 @@ const bad = rows.filter(([, row]) => row.failed);
 console.log(`${rows.length} tests, ${rows.reduce((n, [, r]) => n + r.runs, 0)} runs, ${bad.length} tests failed at least once.`);
 for (const [name, row] of bad) {
   console.log(`FLAKY? ${name}: failed ${row.failed} of ${row.runs}`);
+  if (process.env.GITHUB_ACTIONS === "true") {
+    console.log(`::warning title=Flaky test::${name} failed ${row.failed} of ${row.runs}: ${[...row.errors][0] ?? ""}`.slice(0, 3900));
+  }
   for (const error of row.errors) console.log(`  ${error}`);
 }
 console.log("Slowest:");
