@@ -1,0 +1,90 @@
+name: Dependency audit
+
+# Reports. It doesn't fail anyone's build yet: findings show as warnings in the
+# annotations, which anyone can read without access to the run's logs. Free, and
+# needs no secrets. The second job is an early warning for version drift.
+on:
+  push:
+    branches: [main, "feature/**"]
+    paths:
+      - "backend/requirements*.txt"
+      - "backend/constraints.txt"
+      - "frontend/package-lock.json"
+      - ".github/workflows/dependency-audit.yml"
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install pip-audit
+        run: python -m pip install pip-audit
+      - name: Audit Python packages
+        working-directory: backend
+        # Exactly the pinned versions CI runs. No resolving, so what's reported is what's installed.
+        run: |
+          python -m pip_audit -r constraints.txt --no-deps --disable-pip --format json -o pip-audit.json || true
+          python - <<'SCRIPT'
+          import json
+          found = [(p["name"], p["version"], v["id"], ",".join(v.get("fix_versions") or []) or "no fix listed")
+                   for p in json.load(open("pip-audit.json"))["dependencies"] for v in p.get("vulns", [])]
+          print(f"Python: {len(found)} known vulnerabilities in pinned packages")
+          for name, version, ident, fix in found[:40]:
+              print(f"::warning title=Python dependency::{name} {version}: {ident}, fixed in {fix}")
+          SCRIPT
+      - name: Audit browser packages
+        working-directory: frontend
+        run: |
+          npm audit --json > npm-audit.json || true
+          python - <<'SCRIPT'
+          import json
+          report = json.load(open("npm-audit.json"))
+          found = report.get("vulnerabilities", {})
+          print("npm:", report.get("metadata", {}).get("vulnerabilities", {}))
+          for name, item in list(found.items())[:40]:
+              fix = item.get("fixAvailable")
+              fix = fix if isinstance(fix, bool) else fix.get("name", "") + " " + fix.get("version", "")
+              print(f"::warning title=npm dependency::{name} ({item.get('severity')}, {'direct' if item.get('isDirect') else 'indirect'}), range {item.get('range')}, fix: {fix}")
+          SCRIPT
+
+  newest-packages:
+    # The suite on whatever a fresh install gets today, without constraints.txt. If this
+    # goes red while the pinned jobs stay green, a new release is coming that will need
+    # attention. It's also what keeps the tests working on httpx2, where the test client is heading.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the newest allowed packages
+        run: python -m pip install -r requirements-dev.txt
+      - name: Show what differs from the pinned versions
+        run: |
+          python -m pip freeze | sort -f > installed.txt
+          grep -E '^[A-Za-z0-9_.-]+==' constraints.txt | sort -f > pinned.txt
+          comm -23 installed.txt pinned.txt | sed 's/^/::notice title=Newer than pinned::/' || true
+      - name: Run the backend suite
+        continue-on-error: true
+        run: python -m pytest -q --junitxml=results.xml -p no:cacheprovider
+      - name: Name every failure in one annotation
+        if: always()
+        run: |
+          python scripts/ci_report_failures.py results.xml | sed 's/^::error/::warning/'

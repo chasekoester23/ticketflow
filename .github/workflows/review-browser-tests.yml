@@ -16,6 +16,12 @@ on:
       repeat:
         description: "Run each test this many times, to hunt for flaky tests"
         default: "1"
+      throttle:
+        description: "Flake hunt: slow the browser's CPU this many times (1 = ordinary run, retries on)"
+        default: "1"
+      load:
+        description: "Flake hunt: busy processes competing for the runner's CPU"
+        default: "0"
 
 permissions:
   contents: read
@@ -41,7 +47,16 @@ jobs:
       - name: Install test browser
         run: npx playwright install --with-deps chromium
       - name: Test ticket review interactions
+        if: ${{ (inputs.throttle || '1') == '1' && (inputs.load || '0') == '0' }}
         run: npx playwright test --config tests/playwright.config.mjs --repeat-each "${{ inputs.repeat || '1' }}"
+      - name: Hunt for flaky tests on a slowed, busy machine, with retries off
+        if: ${{ (inputs.throttle || '1') != '1' || (inputs.load || '0') != '0' }}
+        env:
+          CI: "1"
+          FLAKE_REPEAT: ${{ inputs.repeat }}
+          FLAKE_THROTTLE: ${{ inputs.throttle }}
+          FLAKE_LOAD: ${{ inputs.load }}
+        run: tests/e2e/flake-hunt.sh
       - name: Keep the report when something fails
         if: failure()
         uses: actions/upload-artifact@v5
