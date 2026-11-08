@@ -517,6 +517,8 @@ export const ReviewForm = memo(function ReviewForm({
         </label>}
         <TicketHistory ticketId={ticket.id} version={JSON.stringify([ticket.status, ticket.verified_at, ticket.unit_price_override, ...FIELDS.map((f) => ticket[f.key])])} />
       </div>
+      {/* Below laptop width the form is part of a long page, so Accept and its messages stay at the screen's foot. */}
+      <div className="tf-review-actions">
       {failure && <div role="alert" data-testid="action-failure" className="border-t border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-900">
         <p>{failure.message}</p>
         {failure.reference && <p className="mt-0.5">Reference: <code className="font-mono font-semibold">{failure.reference}</code></p>}
@@ -562,6 +564,7 @@ export const ReviewForm = memo(function ReviewForm({
           Skip non-ticket
         </button>}
       </div>}
+      </div>
     </aside>
   );
 });

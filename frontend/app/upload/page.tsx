@@ -258,6 +258,12 @@ export default function Home() {
     setJumpStatus(null);
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // On a phone the queue would push the scan a screen down. It starts tucked away
+  // there, one tap from the scan's header.
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 767px)").matches) setQueueOpen(false);
+  }, []);
+
   useEffect(() => {
     const update = () => setOffline(!navigator.onLine);
     update();

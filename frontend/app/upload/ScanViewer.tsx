@@ -61,6 +61,10 @@ export function ScanViewer({ src, alt, zoom, rotation, onZoom }: {
       box.current.scrollTop = state.top - dy;
     }
   }
+  // The browser took the gesture over, to scroll the page.
+  function onPointerCancel() {
+    drag.current = null;
+  }
   function onPointerUp(event: PointerEvent<HTMLDivElement>) {
     const state = drag.current;
     const element = box.current;
@@ -85,8 +89,10 @@ export function ScanViewer({ src, alt, zoom, rotation, onZoom }: {
 
   // A tab stop, so arrow keys can scroll a zoomed scan without a mouse.
   return <div ref={box} data-testid="scan-box" tabIndex={0} role="region" aria-label="Scanned ticket. When zoomed, arrow keys scroll it."
-    onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-    className={`min-h-[320px] flex-1 touch-none select-none overflow-auto bg-[#e6e9eb] p-3 ${zoom > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"}`}>
+    onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}
+    // Unzoomed, a swipe on the scan scrolls the page, which on a phone is most of the screen.
+    // Zoomed, a drag pans the scan instead.
+    className={`min-h-[260px] flex-1 select-none overflow-auto bg-[#e6e9eb] p-3 max-xl:h-[48vh] xl:min-h-[320px] ${zoom > 1 ? "touch-none cursor-grab active:cursor-grabbing" : "touch-pan-y cursor-zoom-in"}`}>
     {failed
       ? <p role="alert" className="m-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-900">
         This scan could not be loaded. The stored image may be missing, or your session may have ended. Don&apos;t approve this ticket without seeing the original.
