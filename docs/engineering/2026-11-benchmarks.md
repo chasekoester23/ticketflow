@@ -109,5 +109,55 @@ filters on something the composite indexes cover.
 
 ## SQLite before and after
 
-<!-- PLACEHOLDER: the coordinator fills this section in, measured on a quiet machine. -->
-**To be added by the coordinator.** Not measured by the testing branch.
+The original code (`main` at `3ed0018`) and the final code (`feature/c7-integration` at `d68c536`) were measured one after the other on 8 November, on the same quiet machine: a 15-inch MacBook Air with an M2, 8 cores and 8 GB of memory. The load average was 4 to 6, since nothing else was running. Both used Python 3.13 with CI's pinned packages and the same `measure_performance.py`. Each request runs in a fresh process, which gives a cold application but a warm operating-system file cache. One company holds 90% of the tickets and another 10%, so company scoping does real work. All data is fictional.
+
+An earlier attempt is discarded. It ran while 12 leftover CPU-bound processes were active, and the baseline from 5 November had the same problem, so neither is comparable.
+
+### 100,000 tickets
+
+| Request | Before: s / peak MB | After: s / peak MB |
+|---|---:|---:|
+| Dashboard | 0.68 / 235 | 0.25 / 157 |
+| Register, first page | 0.42 / 188 | 0.13 / 156 |
+| Register, deep page | 0.42 / 200 | 0.13 / 156 |
+| Register, one project | 0.12 / 157 | 0.12 / 153 |
+| Search and sort by tons | 0.45 / 170 | 0.35 / 156 |
+| Invoice list, 20 lines | 0.35 / 147 | 0.21 / 161 |
+| Project report | 0.35 / 154 | 0.26 / 148 |
+| Pilot report | 1.27 / 272 | 0.69 / 158 |
+| CSV export, everything | 2.54 / 388 | 1.31 / 166 |
+| Excel export, everything | 12.67 / 689 | 8.59 / 163 |
+| Edit one ticket | 0.040 | 0.031 |
+| Approve one ticket | 0.039 | 0.049 |
+
+At 1,000 to 50,000 tickets, every request is under 0.5 s in both versions, except the full Excel export (5.8 s down to 4.5 s at 50,000). Peak memory now stays near the 150 MB of an idle process at every size.
+
+### 1,000,000 tickets
+
+| Request | Before: s / peak MB | After: s / peak MB |
+|---|---:|---:|
+| One batch's tickets | 4.6 / 158 | 3.2 / 182 |
+| Dashboard | 12.7 / 919 | 7.7 / 153 |
+| Register, first page | 7.8 / 555 | 4.2 / 154 |
+| Register, deep page | 9.0 / 560 | 4.1 / 155 |
+| **Register, one project** | 4.4 / 176 | **7.8 / 154** |
+| **Register, one project, sort by tons** | 5.4 / 175 | **11.3 / 153** |
+| Search a ticket number | 9.7 / 138 | 10.7 / 153 |
+| Search and sort by tons | 10.8 / 282 | 10.6 / 154 |
+| Invoice list, 20 lines | 6.8 / 156 | 7.7 / 156 |
+| **Project report** | 8.4 / 177 | **16.3 / 156** |
+| Pilot report | **Error** after 21.6 s, at 1,149 MB | 37.6 / 152 |
+| CSV export, one project | 3.5 / 301 | 2.4 / 164 |
+| CSV export, everything | 46.9 / 1,397 | 13.1 / 433 |
+| Excel export, one project | 8.7 / 509 | 6.9 / 157 |
+| Excel export, everything | 244.7 / 1,716 | Refused in 0.5 s: over 200,000 rows, use CSV |
+| Edit one ticket | 0.98 | 2.5, then **0.004** with the image index |
+| Approve one ticket | 0.98 | 8.8, then **0.006** with the image index |
+
+**Image index.** This run found that approvals and edits had become slower at 1,000,000 tickets. Each one checks for copies of the same scanned image, and SQLite chose to answer that by walking every ticket the company has: 2.1 s per check. Migration `20261106_22` adds an index on company and image, and a plan test fails without it. On the same 1,000,000-ticket database, measured the same way, edit went from 2.0 s to 0.004 s and approve from 2.0 s to 0.006 s. The other rows were measured before this index; it doesn't change their plans.
+
+**Slower than before** (bold above): views filtered to one project, and the project report. Project 1 holds about 50,000 tickets at this size. The new totals and status counts each read all of them to add up exact figures, where the old code read fewer columns. Each query takes 2 to 5 s. Making these fast on SQLite would need summary tables or wider covering indexes. On PostgreSQL, at the same size, the project report took 0.5 s (table above). That run didn't measure the register filtered to one project. Treat SQLite as suitable for one company's local use up to a few hundred thousand tickets, and PostgreSQL beyond that.
+
+**Still slow at 1,000,000, in both versions:** text search (about 10 s, since ILIKE reads every ticket) and the pilot report (now 38 s, where it used to fail).
+
+Reproduce one version with `python scripts/measure_performance.py --tickets 100000 1000000 --timeout 300` from its `backend/` folder.
