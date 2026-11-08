@@ -253,7 +253,7 @@ def test_the_same_invoice_file_uploaded_twice_at_once_is_kept_once(race, monkeyp
 
     with race.meeting_at(monkeypatch, invoice_documents.invoice_extraction, "get_invoice_extractor"):
         results = race.run(send, send)
-    assert sorted(r.status_code for r in results) == [201, 409]
+    assert sorted(r.status_code for r in results) == [201, 409], [(r.status_code, r.text[:200]) for r in results]
     with race.Session() as db:
         assert db.scalar(select(func.count()).select_from(InvoiceDocument)) == 1
 

@@ -266,6 +266,24 @@ def test_files_and_every_new_folder_are_private(tmp_path):
         assert stat.S_IMODE(folder.stat().st_mode) == 0o700
 
 
+def test_two_uploads_creating_one_new_folder_at_once_both_succeed(tmp_path, monkeypatch):
+    """The first upload of a company's invoices, made twice at once, failed with a 500:
+    both saw the folder missing, and the second to create it was refused."""
+    store = storage.LocalStorage(tmp_path)
+    real_exists = Path.exists
+
+    def another_request_gets_there_first(self, *args, **kwargs):
+        found = real_exists(self, *args, **kwargs)
+        if self.name == "7" and not found:
+            self.mkdir(parents=True)
+        return found
+
+    monkeypatch.setattr(Path, "exists", another_request_gets_there_first)
+    assert store.save("invoices/7/a.pdf", b"x") == "invoices/7/a.pdf"
+    monkeypatch.setattr(Path, "exists", real_exists)
+    assert store.read("invoices/7/a.pdf") == b"x"
+
+
 def test_saving_never_overwrites_unless_asked(tmp_path):
     store = storage.LocalStorage(tmp_path)
     store.save("uploads/1/a.pdf", b"first")

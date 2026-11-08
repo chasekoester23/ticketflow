@@ -143,10 +143,11 @@ class LocalStorage:
         path = self._inside(key)
         if path is None:
             raise ValueError("Not a stored document's key.")
-        # Every folder created is private, not only the last one.
+        # Every folder created is private, not only the last one. Another request may
+        # create the same folder at the same moment, which is fine.
         missing = [parent for parent in (path.parent, *path.parent.parents) if not parent.exists()]
         for folder in reversed(missing):
-            folder.mkdir(mode=0o700)
+            folder.mkdir(mode=0o700, exist_ok=True)
         return path
 
 
