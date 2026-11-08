@@ -50,7 +50,12 @@ READS = ["/api/dashboard", "/api/batches/queue", "/api/invoice-comparisons?summa
 def _environment(work: Path, url: str | None) -> dict:
     return {**os.environ, "DATABASE_URL": url or f"sqlite:///{work / 'load.db'}", "STORAGE_DIR": str(work / "storage"),
             "GEMINI_API_KEY": "", "ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": "", "PYTHONWARNINGS": "ignore",
-            "PYTHONPATH": str(BACKEND)}
+            "PYTHONPATH": str(BACKEND),
+            # This measures how much one server can do. Each simulated employee sends far more
+            # requests a minute than a person does, so the per-person limits would turn the
+            # measurement into a count of 429s. The limits have their own tests.
+            "RATE_LIMIT_UPLOADS_PER_MINUTE": "0", "RATE_LIMIT_EXPORTS_PER_MINUTE": "0",
+            "RATE_LIMIT_REPORTS_PER_MINUTE": "0"}
 
 
 # ---------------------------------------------------------------- seeding, in its own process
