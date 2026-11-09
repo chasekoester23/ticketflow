@@ -59,8 +59,12 @@ def load_truth(path: Path) -> dict[str, Any]:
                            "read each paper ticket without looking at TicketFlow's values.")
     if not str(data.get("labelled_by") or "").strip():
         raise DatasetError("Say who labelled the tickets (\"labelled_by\"), so the labels can be checked.")
+    synthetic = data.get("synthetic") is True
     slots, seen = [], set()
     for n, row in enumerate(data.get("slots") or [], start=1):
+        if isinstance(row, dict) and "synthetic" in row and (row["synthetic"] is True) != synthetic:
+            raise DatasetError(f"Slot {n} is marked {'synthetic' if row['synthetic'] is True else 'real'}, but the "
+                               "file is not: synthetic and real labels can't be scored together.")
         try:
             key = (str(row["file"]), int(row["page"]), int(row["position"]))
             is_ticket = bool(row["ticket"])
@@ -95,8 +99,34 @@ def load_truth(path: Path) -> dict[str, Any]:
             raise DatasetError("api_cost_total must be a number, as shown on the provider's bill.") from None
         if not cost.is_finite() or cost < 0:
             raise DatasetError("api_cost_total must be zero or more.")
-    return {"slots": slots, "invoices": invoices, "api_cost_total": cost, "synthetic": data.get("synthetic") is True,
+    return {"slots": slots, "invoices": invoices, "api_cost_total": cost, "synthetic": synthetic,
             "labelled_by": str(data["labelled_by"]).strip(), "notes": str(data.get("notes") or "")[:500]}
+
+
+def combine_truths(truths: list[dict[str, Any]]) -> dict[str, Any]:
+    """Several ground-truth files as one. Refuses to mix synthetic and real labels:
+    a report must be wholly one kind of evidence, or its numbers mean nothing."""
+    if not truths:
+        raise DatasetError("No ground-truth files given.")
+    kinds = {t["synthetic"] for t in truths}
+    if len(kinds) > 1:
+        raise DatasetError("These ground-truth files mix synthetic and real labels. Score them in separate "
+                           "reports: synthetic results are an engineering check, not real-world accuracy.")
+    if len(truths) == 1:
+        return truths[0]
+    slots, seen = [], set()
+    for t in truths:
+        for slot in t["slots"]:
+            key = (slot.file, slot.page, slot.position)
+            if key in seen:
+                raise DatasetError(f"{key} is labelled in more than one ground-truth file.")
+            seen.add(key)
+            slots.append(slot)
+    costs = [t["api_cost_total"] for t in truths]
+    return {"slots": slots, "invoices": [i for t in truths for i in t["invoices"]],
+            "api_cost_total": None if any(c is None for c in costs) else sum(costs, Decimal(0)),
+            "synthetic": kinds.pop(), "labelled_by": "; ".join(sorted({t["labelled_by"] for t in truths})),
+            "notes": " | ".join(t["notes"] for t in truths if t["notes"])[:500]}
 
 
 def _rate(part: int, whole: int) -> float | None:
