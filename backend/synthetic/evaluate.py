@@ -357,7 +357,7 @@ def financial_check(Session, docs: dict) -> dict:
     records = {r["ticket_id"]: r for r in docs["records"]["records"]}
     truth = {(s["file"], s["page"], s["position"]): s for s in docs["truth"]["slots"] if s.get("ticket")}
     out = Counter()
-    approved_total = expected_total = Decimal(0)
+    approved_total = expected_total = unpriced_total = Decimal(0)
     with Session() as db:
         for t, name in db.query(Ticket, UploadedFile.original_name).join(UploadedFile, UploadedFile.id == Ticket.file_id) \
                 .filter(Ticket.status == "verified"):
@@ -367,17 +367,18 @@ def financial_check(Session, docs: dict) -> dict:
                 continue
             rec = records[label["ticket_id"]]
             should = to_cents(Decimal(rec["net_tons"]) * rates[(rec["supplier"], rec["material"])])
-            expected_total += should
             out["approved_tickets"] += 1
             if t.approved_cost is None:
-                out["approved_unpriced"] += 1
+                out["approved_unpriced"] += 1  # e.g. a misread supplier or material matched no rate
+                unpriced_total += should
                 continue
             approved_total += t.approved_cost
+            expected_total += should
             out["cost_correct" if t.approved_cost == should else "cost_wrong"] += 1
     return {**{k: out[k] for k in ("approved_tickets", "cost_correct", "cost_wrong", "approved_unpriced",
                                    "approved_without_a_ticket_on_paper")},
             "approved_cost_total": str(approved_total), "true_cost_of_those_tickets": str(expected_total),
-            "difference": str(approved_total - expected_total)}
+            "difference": str(approved_total - expected_total), "true_cost_of_unpriced_approvals": str(unpriced_total)}
 
 
 def _headline(wf: dict) -> dict:
