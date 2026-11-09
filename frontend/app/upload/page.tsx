@@ -1,5 +1,6 @@
 "use client";
 
+import { setNavigationGuard } from "../../lib/navigation-guard";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Batch,
@@ -463,7 +464,12 @@ export default function Home() {
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
+    // Like the warning above, this keeps what was typed: it comes back when the ticket reopens.
+    setNavigationGuard(() => window.confirm("You have unsaved ticket corrections. Leave this ticket? They stay on this computer until you come back to it."));
+    return () => {
+      window.removeEventListener("beforeunload", warn);
+      setNavigationGuard(null);
+    };
   }, [formDirty]);
 
   const previous = useMemo(() => previousValues(tickets, selected), [tickets, selected]);

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Project, ProjectReport, ReportGroup, getProjectReport, listProjects, projectReportUrl } from "../../../lib/api";
 import { Unbilled } from "./Unbilled";
@@ -29,7 +30,7 @@ const monthRange = (month: string) => {
 
 function GroupCells({ row, href }: { row: ReportGroup; href?: string }) {
   return <>
-    <td className="text-right tabular-nums">{href && row.verified_tickets > 0 ? <a href={href}>{row.verified_tickets}<span className="sr-only"> approved tickets, open in records</span></a> : row.verified_tickets}</td>
+    <td className="text-right tabular-nums">{href && row.verified_tickets > 0 ? <Link prefetch={false} href={href}>{row.verified_tickets}<span className="sr-only"> approved tickets, open in records</span></Link> : row.verified_tickets}</td>
     <td className="text-right tabular-nums">{tons(row.verified_tons)}</td>
     <td className="text-right tabular-nums">{money(row.cost)}{row.unpriced > 0 && <span className="block text-[10px] font-bold text-[#a14c1c]">{row.unpriced} with no locked price</span>}</td>
     <td className="text-right tabular-nums text-[#5f6c7b]">{row.pending_tickets}</td>
@@ -101,7 +102,7 @@ export default function ProjectReportPage() {
 
       <section className="tf-panel" aria-label="By supplier and material">
         <div className="tf-panel-heading"><h2 className="tf-panel-title">By supplier and material</h2>
-          <a className="tf-link" href={`/records?project_id=${project}`}>Open records</a></div>
+          <Link prefetch={false} className="tf-link" href={`/records?project_id=${project}`}>Open records</Link></div>
         {report.by_supplier_material.length ? <div className="tf-table-wrap"><table className="tf-table">
           <thead><tr><th>Supplier</th><th>Material</th>{GROUP_HEADERS}</tr></thead>
           <tbody>{report.by_supplier_material.map((row) => <tr key={row.supplier + "|" + row.material}>
@@ -125,12 +126,12 @@ export default function ProjectReportPage() {
           <div><h2 className="tf-panel-title">Invoice lines</h2>
             <p className="tf-panel-description">Billed {money(report.invoices.billed_total)} · approved cost {money(report.invoices.verified_total)}
               {report.invoices.lines_unresolved > 0 && <span className="ml-1 font-semibold text-[#a14c1c]">· {report.invoices.lines_unresolved} line(s) with an unresolved figure are left out of the approved cost</span>}</p></div>
-          <a className="tf-link" href="/invoices">Open invoices</a>
+          <Link prefetch={false} className="tf-link" href="/invoices">Open invoices</Link>
         </div>
         {report.invoices.lines.length ? <div className="tf-table-wrap"><table className="tf-table">
           <thead><tr><th>Invoice</th><th>Supplier</th><th>Material</th><th>Result</th><th className="text-right">Billed tons</th><th className="text-right">Approved tons</th><th className="text-right">Billed</th><th className="text-right">Approved cost</th><th className="text-right">Difference</th></tr></thead>
           <tbody>{report.invoices.lines.map((line) => <tr key={line.id}>
-            <td className="font-semibold tabular-nums"><a href={`/invoices?line=${line.id}`}>{line.invoice_number}<span className="sr-only">, open this invoice line</span></a></td><td>{line.supplier}</td><td>{line.material}</td>
+            <td className="font-semibold tabular-nums"><Link prefetch={false} href={`/invoices?line=${line.id}`}>{line.invoice_number}<span className="sr-only">, open this invoice line</span></Link></td><td>{line.supplier}</td><td>{line.material}</td>
             <td><span className={`tf-status ${RESULT[line.status]?.tone ?? ""}`}>{RESULT[line.status]?.label ?? line.status}</span></td>
             <td className="text-right tabular-nums">{tons(line.billed_tons)}</td><td className="text-right tabular-nums">{tons(line.verified_tons)}</td>
             <td className="text-right tabular-nums">{money(line.billed_subtotal)}</td><td className="text-right tabular-nums">{money(line.verified_subtotal)}</td>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError, confirmTicketLinks, discrepanciesCsvUrl, downloadFile, downloadInvoiceComparisonReport, getInvoiceComparison, getInvoiceComparisons, getInvoiceOverview, releaseTicketLink, getInvoiceHistory,
@@ -76,7 +77,7 @@ function RecordLinks({ ticket }: { ticket: Pick<CheckedTicket, "ticket_id" | "ba
   return <span className="whitespace-nowrap">
     <a href={ticketImageUrl(ticket.ticket_id)} target="_blank" rel="noreferrer">Scan</a>
     {" · "}
-    <a href={"/upload?batch=" + ticket.batch_id + "&ticket=" + ticket.ticket_id}>Review &amp; history</a>
+    <Link prefetch={false} href={"/upload?batch=" + ticket.batch_id + "&ticket=" + ticket.ticket_id}>Review &amp; history</Link>
   </span>;
 }
 function RecordSummary({ ticket }: { ticket: CheckedTicket }) {
@@ -340,8 +341,8 @@ export default function InvoiceComparisonPage() {
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <a href="/invoices/documents" className="tf-secondary-button">Invoice PDFs →</a>
-        <a href="/records" className="tf-secondary-button">View ticket records →</a>
+        <Link prefetch={false} href="/invoices/documents" className="tf-secondary-button">Invoice PDFs →</Link>
+        <Link prefetch={false} href="/records" className="tf-secondary-button">View ticket records →</Link>
       </div>
     </div>
 
@@ -397,7 +398,7 @@ export default function InvoiceComparisonPage() {
       <div className="tf-panel-heading">
         <div>
           <h2 className="tf-panel-title">{editing === null ? "Record an invoice material line" : "Correct invoice line #" + editing}</h2>
-          <p className="tf-panel-description">Typed by a person. To draft from a PDF, use <a className="tf-link" href="/invoices/documents">Invoice PDFs</a>.</p>
+          <p className="tf-panel-description">Typed by a person. To draft from a PDF, use <Link prefetch={false} className="tf-link" href="/invoices/documents">Invoice PDFs</Link>.</p>
         </div>
         {(editing !== null || lines.length > 0) && <button type="button" className="tf-secondary-button" onClick={reset}>{editing !== null ? "Cancel editing" : "Close"}</button>}
       </div>
@@ -541,8 +542,8 @@ export default function InvoiceComparisonPage() {
         </table>
         {!loading && !lines.length && <div className="tf-empty" data-testid="invoices-empty">{!canManage
           ? <p>No invoice lines yet. A manager or owner records each supplier invoice line here, and its comparison with approved tickets appears in this list.</p>
-          : !projects.length ? <p>No invoice lines yet. Invoices are checked project by project, so <a className="tf-link" href="/projects">create a project</a> first.</p>
-          : <p>No invoice lines yet. Type a line from a supplier invoice into the form above, or <a className="tf-link" href="/invoices/documents">upload the invoice PDF</a> and confirm its lines. Include the invoice&apos;s ticket numbers to check each delivery, not just the totals.</p>}</div>}
+          : !projects.length ? <p>No invoice lines yet. Invoices are checked project by project, so <Link prefetch={false} className="tf-link" href="/projects">create a project</Link> first.</p>
+          : <p>No invoice lines yet. Type a line from a supplier invoice into the form above, or <Link prefetch={false} className="tf-link" href="/invoices/documents">upload the invoice PDF</Link> and confirm its lines. Include the invoice&apos;s ticket numbers to check each delivery, not just the totals.</p>}</div>}
         {!loading && lines.length > 0 && !shownLines.length && <p className="tf-empty">No invoice lines match this view.</p>}
         {loading && <p className="tf-empty">Loading invoice comparisons…</p>}
       </div>
@@ -555,7 +556,7 @@ export default function InvoiceComparisonPage() {
           <p className="tf-panel-description">
             {chosen.comparison_mode === "itemized" ? "Each invoice ticket number checked against verified deliveries." : TOTALS_ONLY}
             {" "}Current comparison, not an invoice approval or payment recommendation.
-            {chosen.source_document_id && <> <a className="tf-link" href={"/invoices/documents?id=" + chosen.source_document_id}>View original invoice, page {chosen.source_page}</a></>}
+            {chosen.source_document_id && <> <Link prefetch={false} className="tf-link" href={"/invoices/documents?id=" + chosen.source_document_id}>View original invoice, page {chosen.source_page}</Link></>}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

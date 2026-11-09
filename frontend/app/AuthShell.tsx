@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { getAuthMe, logOut, type Account, type Permission } from "../lib/api";
+import { ApiError, getAuthMe, logOut, type Account, type Permission } from "../lib/api";
+import { mayNavigate } from "../lib/navigation-guard";
 import { beginSignOut, clearAllDrafts, clearOtherAccountsDrafts, hasDrafts } from "../lib/drafts";
 import { AccountContext } from "./account-context";
 
@@ -46,6 +48,20 @@ const setupLinks: NavLink[] = [
 ];
 const links = [...workLinks, ...setupLinks];
 const PUBLIC_PATHS = ["/welcome", "/login", "/signup"];
+// Pages change without reloading, so the session is re-checked in the background, at most this often.
+const SESSION_RECHECK_MS = 30_000;
+
+function onInternalLink(event: MouseEvent<HTMLAnchorElement>, href: string) {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+  // A page reads its address only when it opens. To clear filters or leave a batch on the
+  // same page, it has to open again. A real page load also brings the browser's own warning.
+  if (window.location.pathname === href && window.location.search) {
+    event.preventDefault();
+    window.location.assign(href);
+    return;
+  }
+  if (!mayNavigate()) event.preventDefault();
+}
 const pageTitles: Record<string, string> = {
   "/account": "Account settings", "/records/names": "Name cleanup",
   "/invoices/documents": "Invoice PDFs",
@@ -55,18 +71,20 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [checking, setChecking] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const sessionCheckedAt = useRef(0);
+  const shownBefore = useRef(false);
   const pathname = usePathname();
   const isPublic = PUBLIC_PATHS.includes(pathname);
   const current = links.find((l) => l.href === pathname);
   const allowed = (l: NavLink) => !l.requires || account?.permissions?.includes(l.requires);
   const navLink = ({ href, label, icon }: NavLink) => {
     const active = pathname === href;
-    return <a key={href} href={href} aria-current={active ? "page" : undefined}
+    return <Link key={href} href={href} aria-current={active ? "page" : undefined}
       className={`tf-nav-link ${active ? "tf-nav-link-active" : ""}`}
-      onClick={() => setMenuOpen(false)}>
+      onClick={(event) => { setMenuOpen(false); onInternalLink(event, href); }}>
       <Icon name={icon} /><span>{label}</span>
       {active && <span className="tf-nav-active-rule" />}
-    </a>;
+    </Link>;
   };
   const personName = account?.display_name || account?.username || "";
   const initial = (personName[0] || "U").toUpperCase();
@@ -87,6 +105,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
         return;
       }
       clearOtherAccountsDrafts(me.id);
+      sessionCheckedAt.current = Date.now();
       setAccount(me);
       setChecking(false);
     }).catch(() => {
@@ -97,6 +116,32 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   }, [isPublic]);
 
   useEffect(() => { setMenuOpen(false); }, [pathname]);
+
+  // The shell stays up between pages, so nothing waits on this. Each API call is still
+  // checked by the server; this catches an ended session or a changed role.
+  useEffect(() => {
+    if (isPublic || checking || Date.now() - sessionCheckedAt.current < SESSION_RECHECK_MS) return;
+    sessionCheckedAt.current = Date.now();
+    getAuthMe().then((me) => {
+      if (me.must_change_password && window.location.pathname !== "/account") window.location.replace("/account");
+      else if (account && me.id !== account.id) window.location.replace("/");
+      else setAccount((old) => JSON.stringify(old) === JSON.stringify(me) ? old : me);
+    }).catch((failure) => {
+      if (failure instanceof ApiError && failure.status === 401) window.location.replace("/login");
+    });
+  }, [pathname, isPublic, checking, account]);
+
+  // A reload used to retitle the tab and put a screen reader at the top of the new page.
+  useEffect(() => {
+    if (isPublic || checking) return;
+    const label = links.find((l) => l.href === pathname)?.label ?? pageTitles[pathname];
+    document.title = label ? `${label} · TicketFlow` : "TicketFlow";
+    if (!shownBefore.current) {
+      shownBefore.current = true;
+      return;
+    }
+    if (!document.activeElement?.closest("input, textarea, select")) document.getElementById("main-content")?.focus({ preventScroll: true });
+  }, [pathname, isPublic, checking]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -154,10 +199,10 @@ export default function AuthShell({ children }: { children: ReactNode }) {
     {menuOpen && <button aria-label="Close navigation" className="tf-mobile-scrim" onClick={() => setMenuOpen(false)} />}
     <aside id="main-menu" className={`tf-sidebar ${menuOpen ? "tf-sidebar-open" : ""}`}>
       <button type="button" aria-label="Close menu" className="tf-sidebar-close" onClick={() => setMenuOpen(false)}><Icon name="close" size={18} /></button>
-      <a href="/" className="tf-sidebar-brand" aria-label="TicketFlow home">
+      <Link href="/" className="tf-sidebar-brand" aria-label="TicketFlow home" onClick={(event) => { setMenuOpen(false); onInternalLink(event, "/"); }}>
         <span className="tf-brand-mark"><Icon name="layers" size={21} /></span>
         <span className="tf-brand-type">TICKET<span>FLOW</span><small>FIELD OPERATIONS</small></span>
-      </a>
+      </Link>
       <div className="tf-sidebar-divider" />
       <nav aria-label="Main navigation">
         {!mustChangePassword && <>
@@ -167,10 +212,10 @@ export default function AuthShell({ children }: { children: ReactNode }) {
           <div className="tf-nav">{setupLinks.filter(allowed).map(navLink)}</div>
         </>}
       </nav>
-      <a href="/account" className="tf-sidebar-account">
+      <Link href="/account" className="tf-sidebar-account" onClick={(event) => { setMenuOpen(false); onInternalLink(event, "/account"); }}>
         <span className="tf-account-avatar" aria-hidden="true">{initial}</span>
         <span>{personName}<small>{account.role_label} · Your account</small></span>
-      </a>
+      </Link>
     </aside>
 
     <div className="tf-shell-content">
@@ -186,10 +231,10 @@ export default function AuthShell({ children }: { children: ReactNode }) {
           </div>
         </div>
         <div className="tf-topbar-right">
-          <a href="/account" className="tf-account-link" title="Account settings">
+          <Link href="/account" className="tf-account-link" title="Account settings" onClick={(event) => onInternalLink(event, "/account")}>
             <span className="tf-account-avatar" aria-hidden="true">{initial}</span>
             <span className="tf-account-name">{personName}<small>{account.role_label}</small></span>
-          </a>
+          </Link>
           <button type="button" className="tf-sign-out" aria-label="Sign out" title="Sign out"
             onClick={async () => {
               // Typed values kept for crash recovery mustn't outlive a sign-out on a shared computer.

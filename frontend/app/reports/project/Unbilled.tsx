@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { UnbilledReport, downloadFile, getUnbilled, ticketImageUrl, unbilledCsvUrl } from "../../../lib/api";
 
@@ -102,7 +103,7 @@ export function Unbilled({ projectId }: { projectId: string }) {
             <td className="whitespace-nowrap">
               <a href={ticketImageUrl(row.ticket_id)} target="_blank" rel="noreferrer">Scan<span className="sr-only"> of ticket {row.ticket_number ?? row.ticket_id}</span></a>
               {" · "}
-              <a href={`/upload?batch=${row.batch_id}&ticket=${row.ticket_id}`}>Ticket<span className="sr-only"> {row.ticket_number ?? row.ticket_id} and its history</span></a>
+              <Link prefetch={false} href={`/upload?batch=${row.batch_id}&ticket=${row.ticket_id}`}>Ticket<span className="sr-only"> {row.ticket_number ?? row.ticket_id} and its history</span></Link>
             </td>
           </tr>)}</tbody>
         </table></div>

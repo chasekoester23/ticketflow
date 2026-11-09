@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { NameVariant, addAlias, getNameVariants, listMaterials, listSuppliers, renameOnTickets } from "../../../lib/api";
 import { useAccount } from "../../account-context";
@@ -99,7 +100,7 @@ export default function NameCleanupPage() {
         <h1 className="tf-page-title">Name cleanup</h1>
         <p className="tf-page-description">Every spelling on your tickets. A ticket only gets a rate when its names match your list, so tidy these before approving.</p>
       </div>
-      <a className="tf-secondary-button" href="/records">Back to records</a>
+      <Link prefetch={false} className="tf-secondary-button" href="/records">Back to records</Link>
     </div>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
     {notice && <div role="status" className="rounded border border-[#cce4d2] bg-[#f3f9f4] p-3 text-sm text-[#216c43]">{notice}</div>}
@@ -119,6 +120,6 @@ export default function NameCleanupPage() {
         <tbody>{rows.map((row) => <VariantRow key={row.value} row={row} catalog={catalog} canRemember={canRemember} onApply={apply} />)}</tbody>
       </table></div> : rows && <p className="tf-empty">No {field} names on record yet.</p>}
     </section>
-    <p className="text-[11px] text-[#5f6c7b]">{canEdit ? "Approved tickets are never changed from here: open one to correct it, and it will need approving again." : "View-only access. Ask a clerk or manager to make changes."} The closest match is only a suggestion. Add missing names under <a className="tf-link" href="/pricing">Suppliers &amp; rates</a>.</p>
+    <p className="text-[11px] text-[#5f6c7b]">{canEdit ? "Approved tickets are never changed from here: open one to correct it, and it will need approving again." : "View-only access. Ask a clerk or manager to make changes."} The closest match is only a suggestion. Add missing names under <Link prefetch={false} className="tf-link" href="/pricing">Suppliers &amp; rates</Link>.</p>
   </div>;
 }

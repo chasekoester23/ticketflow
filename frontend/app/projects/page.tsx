@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Project, createProject, listProjects, setProjectStatus } from "../../lib/api";
 import { useAccount } from "../account-context";
@@ -41,7 +42,7 @@ export default function ProjectsPage() {
     <div className="tf-page-heading">
       <div><h1 className="tf-page-title">Projects</h1>
         <p className="tf-page-description">Organize delivery records by job. Each batch stays associated with its project.</p></div>
-      <a href="/upload" className="tf-secondary-button">Ticket intake <span aria-hidden="true">→</span></a>
+      <Link prefetch={false} href="/upload" className="tf-secondary-button">Ticket intake <span aria-hidden="true">→</span></Link>
     </div>
 
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
@@ -86,8 +87,8 @@ export default function ProjectsPage() {
           <td>{p.job_location || "—"}</td>
           <td><span className={`tf-status ${p.status === "active" ? "tf-status-open" : ""}`}>{p.status === "active" ? "Active" : "Archived"}</span></td>
           <td><div className="flex justify-end gap-4 whitespace-nowrap">
-            <a href={`/records?project_id=${p.id}`}>View records</a>
-            <a href={`/reports/project?project_id=${p.id}`}>Report</a>
+            <Link prefetch={false} href={`/records?project_id=${p.id}`}>View records</Link>
+            <Link prefetch={false} href={`/reports/project?project_id=${p.id}`}>Report</Link>
             {canManage && <button type="button" onClick={() => void changeStatus(p)} className="text-[12px] font-semibold text-[#637385] hover:underline">
               {p.status === "active" ? "Archive" : "Unarchive"}
             </button>}
