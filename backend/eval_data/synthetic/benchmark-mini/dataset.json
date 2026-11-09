@@ -1,0 +1,53 @@
+{
+  "core_fields": [
+    "ticket_number",
+    "delivery_date",
+    "material",
+    "net_tons",
+    "supplier",
+    "job_location"
+  ],
+  "counts": {
+    "blank_slots": 17,
+    "by_difficulty": {
+      "easy": 24,
+      "extreme": 24,
+      "hard": 24,
+      "moderate": 24
+    },
+    "pages": 38,
+    "tickets": 96
+  },
+  "difficulties": [
+    "easy",
+    "moderate",
+    "hard",
+    "extreme"
+  ],
+  "files": {
+    "labels.json": "0bab09b5b0e9817cafb6b82d80e8a22709dc4d78ef789e5b6ba1eb470944bb01",
+    "pages.json": "ec0aae9c9f06dcd97e53884a486f53812b9516fa26d3f8797d39904ca0e248be",
+    "records.csv": "81ad9eade911cafdabf96b289562a67d37732b2210d728e68621a33b101300e8",
+    "records.json": "2c25967c8301a39a316313772139d4d47cbaa6d4123799c455dacc7479e08605",
+    "render_log.json": "ebd96a7cd300ecd44ba833b4247671e065a0ebd93a2c582fe2ef628857d224dc",
+    "scans/benchmark-mini-easy-1up-01.pdf": "a67f542833d0cd81858d2c0a6939170dd3fbcb8fd413dd07b621d845311cbc3c",
+    "scans/benchmark-mini-easy-4up-01.pdf": "775111a68bdc1af35483c1cfdd8e5f266ebbaea3a889790ebd733cfc4b3c53e6",
+    "scans/benchmark-mini-extreme-1up-01.pdf": "4abc31f6f1b5b7c7787fbf7e1b85dbd362f39d8aacd8e8d1465da17c6d8aaad1",
+    "scans/benchmark-mini-extreme-4up-01.pdf": "8bede58547b4a4598c0c3042f2693d2f055836d8f943a23c9597bf50917c45c3",
+    "scans/benchmark-mini-hard-1up-01.pdf": "8798c7053bb123d1e1901cd10d74da57f425029cdc8db62a8dfdb1ca5091905c",
+    "scans/benchmark-mini-hard-4up-01.pdf": "3c1c320652cb6e03d0081da5cfb5f630c7589e4d9e2975ade32d3d7749780b9f",
+    "scans/benchmark-mini-moderate-1up-01.pdf": "c6ce6d194261459da0fcf7f0bfe9386ced6f77cf6dda20e838e43eaf5f3d471e",
+    "scans/benchmark-mini-moderate-4up-01.pdf": "e0a906c504a25b6e7832d7f2c8e2702e1bf8e8776023b843d2bf371bc4dc7dd5",
+    "truth.json": "f3003edcaac630524fad2259debe08bcf4fbc8d714c66a6407205bb231b1c57e"
+  },
+  "formats": [
+    "pdf"
+  ],
+  "generator_version": "1.0.0",
+  "name": "benchmark-mini",
+  "per_difficulty": 24,
+  "schema": "ticketflow.synthetic.dataset/1",
+  "seed": 20261108,
+  "stamp": "SYNTHETIC — engineering benchmark, not real-world accuracy",
+  "synthetic": true
+}

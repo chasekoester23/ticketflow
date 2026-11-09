@@ -23,7 +23,7 @@ from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.services.evaluation import DatasetError  # noqa: E402
-from app.services.workflow_evaluation import evaluate_workflow, load_truth  # noqa: E402
+from app.services.workflow_evaluation import combine_truths, evaluate_workflow, load_truth  # noqa: E402
 
 
 def read_only_engine(database: str):
@@ -48,11 +48,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--database", required=True, help="SQLite file (a copy) or postgresql:// URL")
     parser.add_argument("--organization", type=int, required=True)
     parser.add_argument("--batch", type=int, action="append", required=True)
-    parser.add_argument("--truth", type=Path, required=True)
+    parser.add_argument("--truth", type=Path, action="append", required=True,
+                        help="ground truth; repeat to combine files (never synthetic with real)")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     try:
-        truth = load_truth(args.truth)
+        truth = combine_truths([load_truth(path) for path in args.truth])
         engine = read_only_engine(args.database)
         with Session(engine) as db:
             report = evaluate_workflow(db, args.organization, args.batch, truth)
