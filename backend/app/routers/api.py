@@ -27,6 +27,7 @@ from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
 from ..services.pricing import norm
 from ..services.extraction import ExtractionError, get_extractor
+from ..services.splitter import CROP_CHECK_PREFIX
 from ..services.validation import compute_flags
 
 router = APIRouter(prefix="/api")
@@ -444,9 +445,12 @@ def apply_review_edit(db: Session, t: Ticket, user: User, field: str, new) -> bo
 
 
 def _refresh_flags(t: Ticket) -> None:
+    # A crop check comes from the scan, not the values, so editing can't clear it.
+    checks = [f for f in (t.flags or []) if f.startswith(CROP_CHECK_PREFIX)]
     t.flags = compute_flags(
         ticket_number=t.ticket_number, delivery_date=t.delivery_date, material_type=t.material_type,
-        tonnage=t.tonnage, supplier=t.supplier, job_location=t.job_location, raw_date="x" if t.delivery_date else None)
+        tonnage=t.tonnage, supplier=t.supplier, job_location=t.job_location,
+        raw_date="x" if t.delivery_date else None) + checks
 
 
 @router.patch("/tickets/{ticket_id}", response_model=TicketOut)
@@ -509,8 +513,10 @@ def verify_ticket(ticket_id: int, body: VerifyIn | None = Body(default=None), db
     # Validate the current values rather than trusting stale extraction flags.
     _refresh_flags(t)
     # Unusually high tonnage is a warning, not an absolute rejection: some
-    # legitimate delivery tickets may be for a bulk shipment.
-    blocking = [f for f in t.flags if not f.startswith("Tonnage unusually large")]
+    # legitimate delivery tickets may be for a bulk shipment. A crop check is a
+    # warning too: the person approving compares the record with the scan, and
+    # tonnage still needs their explicit confirmation.
+    blocking = [f for f in t.flags if not f.startswith(("Tonnage unusually large", CROP_CHECK_PREFIX))]
     if blocking:
         raise HTTPException(422, "Resolve ticket issues before verification: " + "; ".join(blocking))
     if t.status != "verified":

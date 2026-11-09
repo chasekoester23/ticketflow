@@ -35,11 +35,21 @@ def rotated(image: Image.Image, degrees: int) -> Image.Image:
     return image.transpose(_ROTATIONS[degrees]) if degrees else image
 
 
+def recorded_crop(existing: dict, page_no: int, crop: splitter.Crop, page_img: Image.Image) -> splitter.Crop:
+    """The crop to use for a slot. A slot already on record keeps the geometry it
+    was recorded with (an earlier, fixed cut, say), so its stored image, hash
+    and any ticket made from it stay consistent when a file is retried."""
+    slot = existing.get((page_no, crop.position))
+    if slot is not None and slot.crop_box and list(slot.crop_box) != list(crop.box):
+        return splitter.crop_at(page_img, crop, slot.crop_box)
+    return crop
+
+
 def record_slot(db: Session, file: UploadedFile, existing: dict, page_no: int,
                 crop: splitter.Crop, sha256) -> ScanSlot:
     """Create or refresh the slot for one physical position. Idempotent, and
     never changes a person's decision or rotation."""
-    assessment = splitter.assess_slot(crop.image)
+    assessment = splitter.assess_crop(crop)
     slot = existing.get((page_no, crop.position))
     if slot is None:
         slot = ScanSlot(batch_id=file.batch_id, file_id=file.id, page=page_no, position=crop.position,
@@ -97,6 +107,7 @@ def rebuild_for_file(db: Session, file: UploadedFile) -> int:
     created = 0
     for page_no, page_img in enumerate(pages, start=1):
         for crop in splitter.split_page(page_img, batch.layout):
+            crop = recorded_crop(existing, page_no, crop, page_img)
             if (page_no, crop.position) not in existing:
                 created += 1
             record_slot(db, file, existing, page_no, crop, sha256_bytes)

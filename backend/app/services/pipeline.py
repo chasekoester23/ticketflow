@@ -78,6 +78,7 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
 
     for page_no, page_img in enumerate(pages, start=1):
         for crop in splitter.split_page(page_img, layout):
+            crop = scan_manifest.recorded_crop(slots, page_no, crop, page_img)
             # Every slot goes on record, including blank-looking ones.
             slot = scan_manifest.record_slot(db, file, slots, page_no, crop, sha256_bytes)
             key = (page_no, crop.position)
@@ -110,6 +111,7 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
                 # stored image crops. No model call and no invented values.
                 # Never replace an existing reviewed/approved ticket.
                 set_blank_fields(ticket)
+                ticket.flags = [*ticket.flags, *crop.checks]
                 db.add(ticket)
                 continue
 
@@ -120,7 +122,7 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
             except ExtractionError as exc:
                 ticket.status = "failed"
                 ticket.error = str(exc)
-                ticket.flags = ["Extraction failed - enter manually or retry"]
+                ticket.flags = ["Extraction failed - enter manually or retry", *crop.checks]
                 any_failure = True
                 db.add(ticket)
                 continue
@@ -137,7 +139,7 @@ def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extrac
                 material_type=ticket.material_type, tonnage=ticket.tonnage, supplier=ticket.supplier,
                 job_location=ticket.job_location, raw_date=extracted.delivery_date,
                 raw_tonnage=extracted.tonnage,
-            )
+            ) + list(crop.checks)  # an uncertain crop: compare with the original scan
             ticket.status = "needs_review"  # tonnage must be human-confirmed
             ticket.tonnage_confirmed = False
             db.add(ticket)
