@@ -258,3 +258,39 @@ same sample as independent evidence; keep a separate holdout set.
 Regardless of measured accuracy, TicketFlow's human **Accept & Next**
 approval remains mandatory for every extracted ticket. Never auto-approve
 a delivery quantity based on benchmark scores.
+
+## Whole-workflow evaluation (after a pilot batch is finished)
+
+The crop benchmark above measures the model alone. `scripts/evaluate_workflow.py` measures the product: run the real batch through TicketFlow as the contractor would (upload, review, approve, enter the invoice), then score the result against labels a person wrote from the paper. It makes no model call and opens the database read-only. Run it on a copy.
+
+```bash
+cp ticketflow.db evaluation_data/pilot-copy.db
+python scripts/evaluate_workflow.py --database evaluation_data/pilot-copy.db --organization 1 \
+    --batch 12 --truth evaluation_data/truth.json --out evaluation_data/workflow-report.json
+```
+
+`truth.json` (git-ignored, like everything in `evaluation_data/`):
+
+```json
+{
+  "labelled_by": "initials of the person who read the paper",
+  "labelled_independently": true,
+  "synthetic": false,
+  "api_cost_total": "4.12",
+  "slots": [
+    {"file": "scan-01.pdf", "page": 1, "position": 0, "ticket": true, "crop_complete": true,
+     "expected": {"ticket_number": "1001", "delivery_date": "2026-10-06", "material_type": "Sand",
+                  "tonnage": "20.000", "supplier": "Ridgeline Aggregates", "job_location": "Main St"}},
+    {"file": "scan-01.pdf", "page": 1, "position": 1, "ticket": false}
+  ],
+  "invoice_checks": [{"invoice_number": "INV-9", "material": "Sand", "person_found_discrepancy": true}]
+}
+```
+
+- Label every position on every page, blanks included (`"ticket": false`), or missed tickets can't be counted. Positions are 0 to 3, left to right, then top to bottom.
+- `expected` is read from the **paper**, never from TicketFlow's screen. Use `null` for a field nobody can read. The file is refused unless it says `labelled_independently: true` and names who labelled it.
+- `crop_complete`: whether the crop TicketFlow showed held the whole ticket. Leave it out if you didn't check.
+- `api_cost_total`: copied from the provider's bill for this batch. TicketFlow doesn't record model calls or tokens, so cost isn't measured.
+- `invoice_checks`: the invoices a person reconciled by hand, and whether they found a problem. The report compares that with TicketFlow's verdict.
+
+The report gives, as counts and rates: tickets detected and missed, complete crops, **extraction accuracy** per field (the model's untouched output), **final accuracy** per field (what people approved), critical errors in ticket number and tonnage (wrong, as opposed to left blank) before and after review, how many approved tickets people corrected and whether each correction fixed or broke the field, review time (opt-in timings), upload-to-last-approval time per batch, processing jobs, retries and failures, cost per approved ticket, and invoice lines found, missed, or undecided by TicketFlow. Its `limitations` list says what the sample can't show. `"synthetic": true` stamps the report as an engineering check, not evidence.
