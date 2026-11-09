@@ -8,13 +8,13 @@ async function mockSetup(page, { needed = true, answer } = {}) {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    if (path === "/api/setup/status") return typeof needed === "number" ? json(route, { detail: "Not Found" }, needed) : json(route, { needed });
+    if (path === "/api/setup/status") return typeof needed === "number" ? json(route, { detail: "Not Found" }, needed) : json(route, { needed: needed && !log.setups.length });
     if (path === "/api/setup" && request.method() === "POST") {
       log.setups.push(request.postDataJSON());
       log.headers.push(request.headers()["x-ticketflow-request"]);
       return answer ? answer(route) : json(route, profile("owner", { display_name: "Fictional Owner", organization_name: "Fictional Paving Co" }));
     }
-    if (path === "/api/auth/me") return log.setups.length ? json(route, profile("owner", { organization_name: "Fictional Paving Co" })) : json(route, { detail: "Sign in" }, 401);
+    if (path === "/api/auth/me") return log.setups.length && !answer ? json(route, profile("owner", { organization_name: "Fictional Paving Co" })) : json(route, { detail: "Sign in" }, 401);
     if (path === "/api/projects") return json(route, []);
     if (path === "/api/dashboard") return json(route, { tickets: 0, needs_review: 0, flagged: 0, verified: 0, total_tons: "0", pending_tons: "0", total_cost: "0", unpriced_tickets: 0, pending_cost_tickets: 0, by_supplier: [], by_material: [], recent_batches: [] });
     if (path === "/api/onboarding") return json(route, { complete: false, steps: [{ key: "project", title: "Create a project", detail: "Each upload belongs to one job.", href: "/projects", done: false }] });
@@ -77,7 +77,7 @@ test("a refusal from another computer is shown as the server words it", async ({
   await page.goto("/login");
   const form = await fillSetup(page);
   await form.getByRole("button", { name: "Create company and sign in" }).click();
-  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toContainText("only works from the computer TicketFlow runs on");
+  await expect(page.getByRole("alert").filter({ hasText: "First-time setup" })).toContainText("only works from the computer TicketFlow runs on");
 });
 
 for (const [name, needed] of [["already has accounts", false], ["doesn't offer setup yet", 404]]) {

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { mockWorkspace } from "./f_helpers.mjs";
+import { json, mockWorkspace } from "./f_helpers.mjs";
 
 // axe runs when @axe-core/playwright is installed. CI's install line doesn't add it
 // yet, so there these checks skip rather than fail. The focus checks below always run.
@@ -55,6 +55,7 @@ for (const [width, height, size] of [[1366, 768, "laptop"], [390, 844, "phone"]]
       test.skip(!AxeBuilder, "@axe-core/playwright isn't installed here");
       await page.setViewportSize({ width, height });
       await mockWorkspace(page);
+      if (path === "/login") await page.route("**/api/auth/me", (route) => json(route, { detail: "Sign in" }, 401));
       await page.goto(path);
       await expect(ready(page)).toBeVisible();
       await page.waitForTimeout(300);

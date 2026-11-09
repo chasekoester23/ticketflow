@@ -55,6 +55,15 @@ export async function setUpCompany(body: { company_name: string; display_name: s
   return (await check(await apiFetch(`${API}/api/setup`, json("POST", body)))).json();
 }
 
+export type AccessRequest = {
+  company_name: string; contact_name: string; email: string; phone?: string;
+  monthly_tickets?: "under_500" | "500_2000" | "2000_10000" | "over_10000"; message?: string; website?: string;
+};
+/** Asks for a pilot workspace. It creates no account; someone follows up. */
+export async function requestAccess(body: AccessRequest): Promise<void> {
+  await check(await apiFetch(`${API}/api/access-requests`, json("POST", body)));
+}
+
 export async function logOut(): Promise<void> {
   await check(await apiFetch(`${API}/api/auth/logout`, { method: "POST" }));
 }

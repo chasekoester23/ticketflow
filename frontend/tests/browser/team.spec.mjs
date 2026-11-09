@@ -68,7 +68,7 @@ test("clerk can enter and save tickets but cannot approve, skip, or change price
   await expect(page.getByLabel(/Override rate/)).toHaveCount(0);
   await expect(page.getByText("Only a manager or owner can change a ticket’s rate.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Team", exact: true })).toHaveCount(0);
-  await expect(page.getByText("Cal Clerk")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Cal Clerk Clerk" })).toBeVisible();
 
   await page.getByLabel("Job location").fill("North gate");
   await page.getByRole("button", { name: "Save & next" }).click();

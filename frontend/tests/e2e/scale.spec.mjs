@@ -8,7 +8,7 @@ const API = process.env.NEXT_PUBLIC_API_URL;
 async function signIn(page) {
   await page.goto("/login");
   await page.getByLabel(/username/i).fill("demo-owner");
-  await page.getByLabel(/password/i).fill("demo-password-not-real");
+  await page.getByLabel(/^password$/i).fill("demo-password-not-real");
   await page.getByRole("button", { name: /sign in/i }).click();
   await page.waitForURL((url) => !url.pathname.includes("login"));
 }
