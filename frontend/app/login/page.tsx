@@ -71,6 +71,6 @@ export default function LoginPage() {
       <SubmitButton pending={pending} pendingText="Signing in…">Sign in</SubmitButton>
     </form>
     <p className="tf-pub-footnote">Forgot your password? An owner at your company can reset it from the Team page.</p>
-    <p className="tf-pub-switch">New to TicketFlow? <Link href="/signup">Create account</Link></p>
+    <p className="tf-pub-switch">New to TicketFlow? <Link href="/signup">Request access</Link></p>
   </PublicFrame>;
 }

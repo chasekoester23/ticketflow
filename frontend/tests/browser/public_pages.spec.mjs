@@ -35,12 +35,12 @@ test("a first-time visitor to the app lands on the welcome page, with no sign-in
 test("the welcome page leads to sign-in and to create account, and each leads back", async ({ page }) => {
   await mockPublic(page);
   await page.goto("/welcome");
-  await page.getByRole("main").getByRole("link", { name: "Sign in" }).click();
+  await page.getByRole("main").getByRole("link", { name: "Sign in" }).first().click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "Sign in to TicketFlow" })).toBeVisible();
   await page.getByRole("link", { name: "Back to home" }).click();
   await expect(page).toHaveURL(/\/welcome$/);
-  await page.getByRole("main").getByRole("link", { name: "Create account" }).click();
+  await page.getByRole("main").getByRole("link", { name: "Request access" }).first().click();
   await expect(page).toHaveURL(/\/signup$/);
   await expect(page.getByRole("form", { name: "Request access" })).toBeVisible();
 });
@@ -62,6 +62,43 @@ for (const path of ["/welcome", "/login", "/signup"]) {
     });
   }
 }
+
+test("every link on the site goes somewhere", async ({ page, request }) => {
+  await mockPublic(page);
+  await page.goto("/welcome");
+  const hrefs = await page.locator("a[href]").evaluateAll((links) => [...new Set(links.map((link) => link.getAttribute("href")))]);
+  expect(hrefs).toEqual(expect.arrayContaining(["/login", "/signup", "/welcome", "#tickets", "#invoices"]));
+  for (const href of hrefs) {
+    if (href.startsWith("#")) await expect(page.locator(href)).toHaveCount(1);
+    else expect((await request.get(href)).status(), href).toBe(200);
+  }
+});
+
+test("the site says signing up is gated, labels its examples, and loads nothing from other companies", async ({ page }) => {
+  const outside = [];
+  page.on("request", (call) => { const host = new URL(call.url()).hostname; if (!["127.0.0.1", "localhost"].includes(host)) outside.push(call.url()); });
+  await mockPublic(page);
+  await page.goto("/welcome");
+  await page.evaluate(() => document.fonts.ready);
+  await expect(page.getByRole("main").getByText("You can't sign yourself up yet.")).toBeVisible();
+  await expect(page.getByRole("contentinfo").getByText("fictional examples")).toBeVisible();
+  await expect(page.getByRole("img", { name: /review screen/ })).toBeVisible();
+  expect(await page.locator("img").evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => document.fonts.check('600 40px "Barlow Semi Condensed"'))).toBe(true);
+  expect(outside).toEqual([]);
+});
+
+test("the site can be walked from the keyboard, with a visible focus ring", async ({ page }) => {
+  await mockPublic(page);
+  await page.goto("/welcome");
+  const seen = [];
+  for (let press = 0; press < 7; press += 1) {
+    await page.keyboard.press("Tab");
+    seen.push(await page.evaluate(() => ({ text: document.activeElement.textContent.trim(), outline: getComputedStyle(document.activeElement).outlineStyle })));
+  }
+  expect(seen.map((item) => item.text)).toEqual(expect.arrayContaining(["Tickets", "Invoices", "Sign in", "Request access"]));
+  expect(seen.every((item) => item.outline !== "none")).toBe(true);
+});
 
 test("a redirect target in the address is ignored after sign-in", async ({ page }) => {
   await mockPublic(page);
