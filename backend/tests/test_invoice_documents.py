@@ -120,7 +120,8 @@ def test_confirm_requires_a_complete_line_in_tons(client):
     assert client.get("/api/invoice-comparisons").json() == []
 
     # A person who reads the invoice can correct it, and each change is recorded.
-    assert client.patch(url, json={"date_from": "2026-10-01", "date_to": "2026-10-31", "unit": "ton"}).status_code == 200
+    assert client.patch(url, json={"date_from": "2026-10-01", "date_to": "2026-10-31", "unit": "ton"},
+                        headers={"If-Match": line["revision"]}).status_code == 200
     assert client.post(url + "/confirm").status_code == 200
     actions = [e["action"] for e in client.get(f"/api/invoice-documents/{document['id']}/history").json()]
     assert actions[0] == "uploaded" and actions[-1] == "confirmed"
@@ -212,7 +213,7 @@ def test_invalid_ticket_list_on_a_draft_is_refused_at_confirm(client):
     project = _project(client)
     document = _upload(client, project=project).json()
     url = f"/api/invoice-documents/{document['id']}/lines/{document['lines'][0]['id']}"
-    client.patch(url, json={"ticket_list": "10482\t-5"})
+    client.patch(url, json={"ticket_list": "10482\t-5"}, headers={"If-Match": document["lines"][0]["revision"]})
     refused = client.post(url + "/confirm")
     assert refused.status_code == 422 and "Ticket list needs fixes" in refused.json()["detail"]
     assert client.get("/api/invoice-comparisons").json() == []
@@ -357,3 +358,31 @@ def test_migration_is_additive(tmp_path):
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == head_revision()
         assert conn.execute("SELECT COUNT(*) FROM invoice_documents").fetchone()[0] == 0
+
+
+def test_a_draft_edit_never_overwrites_figures_someone_else_saved_meanwhile(client):
+    """Two managers open the same draft. The second save, made against figures that
+    are no longer current, is refused and changes nothing; so is a save that doesn't
+    say which figures it was made against."""
+    document = _upload(client).json()
+    line = document["lines"][0]
+    url = f"/api/invoice-documents/{document['id']}/lines/{line['id']}"
+    first = client.patch(url, json={"billed_quantity": "11.500"}, headers={"If-Match": line["revision"]})
+    assert first.status_code == 200
+    stale = client.patch(url, json={"billed_quantity": "99.000"}, headers={"If-Match": line["revision"]})
+    assert stale.status_code == 409 and stale.json()["detail"]["code"] == "line_changed"
+    missing = client.patch(url, json={"billed_quantity": "99.000"})
+    assert missing.status_code == 428
+    after = client.get(f"/api/invoice-documents/{document['id']}").json()["lines"][0]
+    assert after["billed_quantity"] == "11.500" and after["revision"] == first.json()["revision"]
+    edits = [e for e in client.get(f"/api/invoice-documents/{document['id']}/history").json() if e["action"].startswith("edited:")]
+    assert [(e["old"], e["new"]) for e in edits] == [(line["billed_quantity"], "11.500")]
+    # With the current revision, the second manager's correction goes through.
+    assert client.patch(url, json={"billed_quantity": "12.000"}, headers={"If-Match": after["revision"]}).status_code == 200
+
+
+def test_a_pdf_holding_two_invoices_is_drafted_per_invoice_and_says_so(client):
+    from .test_t_invoice_pipeline import _two_page_invoice
+    document = _upload(client, _two_page_invoice("FIRST-1", "SECOND-2")).json()
+    assert sorted(l["invoice_number"] for l in document["lines"]) == ["FIRST-1", "SECOND-2"]
+    assert "2 invoices" in document["message"] and "SECOND-2" in document["message"]

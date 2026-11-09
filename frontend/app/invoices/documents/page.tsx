@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  InvoiceDocument, InvoiceDraftLine, Project, addDraftLine, confirmDraftLine, getInvoiceDocument, invoiceOriginalUrl,
+  ApiError, InvoiceDocument, InvoiceDraftLine, Project, addDraftLine, confirmDraftLine, getInvoiceDocument, invoiceOriginalUrl,
   invoicePageUrl, listInvoiceDocuments, listProjects, rejectDraftLine, saveDraftLine, uploadInvoiceDocument, voidInvoiceDocument,
 } from "../../../lib/api";
 import { useAccount } from "../../account-context";
@@ -54,12 +54,16 @@ function LineForm({ line, document, projects, canManage, onDone, onError }: {
       await action();
       await onDone();
     } catch (exc) {
+      if ((exc as ApiError).code === "line_changed") {
+        // Someone else saved this line first. Show their figures, never ours on top of them.
+        await onDone().catch(() => undefined);
+      }
       onError((exc as Error).message);
     } finally {
       setBusy(false);
     }
   }
-  const save = async () => { if (dirty) await saveDraftLine(document.id, line.id, changes()); };
+  const save = async () => { if (dirty) await saveDraftLine(document.id, line.id, changes(), line.revision); };
 
   return <article className="rounded border border-[#e2e7ec] p-4" aria-label={"Draft line " + line.id}>
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

@@ -281,7 +281,6 @@ def test_the_same_scan_and_invoice_uploaded_at_once_cant_double_count(stack):
         assert db.scalar(select(func.count()).select_from(InvoiceDocument)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: upload_document writes the file before db.flush(), and a simultaneous duplicate fails at that flush, outside the try that deletes the file, so each refused copy stays in storage")
 def test_refused_simultaneous_invoice_copies_leave_no_file_behind(race, monkeypatch):
     """Both requests are held until each has passed the duplicate check and stored its
     file, so the race happens every time, on either database."""
@@ -569,7 +568,8 @@ ACTIONS = {
     "correct_comparison": lambda c, w: c.put(f"/api/invoice-comparisons/{w['line']['id']}", json={
         **NEW_LINE, "invoice_number": "I-1", "date_from": "2026-09-01", "date_to": "2026-09-02", "ticket_list": "10000\t16"}),
     "link_tickets": lambda c, w: c.post(f"/api/invoice-comparisons/{w['line']['id']}/ticket-links", json={"ticket_ids": [1]}),
-    "edit_draft": lambda c, w: c.patch(f"/api/invoice-documents/{w['document']['id']}/lines/{w['document']['lines'][0]['id']}", json={"billed_quantity": "7", "supplier_name": "X"}),
+    "edit_draft": lambda c, w: c.patch(f"/api/invoice-documents/{w['document']['id']}/lines/{w['document']['lines'][0]['id']}", json={"billed_quantity": "7", "supplier_name": "X"},
+                                       headers={"If-Match": w["document"]["lines"][0]["revision"]}),
     "confirm_draft": lambda c, w: c.post(f"/api/invoice-documents/{w['document']['id']}/lines/{w['document']['lines'][0]['id']}/confirm"),
     "void_document": lambda c, w: c.post(f"/api/invoice-documents/{w['document']['id']}/void"),
     "set_rate": lambda c, w: c.put("/api/rates", json={"supplier_id": w["supplier"], "material_id": w["material"], "unit_price": "11"}),
@@ -584,8 +584,9 @@ def _prepare(client, world) -> None:
     draft = world["document"]["lines"][0]
     response = client.patch(f"/api/invoice-documents/{world['document']['id']}/lines/{draft['id']}", json={
         "supplier_name": "Example Aggregates", "material_name": "Sand", "date_from": "2026-09-10", "date_to": "2026-09-15",
-        "unit": "ton", "project_id": 1})
+        "unit": "ton", "project_id": 1}, headers={"If-Match": draft["revision"]})
     assert response.status_code == 200, response.text
+    draft["revision"] = response.json()["revision"]
 
 
 @pytest.mark.parametrize("name", list(ACTIONS))
@@ -640,7 +641,6 @@ def test_a_failed_commit_leaves_nothing_half_saved(client, name):
     assert nth > 1 or name == "rename", f"{name} never committed, so this tested nothing"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: upload_document only cleans up its stored file on IntegrityError, so a database failure at commit leaves an orphan copy of the invoice in storage")
 def test_a_failed_invoice_upload_leaves_no_stored_file(client):
     engine = _session().get_bind()
     with FailAtWrite(engine, None, on_commit=1):

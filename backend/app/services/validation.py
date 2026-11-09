@@ -73,6 +73,9 @@ def parse_tonnage(value) -> Decimal | None:
         return None
 
 
+EARLIEST_PLAUSIBLE_DATE = date(2000, 1, 1)
+
+
 def compute_flags(
     *,
     ticket_number: str | None,
@@ -94,6 +97,10 @@ def compute_flags(
         flags.append("Date unreadable" if raw_date else "Date missing")
     elif delivery_date > today:
         flags.append("Date is in the future")
+    elif delivery_date < EARLIEST_PLAUSIBLE_DATE:
+        # 1900-01-01 is a spreadsheet's empty date and 0001-01-01 a program's; neither
+        # is a delivery. A person confirms the real date before approval.
+        flags.append(f"Date is before {EARLIEST_PLAUSIBLE_DATE.year}: check it against the ticket")
     if not material_type:
         flags.append("Material missing")
     if tonnage is None:
