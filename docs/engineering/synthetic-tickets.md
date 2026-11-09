@@ -159,7 +159,7 @@ Read it this way:
 
 ### Findings in TicketFlow
 
-Each has a strict-xfail test in `backend/tests/test_synthetic_findings.py`, which turns into a failure (XPASS) once behaviour changes.
+Each had a strict-xfail test in `backend/tests/test_synthetic_findings.py`. **B1, L1 and L2 are fixed on `feature/d3-splitter-fixes`.** Their tests now pass, and the before/after measurement, gates and held-out check are in [splitter-results.md](splitter-results.md). The text below describes the code as first measured.
 
 - **B1, bug: clean 1-up tickets read as "faint", and a good file fails as "No ticket content detected".** `splitter.assess_slot` shrinks the whole crop to 200×200 px before counting dark pixels. On a 1-up page (1700×2200 px at 200 dpi) that is a 9–11× reduction, and a 0.5 mm pen stroke averages to light grey. 7 of the 10 layouts, neatly written on a clean scan, measure 0.0006–0.0019 on the thumbnail (threshold 0.002) against 0.007–0.012 at full resolution. Detection depends on the crop's size, not its content: 30 of 35 single-page tickets in the benchmark set (5 of 8 easy ones) and 10 of 13 in the mini set needed a person. When every slot in a file is faint, `process_file` fails the file with "No ticket content detected in this file... upload a corrected document": wrong advice for a good scan. Nothing is lost (the manifest lets a person mark the slot, and the batch retries), but every such ticket costs a click and a retry. Not fixed here: the thresholds guard against losing tickets, and changing them needs calibration on real scans. A likely fix is to count ink at a resolution tied to the page's dpi rather than a fixed thumbnail.
 - **Faint detection on degraded 2×2 scans.** Only 12% of extreme and 70% of hard tickets were detected automatically; the rest were "faint" and needed a person. That is the designed behaviour ("a false alarm costs one click; a lost ticket costs far more"), and nothing was lost, but it is a lot of clicks on bad scans. In hard and extreme pages, blank slots also read as faint because of noise and lighting, so people confirm them blank.
@@ -182,7 +182,7 @@ Worth recording, because they are exactly what makes synthetic numbers wrong wit
 
 ## Next steps
 
-1. Fix or recalibrate B1 against a few real 1-up scans (count ink at the page's dpi), then flip its xfails.
-2. Run the same evaluation on real pilot scans with person-written labels in `eval_data/real/`, and compare crop completeness with these synthetic rates before deciding on crop adjustment (F6).
-3. If crop adjustment is built, this benchmark is its regression test: crop completeness and core fields cut by difficulty should rise without phantom tickets.
+1. Done: B1 is fixed and the adaptive 2×2 crop is built ([splitter-results.md](splitter-results.md)). Still to do: calibrate both on a few real, owner-approved scans.
+2. Run the same evaluation on real pilot scans with person-written labels in `eval_data/real/`, and compare crop completeness with these synthetic rates.
+3. This benchmark stays the splitter's regression test: crop completeness and core fields cut by difficulty must not fall, and phantom tickets must stay at zero.
 4. Add more layouts and a second glyph set before using any of this to compare OCR providers, and then only with `--i-authorize-paid-calls` and a budget.
