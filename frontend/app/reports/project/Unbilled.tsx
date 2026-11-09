@@ -67,13 +67,13 @@ export function Unbilled({ projectId }: { projectId: string }) {
       : report.total_tickets === 0 ? <p className="tf-empty">Every approved delivery on this project is listed or covered by an invoice line.</p>
       : <>
         <div className="grid divide-y divide-[#e7eaee] border-b border-[#e7eaee] sm:grid-cols-3 sm:divide-x sm:divide-y-0" data-testid="unbilled-totals">
-          <div className="px-5 py-3"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#5b6878]">Tickets</p>
+          <div className="px-4 py-2.5"><p className="tf-stat-label">Tickets</p>
             <p className="mt-1 text-[20px] font-bold tabular-nums">{report.total_tickets.toLocaleString()}</p>
             <p className="text-[11px] text-[#5b6878]">Each one is listed below and in the CSV</p></div>
-          <div className="px-5 py-3"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#5b6878]">Tons</p>
+          <div className="px-4 py-2.5"><p className="tf-stat-label">Tons</p>
             <p className="mt-1 text-[20px] font-bold tabular-nums">{tons(report.total_tons)}</p>
             <p className="text-[11px] text-[#5b6878]">Approved tons, as entered</p></div>
-          <div className="px-5 py-3"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#5b6878]">Approved cost</p>
+          <div className="px-4 py-2.5"><p className="tf-stat-label">Approved cost</p>
             <p className="mt-1 text-[20px] font-bold tabular-nums">{money(report.total_cost)}</p>
             <p className="text-[11px] text-[#5b6878]">At the rates locked when each was approved</p></div>
         </div>

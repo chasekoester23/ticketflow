@@ -311,7 +311,7 @@ export default function RecordsPage() {
         <thead><tr>
           {canEdit && <th className="w-8"><input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={togglePage} /></th>}
           {HEADERS.map((h) => <th key={h.label} className={`${h.align ?? ""} ${h.narrow ? "tf-hide-narrow" : ""}`} aria-sort={h.sort === sort ? (direction === "asc" ? "ascending" : "descending") : undefined}>
-            {h.sort ? <button type="button" className="font-[inherit] uppercase tracking-[inherit] hover:text-[#19232e]" onClick={() => toggleSort(h.sort as RecordsSort)}>
+            {h.sort ? <button type="button" className="font-[inherit] hover:text-[#19232e]" onClick={() => toggleSort(h.sort as RecordsSort)}>
               {h.label}{h.sort === sort && <span aria-hidden="true"> {direction === "asc" ? "▲" : "▼"}</span>}
             </button> : h.label}
           </th>)}

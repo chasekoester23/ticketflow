@@ -355,15 +355,15 @@ export default function InvoiceComparisonPage() {
 
     {overview && overview.lines > 0 && <section className="tf-panel" aria-label="Invoice overview">
       <div className="grid divide-y divide-[#e7eaee] sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
-        <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Billed material</p>
+        <div className="px-4 py-2.5"><p className="tf-stat-label">Billed material</p>
           <p className="mt-1.5 text-[22px] font-bold tabular-nums text-[#192632]">{money(overview.billed)}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">{overview.lines} lines</p></div>
-        <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Approved cost</p>
+        <div className="px-4 py-2.5"><p className="tf-stat-label">Approved cost</p>
           <p className="mt-1.5 text-[22px] font-bold tabular-nums text-[#192632]">{money(overview.verified)}</p>
           <p className="mt-1 text-[11px] text-[#5f6c7b]">{overview.lines_unresolved ? overview.lines_unresolved + " line(s) unresolved and left out" : "At locked rates"}</p></div>
-        <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Differences found</p>
+        <div className="px-4 py-2.5"><p className="tf-stat-label">Differences found</p>
           <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + (overview.by_status.discrepancy ? "text-[#a73631]" : "text-[#192632]")}>{overview.by_status.discrepancy ?? 0}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Lines to take up with a supplier
             {(overview.by_status.discrepancy ?? 0) > 0 && <button type="button" className="tf-link ml-1.5" onClick={() => setResultFilter("discrepancy")}>Show them</button>}</p></div>
-        <div className="px-5 py-4"><p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">Can&apos;t settle yet</p>
+        <div className="px-4 py-2.5"><p className="tf-stat-label">Can&apos;t settle yet</p>
           <p className={"mt-1.5 text-[22px] font-bold tabular-nums " + ((overview.by_status.incomplete || overview.by_status.no_verified_tickets) ? "text-[#a3511d]" : "text-[#192632]")}>{(overview.by_status.incomplete ?? 0) + (overview.by_status.no_verified_tickets ?? 0)}</p><p className="mt-1 text-[11px] text-[#5f6c7b]">Waiting on deliveries or review
             {((overview.by_status.incomplete ?? 0) + (overview.by_status.no_verified_tickets ?? 0)) > 0 && <button type="button" className="tf-link ml-1.5" onClick={() => setResultFilter("incomplete")}>Show them</button>}</p></div>
       </div>

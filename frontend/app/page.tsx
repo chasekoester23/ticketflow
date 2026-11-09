@@ -9,10 +9,10 @@ const tons = (v: string | number) => Number(v).toLocaleString(undefined, { maxim
 const date = (v: string) => new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 
 function Metric({ label, value, note, attention = false }: { label: string; value: string | number; note: string; attention?: boolean }) {
-  return <div className={`min-w-0 border-r border-[#e1e5e9] px-5 py-5 last:border-r-0 ${attention ? "bg-[#fffaf5]" : "bg-white"}`}>
-    <p className="text-[11px] font-bold tracking-[0.055em] text-[#637181] uppercase">{label}</p>
+  return <div className={`min-w-0 border-r border-[#e1e5e9] px-4 py-2.5 last:border-r-0 ${attention ? "bg-[#fffaf5]" : "bg-white"}`}>
+    <p className="tf-stat-label">{label}</p>
     <p className={`mt-2 text-[27px] font-bold leading-none tracking-[-0.045em] tabular-nums ${attention ? "text-[#a3511d]" : "text-[#192632]"}`}>{value}</p>
-    <p className="mt-3 text-[11px] leading-5 text-[#5f6c7b]">{note}</p>
+    <p className="mt-1 text-[11px] leading-4 text-[#5f6c7b]">{note}</p>
   </div>;
 }
 
@@ -96,8 +96,8 @@ export default function DashboardPage() {
 
     {data ? <>
       <section className="tf-panel">
-        <div className="border-b border-[#dce1e6] px-5 py-3.5 flex items-center justify-between gap-3">
-          <h2 className="text-[12px] font-bold text-[#344352]">Portfolio snapshot</h2>
+        <div className="border-b border-[#dce1e6] px-4 py-2 flex items-center justify-between gap-3">
+          <h2 className="tf-panel-title">Portfolio snapshot</h2>
           <span className="text-[11px] text-[#5f6c7b]">Confirmed figures only where indicated</span>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-5">

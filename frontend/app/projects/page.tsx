@@ -50,7 +50,7 @@ export default function ProjectsPage() {
     {canManage && <section className="tf-panel">
       <div className="tf-panel-heading">
         <div><h2 className="tf-panel-title">Create a project</h2><p className="tf-panel-description">Enter the job number and name used by your team</p></div>
-        <span className="text-[10px] font-semibold uppercase tracking-[.08em] text-[#5f6c7b]">PROJECT SETUP</span>
+        <span className="tf-eyebrow">Project setup</span>
       </div>
       <form className="grid items-end gap-4 p-5 md:grid-cols-2 xl:grid-cols-[150px_1.2fr_1fr_1fr_auto]"
         onSubmit={(event) => { event.preventDefault(); void add(); }}>

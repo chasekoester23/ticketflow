@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ApiError, Failure, HistoryEntry, Ticket, describeFailure, getTicketHistory, patchTicket, ticketAction } from "../../lib/api";
 import { TicketDraft, draftsFor, removeDraft, removeTicketDrafts, saveDraft } from "../../lib/drafts";
 import { useAccount } from "../account-context";
@@ -22,6 +22,11 @@ export const STATUS_LABEL: Record<string, string> = {
 };
 
 type FieldKey = "ticket_number" | "delivery_date" | "material_type" | "tonnage" | "supplier" | "job_location";
+// Each row of the form adds up to six columns. The order is also the Enter and Tab order.
+const FIELD_SPAN: Record<FieldKey, string> = {
+  ticket_number: "tf-rv-span3", delivery_date: "tf-rv-span3", material_type: "tf-rv-span4", tonnage: "tf-rv-span2 tf-rv-tons",
+  supplier: "", job_location: "",
+};
 const FIELDS: { key: FieldKey; label: string; type?: string; flagWords: string[]; critical?: boolean; repeats?: boolean }[] = [
   { key: "ticket_number", label: "Ticket number", flagWords: ["Ticket number"], critical: true },
   { key: "delivery_date", label: "Delivery date", type: "date", flagWords: ["Date"], critical: true, repeats: true },
@@ -80,6 +85,8 @@ const ACTION_NOUN: Record<ActionName, string> = { save: "save", verify: "approva
  * when its ticket's revision changes, and a save can succeed before an approval fails.
  */
 export type ActionFailure = Failure & { ticketId: number; action: ActionName; note?: string; advance: boolean };
+
+const SUBMIT_KEYS = typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌘↵" : "Ctrl ↵";
 
 const clockTime = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
@@ -369,24 +376,27 @@ export const ReviewForm = memo(function ReviewForm({
   }, []);
 
   return (
-    <aside ref={form} className="tf-review-pane rounded-md border border-[#dce1e6] bg-white">
-      <div className="tf-review-pane-scroll space-y-2.5 p-3.5">
-        <div className="border-b border-[#e9edf0] pb-2">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-[14px] font-bold text-[#1d2b38]">{manual ? "Manual ticket entry" : "Extracted ticket information"}</h3>
-            <span className={`tf-status ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
-          </div>
-          <p className="mt-1 text-[11px] text-[#657182]">
-            {manual ? <>No AI populated these values. Required fields entered: <strong className="tabular-nums text-[#293948]">{filled} / 6</strong></> : "Compare every value with the scan, then accept."}
-          </p>
+    <aside ref={form} className="tf-panel tf-review-pane tf-review-form">
+      <div className="tf-review-pane-scroll tf-rv-body">
+        <div className="tf-rv-head">
+          <h3>{manual ? "Manual ticket entry" : "Extracted ticket information"}</h3>
+          {manual && <span className="tf-rv-count">{filled} of 6 entered</span>}
+          <span className={`tf-status ${STATUS_STYLE[ticket.status]}`}>{STATUS_LABEL[ticket.status]}</span>
         </div>
-        {restoredAt && <div role="status" data-testid="draft-restored" className="rounded border border-[#e5b993] bg-[#fff7ee] px-3 py-2 text-xs leading-relaxed text-[#7c4518]">
+        {ticket.status === "verified" && (
+          <p className="tf-alert tf-alert-good" data-testid="verified-by">
+            {ticket.verified_by
+              ? <>Approved by <strong>{ticket.verified_by}</strong>{ticket.verified_at ? <> on {new Date(ticket.verified_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</> : null}</>
+              : <>Approved before individual accounts were introduced; the approver was not recorded.</>}
+          </p>
+        )}
+        {restoredAt && <div role="status" data-testid="draft-restored" className="tf-alert tf-alert-warn">
           <strong>Restored unsaved work</strong> you typed on {clockTime(restoredAt)}. It isn&apos;t saved yet: check it against the scan, then save or accept.
           <button type="button" className="tf-link ml-2" onClick={discardRestored}>Discard it</button>
         </div>}
-        {olderDraft && <section aria-label="Values you typed on an earlier version" data-testid="draft-conflict" className="rounded border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
-          <p className="font-bold">This ticket changed after you typed these values.</p>
-          <p className="mt-0.5 leading-relaxed">You typed them on {clockTime(olderDraft.savedAt)}. They haven&apos;t been applied. Compare them with the current values and the scan.</p>
+        {olderDraft && <section aria-label="Values you typed on an earlier version" data-testid="draft-conflict" className="tf-alert tf-alert-warn">
+          <p className="font-semibold">This ticket changed after you typed these values.</p>
+          <p className="mt-0.5">You typed them on {clockTime(olderDraft.savedAt)}. They haven&apos;t been applied. Compare them with the current values and the scan.</p>
           <table className="mt-2 w-full text-left text-[11px]">
             <thead><tr><th className="pb-1 pr-2 font-semibold">Field</th><th className="pb-1 pr-2 font-semibold">You typed</th><th className="pb-1 pr-2 font-semibold">Current</th><th><span className="sr-only">Choose</span></th></tr></thead>
             <tbody>{Object.entries(olderDraft.typed).map(([key, text]) => <tr key={key} className="border-t border-amber-200 align-top">
@@ -397,124 +407,114 @@ export const ReviewForm = memo(function ReviewForm({
             </tr>)}</tbody>
           </table>
           <div className="mt-2 flex flex-wrap gap-2">
-            <button type="button" className="tf-secondary-button !min-h-0 !py-1" onClick={() => applyTyped(Object.keys(olderDraft.typed))}>Use all I typed</button>
-            <button type="button" className="tf-secondary-button !min-h-0 !py-1" onClick={dropOlderDraft}>Discard what I typed</button>
+            <button type="button" className="tf-tool" onClick={() => applyTyped(Object.keys(olderDraft.typed))}>Use all I typed</button>
+            <button type="button" className="tf-tool" onClick={dropOlderDraft}>Discard what I typed</button>
           </div>
         </section>}
-        {ticket.error && <p className="text-sm text-red-700">{ticket.error}</p>}
-        {ticket.flag_note && <p className="rounded border border-[#e5b993] bg-[#fff7ee] px-3 py-2 text-xs text-[#7c4518]" data-testid="flag-note">
-          <strong>Set aside:</strong> {ticket.flag_note}
-        </p>}
-        {flags.length > 0 && <ul className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          {flags.map((f) => <li key={f}>• {f}</li>)}
+        {ticket.error && <p className="tf-alert tf-alert-bad">{ticket.error}</p>}
+        {ticket.duplicates.length > 0 && <ul className="tf-alert tf-alert-bad">
+          <li className="font-semibold">Possible duplicate</li>
+          {ticket.duplicates.map((d) => <li key={d}>{d}</li>)}
         </ul>}
-        {ticket.duplicates.length > 0 && <ul className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-900">
-          <li className="font-bold">Possible duplicate</li>
-          {ticket.duplicates.map((d) => <li key={d}>• {d}</li>)}
+        {ticket.flag_note && <p className="tf-alert tf-alert-warn" data-testid="flag-note"><strong>Set aside:</strong> {ticket.flag_note}</p>}
+        {flags.length > 0 && <ul className="tf-alert tf-alert-warn">
+          {flags.map((f) => <li key={f}>{f}</li>)}
         </ul>}
-        {canEdit && carry.length > 0 && <button id="fill-repeats" type="button" onClick={fillRepeats}
-          className="flex w-full items-center justify-between gap-2 rounded border border-[#dce1e6] bg-[#f8f9fa] px-2.5 py-1.5 text-left text-[11px] font-semibold text-[#39495b] hover:bg-[#f1f3f5]">
+        {canEdit && carry.length > 0 && <button id="fill-repeats" type="button" onClick={fillRepeats} className="tf-rv-carry">
           <span>{CARRY_LABEL}: same as previous ticket</span><kbd className="tf-kbd">Alt+D</kbd>
         </button>}
+        <div className="tf-rv-fields">
         {FIELDS.map((f, index) => {
           const said = message(f.key);
           const showsAsRead = ticket.as_read?.[f.key] !== undefined && ticket.as_read[f.key] !== values[f.key];
           const describedBy = [said && "message-" + f.key, showsAsRead && "as-read-" + f.key].filter(Boolean).join(" ") || undefined;
-          return <div key={f.key}>
-          <label htmlFor={"review-" + f.key} className={"mb-0.5 block text-[11px] text-[#526273] " + (f.critical ? "font-bold" : "font-medium")}>
-            {f.label}{f.critical && <span className="ml-1 font-normal text-[#5f6c7b]">· check against the scan</span>}
-          </label>
-          <input
-            id={"review-" + f.key}
-            list={f.key === "supplier" ? "catalog-suppliers" : f.key === "material_type" ? "catalog-materials" : undefined}
-            aria-describedby={describedBy}
-            aria-invalid={said?.tone === "problem" ? true : undefined}
-            type={f.type === "number" ? "text" : f.type ?? "text"}
-            inputMode={f.type === "number" ? "decimal" : undefined}
-            value={values[f.key]}
-            readOnly={!canEdit || saving}
-            onKeyDown={(event) => nextOnEnter(event, index)}
-            onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
-            onBlur={() => leftField(f.key)}
-            className={`w-full rounded border px-2.5 py-1.5 text-sm text-[#19232e] outline-none focus:ring-2 focus:ring-[#e6a97b] read-only:bg-[#f6f7f8] ${
-              said?.tone === "problem" ? "border-red-400" : said?.tone === "warning" || flaggedFor(f.flagWords) ? "border-amber-400 bg-amber-50" : "border-[#cfd6de]"
-            }`}
-          />
-          <div aria-live="polite">{said && <p id={"message-" + f.key} data-testid={"message-" + f.key}
-            className={"mt-1 text-[11px] font-semibold leading-snug " + (said.tone === "problem" ? "text-red-700" : "text-amber-800")}>{said.text}</p>}</div>
-          {showsAsRead && (
-            <p id={"as-read-" + f.key} className="mt-1 text-[11px] text-[#657182]">Read from the ticket: {ticket.as_read?.[f.key]}</p>
-          )}
-          {canEdit && ticket.suggestions?.[f.key] && ticket.suggestions[f.key] !== values[f.key] && (
-            <button type="button" className="tf-link mt-1 text-[11px]"
-              onClick={() => setValues({ ...values, [f.key]: ticket.suggestions?.[f.key] ?? values[f.key] })}>
-              Use your catalog name: {ticket.suggestions[f.key]}
-            </button>
-          )}
-          {canEdit && f.key === "delivery_date" && !values[f.key] && previous[f.key] && (
-            <button type="button" className="tf-link mt-1 text-[11px]"
-              onClick={() => setValues({ ...values, [f.key]: previous[f.key] as string })}>
-              Same date as previous ticket: {previous[f.key]}
-            </button>
-          )}
-        </div>;
+          const notes = <>
+            <div aria-live="polite">{said && <p id={"message-" + f.key} data-testid={"message-" + f.key}
+              className={"tf-rv-note " + (said.tone === "problem" ? "text-red-700" : "text-amber-800")}>{said.text}</p>}</div>
+            {showsAsRead && <p id={"as-read-" + f.key} className="tf-rv-note tf-rv-asread">Read from the ticket: {ticket.as_read?.[f.key]}</p>}
+            {canEdit && ticket.suggestions?.[f.key] && ticket.suggestions[f.key] !== values[f.key] && (
+              <button type="button" className="tf-link tf-rv-note"
+                onClick={() => setValues({ ...values, [f.key]: ticket.suggestions?.[f.key] ?? values[f.key] })}>
+                Use your catalog name: {ticket.suggestions[f.key]}
+              </button>
+            )}
+            {canEdit && f.key === "delivery_date" && !values[f.key] && previous[f.key] && (
+              <button type="button" className="tf-link tf-rv-note"
+                onClick={() => setValues({ ...values, [f.key]: previous[f.key] as string })}>
+                Same date as previous ticket: {previous[f.key]}
+              </button>
+            )}
+          </>;
+          // The tons box is narrow, so what's said about it runs the full width beneath its row.
+          const wideNotes = f.key === "tonnage";
+          return <Fragment key={f.key}>
+            <div className={`tf-rv-field ${FIELD_SPAN[f.key]} ${f.critical ? "tf-rv-critical" : ""}`}>
+              <label htmlFor={"review-" + f.key}>{f.label}</label>
+              <input
+                id={"review-" + f.key}
+                list={f.key === "supplier" ? "catalog-suppliers" : f.key === "material_type" ? "catalog-materials" : undefined}
+                aria-describedby={describedBy}
+                aria-invalid={said?.tone === "problem" ? true : undefined}
+                type={f.type === "number" ? "text" : f.type ?? "text"}
+                inputMode={f.type === "number" ? "decimal" : undefined}
+                value={values[f.key]}
+                readOnly={!canEdit || saving}
+                onKeyDown={(event) => nextOnEnter(event, index)}
+                onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                onBlur={() => leftField(f.key)}
+                data-state={said?.tone === "problem" ? "problem" : said?.tone === "warning" || flaggedFor(f.flagWords) ? "warn" : undefined}
+                className="tf-rv-input"
+              />
+              {!wideNotes && notes}
+            </div>
+            {wideNotes && <div className="tf-rv-field tf-rv-widenotes">{notes}</div>}
+          </Fragment>;
         })}
+        </div>
         {catalogLists}
-        <div className="rounded border border-[#e2e7eb] bg-[#f7f8f9] p-3 text-xs">
+        <div className="tf-rv-cost">
           {ticket.status === "verified" && ticket.price_snapshot_state === "priced" && (
-            <p className="mb-2 text-emerald-800">Unit price locked at verification. Later changes to supplier rates will not change this ticket.</p>
+            <p className="tf-rv-muted">Unit price locked at verification. Later changes to supplier rates will not change this ticket.</p>
           )}
           {ticket.status === "verified" && ticket.price_snapshot_state === null && (
-            <p className="mb-2 font-medium text-amber-800">Legacy record: the historical rate is unknown. Enter the documented original rate as an override, then save and verify again.</p>
+            <p className="font-medium text-amber-800">Legacy record: the historical rate is unknown. Enter the documented original rate as an override, then save and verify again.</p>
           )}
           {ticket.status === "verified" && ticket.price_snapshot_state === "unpriced" && (
-            <p className="mb-2 font-medium text-amber-800">Verified without a price. Enter the correct rate as an override, then save and verify again.</p>
+            <p className="font-medium text-amber-800">Verified without a price. Enter the correct rate as an override, then save and verify again.</p>
           )}
           {ticket.unit_price !== null ? (
-            <p>
-              Rate: ${ticket.unit_price}/ton ({ticket.price_source === "override" ? "manual override" : "supplier rate"})
-              {ticket.cost ? <> · Cost: <strong>${ticket.cost}</strong></> : " · cost appears after you verify the tonnage"}
-            </p>
+            <div className="tf-rv-cost-line">
+              <span><strong>${ticket.unit_price}</strong>/ton <span className="tf-rv-muted">{ticket.price_source === "override" ? "manual override" : "supplier rate"}</span></span>
+              {ticket.cost ? <strong className="tf-rv-total">${ticket.cost}</strong> : <span className="tf-rv-muted">cost appears after you verify the tonnage</span>}
+            </div>
           ) : (
             <p className="text-amber-800">{ticket.pricing_notes.join(". ")}. Add it under Suppliers &amp; Pricing, or enter an override below.</p>
           )}
           {canOverride ? <>
-          <label htmlFor="review-rate-override" className="mt-2 block font-medium text-[#526273]">Override rate for this ticket ($/ton, optional)</label>
-          <input
-            id="review-rate-override"
-            inputMode="decimal"
-            value={override}
-            readOnly={saving}
-            aria-describedby={rate ? "message-rate" : undefined}
-            aria-invalid={rate ? true : undefined}
-            onChange={(e) => setOverride(e.target.value)}
-            className="mt-1 w-full rounded border border-[#cfd6de] px-3 py-2 text-sm read-only:bg-[#f6f7f8]"
-          />
-          {rate && <p id="message-rate" className="mt-1 text-[11px] font-semibold text-red-700">{rate.text}</p>}
-          </> : <p className="mt-2 text-[#526273]">{ticket.unit_price_override ? <>Rate override on this ticket: ${ticket.unit_price_override}/ton. </> : null}Only a manager or owner can change a ticket’s rate.</p>}
+            <div className="tf-rv-override">
+              <label htmlFor="review-rate-override">Override rate</label>
+              <input
+                id="review-rate-override"
+                aria-label="Override rate for this ticket ($/ton, optional)"
+                inputMode="decimal"
+                placeholder="$/ton"
+                value={override}
+                readOnly={saving}
+                aria-describedby={rate ? "message-rate" : undefined}
+                aria-invalid={rate ? true : undefined}
+                onChange={(e) => setOverride(e.target.value)}
+                className="tf-rv-input"
+              />
+            </div>
+            {rate && <p id="message-rate" className="tf-rv-note text-red-700">{rate.text}</p>}
+          </> : <p className="tf-rv-muted">{ticket.unit_price_override ? <>Rate override on this ticket: ${ticket.unit_price_override}/ton. </> : null}Only a manager or owner can change a ticket’s rate.</p>}
         </div>
-        {ticket.status === "verified" && (
-          <p className="rounded border border-[#cce4d2] bg-[#f3f9f4] px-3 py-2 text-xs text-[#216c43]" data-testid="verified-by">
-            {ticket.verified_by
-              ? <>Approved by <strong>{ticket.verified_by}</strong>{ticket.verified_at ? <> on {new Date(ticket.verified_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</> : null}</>
-              : <>Approved before individual accounts were introduced; the approver was not recorded.</>}
-          </p>
-        )}
-        {canVerify ? (
-          <p className="rounded border border-[#e2e7eb] bg-[#f7f8f9] px-3 py-2 text-xs leading-relaxed text-[#526273]">
-            <strong className="text-[#263442]">Your acceptance is required.</strong> Confirm that the ticket number, date, material, tons, supplier and job match the original. Only accepted tickets count toward verified totals. Your name is recorded with the approval.
-          </p>
-        ) : canEdit ? (
-          <p className="rounded border border-[#e2e7eb] bg-[#f7f8f9] px-3 py-2 text-xs leading-relaxed text-[#526273]">
-            <strong className="text-[#263442]">Enter and check each field, then save.</strong> A manager or owner approves quantities before they count toward project totals.
-          </p>
-        ) : (
-          <p className="tf-notice">View-only access. Ask an owner if you need to enter or approve tickets.</p>
-        )}
-        {canFlag && <label className="tf-field-label">Note if you set this aside (optional)
-          <input className="tf-field w-full font-normal" maxLength={300} value={note} onChange={(e) => setNote(e.target.value)}
+        {!canEdit && <p className="tf-notice">View-only access. Ask an owner if you need to enter or approve tickets.</p>}
+        {canFlag && <div className="tf-rv-field">
+          <label htmlFor="review-flag-note">Note if you set this aside (optional)</label>
+          <input id="review-flag-note" className="tf-rv-input" maxLength={300} value={note} onChange={(e) => setNote(e.target.value)}
             placeholder="e.g. tons smudged, ask the driver" />
-        </label>}
+        </div>}
         <TicketHistory ticketId={ticket.id} version={JSON.stringify([ticket.status, ticket.verified_at, ticket.unit_price_override, ...FIELDS.map((f) => ticket[f.key])])} />
       </div>
       {/* Below laptop width the form is part of a long page, so Accept and its messages stay at the screen's foot. */}
@@ -523,46 +523,44 @@ export const ReviewForm = memo(function ReviewForm({
         <p>{failure.message}</p>
         {failure.reference && <p className="mt-0.5">Reference: <code className="font-mono font-semibold">{failure.reference}</code></p>}
         <div className="mt-1.5 flex flex-wrap items-center gap-2">
-          {failure.canRetry && <button type="button" className="tf-secondary-button !min-h-0 !py-1" disabled={saving}
+          {failure.canRetry && <button type="button" className="tf-tool" disabled={saving}
             onClick={() => void attempt(failure.action, failure.note, failure.advance)}>{saving ? "Trying…" : "Try again"}</button>}
-          {failure.signIn && <a className="tf-secondary-button !min-h-0 !py-1" href="/login">Sign in again</a>}
+          {failure.signIn && <a className="tf-tool" href="/login">Sign in again</a>}
           <button type="button" className="font-semibold underline" onClick={() => onFailure(null)}>Dismiss</button>
         </div>
       </div>}
-      {dirty && <p className="border-t border-[#e9edf0] bg-[#fff8ec] px-4 py-1.5 text-xs font-semibold text-amber-800" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
-      {canEdit && <div className="flex flex-wrap gap-1.5 border-t border-[#dce1e6] bg-white p-2.5">
-        {canVerify && needed.length > 0 && <p id="accept-needs" data-testid="accept-needs" className="w-full text-[11px] leading-snug text-[#526273]">Still needed to accept: {needed.join(", ")}.</p>}
-        {canVerify ? <button
-          ref={acceptButton}
-          title="Review and accept ticket (Cmd/Ctrl + Enter)"
-          aria-describedby={needed.length > 0 ? "accept-needs" : undefined}
-          onClick={accept}
-          className="w-full rounded bg-[#c2541c] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#a64716] disabled:opacity-40"
-          disabled={saving || cannotSave || (ticket.status === "verified" && !dirty)}
-        >
-          {ticket.status === "verified" && !dirty ? "Accepted" : "Accept & next"}
-        </button> : <button
-          ref={acceptButton}
-          title="Save and go to the next ticket (Cmd/Ctrl + Enter)"
-          onClick={() => void attempt("save", undefined, true)}
-          className="w-full rounded bg-[#c2541c] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#a64716] disabled:opacity-40"
-          disabled={saving || cannotSave}
-        >
-          Save &amp; next
-        </button>}
-        <button disabled={saving || !dirty || cannotSave} onClick={() => void attempt("save")} className="rounded border border-[#cfd6dc] px-2.5 py-1.5 text-xs font-semibold text-[#39495b] disabled:opacity-40">
-          Save changes
-        </button>
-        {canFlag && <button disabled={saving} onClick={() => void attempt("flag", note, true)}
-          className="rounded border border-[#e5b993] bg-[#fff7ee] px-2.5 py-1.5 text-xs font-semibold text-[#97511e] hover:bg-[#fff0dc] disabled:opacity-40">
-          Flag for later
-        </button>}
-        {canSkip && <button disabled={saving} onClick={() => {
-          if (!window.confirm("Skip this ticket? Skipped tickets are excluded from exports and financial totals.")) return;
-          void attempt("skip", undefined, true);
-        }} className="rounded px-2 py-1.5 text-xs font-medium text-[#657182] hover:text-[#19232e] disabled:opacity-40">
-          Skip non-ticket
-        </button>}
+      {dirty && <p className="tf-rv-unsaved" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
+      {canEdit && <div className="tf-rv-actions">
+        {canVerify && needed.length > 0 && <p id="accept-needs" data-testid="accept-needs" className="tf-rv-needs">Still needed to accept: {needed.join(", ")}.</p>}
+        <div className="tf-rv-buttons">
+          <button disabled={saving || !dirty || cannotSave} onClick={() => void attempt("save")} className="tf-secondary-button">Save changes</button>
+          {canFlag && <button disabled={saving} onClick={() => void attempt("flag", note, true)} className="tf-secondary-button">Flag for later</button>}
+          {canVerify ? <button
+            ref={acceptButton}
+            title="Review and accept ticket (Cmd/Ctrl + Enter)"
+            aria-describedby={needed.length > 0 ? "accept-needs" : undefined}
+            onClick={accept}
+            className="tf-primary-button tf-rv-accept"
+            disabled={saving || cannotSave || (ticket.status === "verified" && !dirty)}
+          >
+            {ticket.status === "verified" && !dirty ? "Accepted" : <>Accept &amp; next<kbd aria-hidden="true">{SUBMIT_KEYS}</kbd></>}
+          </button> : <button
+            ref={acceptButton}
+            title="Save and go to the next ticket (Cmd/Ctrl + Enter)"
+            onClick={() => void attempt("save", undefined, true)}
+            className="tf-primary-button tf-rv-accept"
+            disabled={saving || cannotSave}
+          >
+            Save &amp; next<kbd aria-hidden="true">{SUBMIT_KEYS}</kbd>
+          </button>}
+        </div>
+        <div className="tf-rv-foot">
+          <span>{canVerify ? "Accepting records your name and counts these values toward totals." : "A manager or owner approves these before they count."}</span>
+          {canSkip && <button disabled={saving} onClick={() => {
+            if (!window.confirm("Skip this ticket? Skipped tickets are excluded from exports and financial totals.")) return;
+            void attempt("skip", undefined, true);
+          }} className="tf-link">Skip non-ticket</button>}
+        </div>
       </div>}
       </div>
     </aside>
@@ -594,9 +592,9 @@ function TicketHistory({ ticketId, version }: { ticketId: number; version: strin
 
   const show = (value: string | null) => value === null || value === "" ? "—" : (STATUS_LABEL[value] ?? value);
   return (
-    <details className="rounded border border-[#e2e7eb] text-xs" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary className="cursor-pointer select-none px-3 py-2 font-semibold text-[#46566a]">Change history</summary>
-      <div className="border-t border-[#e9edf0] px-3 py-2">
+    <details className="tf-rv-history" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary>Change history</summary>
+      <div className="pt-1.5">
         {failed ? <p className="text-red-700">Could not load history.</p>
           : entries === null ? <p className="text-[#657182]">Loading…</p>
           : entries.length === 0 ? <p className="text-[#657182]">No changes recorded yet.</p>

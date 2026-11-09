@@ -43,7 +43,7 @@ const GROUP_HEADERS = <>
 
 function Tile({ label, value, note, attention }: { label: string; value: string; note: string; attention?: boolean }) {
   return <div className="min-w-0 px-5 py-4">
-    <p className="text-[11px] font-bold uppercase tracking-[.055em] text-[#637181]">{label}</p>
+    <p className="tf-stat-label">{label}</p>
     <p className={`mt-1.5 text-[22px] font-bold tabular-nums ${attention ? "text-[#a3511d]" : "text-[#192632]"}`}>{value}</p>
     <p className="mt-1 text-[11px] text-[#5f6c7b]">{note}</p>
   </div>;
