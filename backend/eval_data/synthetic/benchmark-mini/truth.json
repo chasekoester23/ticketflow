@@ -1,0 +1,2674 @@
+{
+  "dataset": "benchmark-mini",
+  "invoice_checks": [],
+  "label_source": "synthetic",
+  "labelled_by": "ticketflow synthetic generator 1.0.0",
+  "labelled_independently": true,
+  "rate_sheet": [
+    {
+      "material": "No. 57 Stone",
+      "supplier": "Ridgeback Hollow Aggregates",
+      "unit_price": "47.75"
+    },
+    {
+      "material": "No. 8 Stone",
+      "supplier": "Ridgeback Hollow Aggregates",
+      "unit_price": "10.00"
+    },
+    {
+      "material": "Crusher Run",
+      "supplier": "Ridgeback Hollow Aggregates",
+      "unit_price": "9.25"
+    },
+    {
+      "material": "Dense Graded Aggregate",
+      "supplier": "Ridgeback Hollow Aggregates",
+      "unit_price": "11.50"
+    },
+    {
+      "material": "3/4 Crushed Limestone",
+      "supplier": "Ridgeback Hollow Aggregates",
+      "unit_price": "10.25"
+    },
+    {
+      "material": "Pea Gravel",
+      "supplier": "Ridgeback Hollow Aggregates",
+      "unit_price": "10.75"
+    },
+    {
+      "material": "Base Rock",
+      "supplier": "Ridgeback Hollow Aggregates",
+      "unit_price": "41.50"
+    },
+    {
+      "material": "Select Fill",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "10.75"
+    },
+    {
+      "material": "Common Fill",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "30.00"
+    },
+    {
+      "material": "Structural Fill",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "41.50"
+    },
+    {
+      "material": "Screened Topsoil",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "37.00"
+    },
+    {
+      "material": "No. 57 Stone",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "28.00"
+    },
+    {
+      "material": "No. 8 Stone",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "47.50"
+    },
+    {
+      "material": "Crusher Run",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "18.50"
+    },
+    {
+      "material": "Dense Graded Aggregate",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "34.00"
+    },
+    {
+      "material": "3/4 Crushed Limestone",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "43.50"
+    },
+    {
+      "material": "Pea Gravel",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "35.00"
+    },
+    {
+      "material": "Base Rock",
+      "supplier": "Cobalt Creek Materials",
+      "unit_price": "28.50"
+    },
+    {
+      "material": "No. 57 Stone",
+      "supplier": "Tallgrass Quarry Co",
+      "unit_price": "47.00"
+    },
+    {
+      "material": "No. 8 Stone",
+      "supplier": "Tallgrass Quarry Co",
+      "unit_price": "36.50"
+    },
+    {
+      "material": "Crusher Run",
+      "supplier": "Tallgrass Quarry Co",
+      "unit_price": "19.75"
+    },
+    {
+      "material": "Dense Graded Aggregate",
+      "supplier": "Tallgrass Quarry Co",
+      "unit_price": "11.75"
+    },
+    {
+      "material": "3/4 Crushed Limestone",
+      "supplier": "Tallgrass Quarry Co",
+      "unit_price": "35.50"
+    },
+    {
+      "material": "Pea Gravel",
+      "supplier": "Tallgrass Quarry Co",
+      "unit_price": "42.75"
+    },
+    {
+      "material": "Base Rock",
+      "supplier": "Tallgrass Quarry Co",
+      "unit_price": "24.75"
+    },
+    {
+      "material": "Washed Concrete Sand",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "21.50"
+    },
+    {
+      "material": "Mason Sand",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "39.50"
+    },
+    {
+      "material": "Fill Sand",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "24.00"
+    },
+    {
+      "material": "No. 57 Stone",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "44.00"
+    },
+    {
+      "material": "No. 8 Stone",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "30.25"
+    },
+    {
+      "material": "Crusher Run",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "26.25"
+    },
+    {
+      "material": "Dense Graded Aggregate",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "14.50"
+    },
+    {
+      "material": "3/4 Crushed Limestone",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "41.50"
+    },
+    {
+      "material": "Pea Gravel",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "25.25"
+    },
+    {
+      "material": "Base Rock",
+      "supplier": "Ironvale Sand & Gravel",
+      "unit_price": "33.50"
+    },
+    {
+      "material": "Surface Mix 9.5mm",
+      "supplier": "Bluestem Asphalt Supply",
+      "unit_price": "9.00"
+    },
+    {
+      "material": "Base Mix 19mm",
+      "supplier": "Bluestem Asphalt Supply",
+      "unit_price": "18.75"
+    },
+    {
+      "material": "Hot Mix Asphalt",
+      "supplier": "Bluestem Asphalt Supply",
+      "unit_price": "33.00"
+    },
+    {
+      "material": "Binder Course 12.5mm",
+      "supplier": "Bluestem Asphalt Supply",
+      "unit_price": "26.75"
+    },
+    {
+      "material": "No. 57 Stone",
+      "supplier": "Granite Hollow Stone",
+      "unit_price": "9.00"
+    },
+    {
+      "material": "No. 8 Stone",
+      "supplier": "Granite Hollow Stone",
+      "unit_price": "31.50"
+    },
+    {
+      "material": "Crusher Run",
+      "supplier": "Granite Hollow Stone",
+      "unit_price": "19.75"
+    },
+    {
+      "material": "Dense Graded Aggregate",
+      "supplier": "Granite Hollow Stone",
+      "unit_price": "10.50"
+    },
+    {
+      "material": "3/4 Crushed Limestone",
+      "supplier": "Granite Hollow Stone",
+      "unit_price": "30.75"
+    },
+    {
+      "material": "Pea Gravel",
+      "supplier": "Granite Hollow Stone",
+      "unit_price": "32.75"
+    },
+    {
+      "material": "Base Rock",
+      "supplier": "Granite Hollow Stone",
+      "unit_price": "23.50"
+    },
+    {
+      "material": "Rip Rap Class 2",
+      "supplier": "Granite Hollow Stone",
+      "unit_price": "27.25"
+    },
+    {
+      "material": "Rip Rap Class 1",
+      "supplier": "Granite Hollow Stone",
+      "unit_price": "11.75"
+    },
+    {
+      "material": "Surface Mix 9.5mm",
+      "supplier": "Prairie Line Paving Materials",
+      "unit_price": "32.00"
+    },
+    {
+      "material": "Base Mix 19mm",
+      "supplier": "Prairie Line Paving Materials",
+      "unit_price": "24.50"
+    },
+    {
+      "material": "Hot Mix Asphalt",
+      "supplier": "Prairie Line Paving Materials",
+      "unit_price": "22.50"
+    },
+    {
+      "material": "Binder Course 12.5mm",
+      "supplier": "Prairie Line Paving Materials",
+      "unit_price": "47.50"
+    },
+    {
+      "material": "Select Fill",
+      "supplier": "Kestrel Fill & Grading",
+      "unit_price": "36.50"
+    },
+    {
+      "material": "Common Fill",
+      "supplier": "Kestrel Fill & Grading",
+      "unit_price": "31.75"
+    },
+    {
+      "material": "Structural Fill",
+      "supplier": "Kestrel Fill & Grading",
+      "unit_price": "38.75"
+    },
+    {
+      "material": "Screened Topsoil",
+      "supplier": "Kestrel Fill & Grading",
+      "unit_price": "18.00"
+    },
+    {
+      "material": "Crushed Concrete RCA",
+      "supplier": "Copperleaf Recycled Aggregates",
+      "unit_price": "11.00"
+    },
+    {
+      "material": "Asphalt Millings",
+      "supplier": "Copperleaf Recycled Aggregates",
+      "unit_price": "34.75"
+    },
+    {
+      "material": "No. 57 Stone",
+      "supplier": "Copperleaf Recycled Aggregates",
+      "unit_price": "37.75"
+    },
+    {
+      "material": "No. 8 Stone",
+      "supplier": "Copperleaf Recycled Aggregates",
+      "unit_price": "47.75"
+    },
+    {
+      "material": "Crusher Run",
+      "supplier": "Copperleaf Recycled Aggregates",
+      "unit_price": "34.75"
+    },
+    {
+      "material": "Dense Graded Aggregate",
+      "supplier": "Copperleaf Recycled Aggregates",
+      "unit_price": "34.25"
+    },
+    {
+      "material": "3/4 Crushed Limestone",
+      "supplier": "Copperleaf Recycled Aggregates",
+      "unit_price": "44.00"
+    },
+    {
+      "material": "Pea Gravel",
+      "supplier": "Copperleaf Recycled Aggregates",
+      "unit_price": "21.50"
+    },
+    {
+      "material": "Base Rock",
+      "supplier": "Copperleaf Recycled Aggregates",
+      "unit_price": "46.50"
+    },
+    {
+      "material": "No. 57 Stone",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "21.25"
+    },
+    {
+      "material": "No. 8 Stone",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "12.50"
+    },
+    {
+      "material": "Crusher Run",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "23.25"
+    },
+    {
+      "material": "Dense Graded Aggregate",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "40.75"
+    },
+    {
+      "material": "3/4 Crushed Limestone",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "33.25"
+    },
+    {
+      "material": "Pea Gravel",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "18.25"
+    },
+    {
+      "material": "Base Rock",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "46.75"
+    },
+    {
+      "material": "Washed Concrete Sand",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "12.00"
+    },
+    {
+      "material": "Mason Sand",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "39.75"
+    },
+    {
+      "material": "Fill Sand",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "37.75"
+    },
+    {
+      "material": "Select Fill",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "23.00"
+    },
+    {
+      "material": "Common Fill",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "15.75"
+    },
+    {
+      "material": "Structural Fill",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "35.75"
+    },
+    {
+      "material": "Screened Topsoil",
+      "supplier": "Northfork Rock & Supply",
+      "unit_price": "47.50"
+    }
+  ],
+  "seed": 20261108,
+  "slots": [
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-10-18",
+        "job_location": "Quail Run Ph 2",
+        "material_type": "No. 57 Stone",
+        "supplier": "Tallgrass Quarry Co",
+        "ticket_number": "38219",
+        "tonnage": "16.00"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "tallgrass_delivery",
+      "ticket": true,
+      "ticket_id": "T0001",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-05-22",
+        "job_location": "1200 Larkspur Rd",
+        "material_type": "Common Fill",
+        "supplier": "Kestrel Fill & Grading",
+        "ticket_number": "K7470",
+        "tonnage": "19.41"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 1,
+      "style": "neat",
+      "synthetic": true,
+      "template": "kestrel_fill",
+      "ticket": true,
+      "ticket_id": "T0003",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-08-03",
+        "job_location": "Sta 42+50 Harlow Rd",
+        "material_type": "Crushed Concrete RCA",
+        "supplier": "Copperleaf Recycled Aggregates",
+        "ticket_number": "C38051",
+        "tonnage": "23.72"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 2,
+      "style": "neat",
+      "synthetic": true,
+      "template": "copperleaf_grid",
+      "ticket": true,
+      "ticket_id": "T0005",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-08-02",
+        "job_location": "Lot 7 Fenwick Park",
+        "material_type": "Surface Mix 9.5mm",
+        "supplier": "Bluestem Asphalt Supply",
+        "ticket_number": "B735405",
+        "tonnage": "18.84"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 3,
+      "style": "neat",
+      "synthetic": true,
+      "template": "bluestem_landscape",
+      "ticket": true,
+      "ticket_id": "T0006",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-09-30",
+        "job_location": "88 Covey Ln",
+        "material_type": "Rip Rap Class 1",
+        "supplier": "Granite Hollow Stone",
+        "ticket_number": "743577",
+        "tonnage": "17.51"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "granite_stub",
+      "ticket": true,
+      "ticket_id": "T0007",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-07-29",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Select Fill",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H23892",
+        "tonnage": "18.13"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 1,
+      "style": "neat",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0008",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-09-10",
+        "job_location": "4410 Fenwick Pkwy",
+        "material_type": "Crusher Run",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "176904",
+        "tonnage": "5.22"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 2,
+      "style": "neat",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0009",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-06-12",
+        "job_location": "Lot 7 Fenwick Park",
+        "material_type": "Hot Mix Asphalt",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58182",
+        "tonnage": "15.99"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 3,
+      "style": "neat",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0010",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-07-03",
+        "job_location": "Bridge Abutment East",
+        "material_type": "Rip Rap Class 2",
+        "supplier": "Granite Hollow Stone",
+        "ticket_number": "743596",
+        "tonnage": "18.33"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "granite_stub",
+      "ticket": true,
+      "ticket_id": "T0011",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-10-19",
+        "job_location": "Larkspur Rd & 9th",
+        "material_type": "Binder Course 12.5mm",
+        "supplier": "Bluestem Asphalt Supply",
+        "ticket_number": "B735410",
+        "tonnage": "17.77"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 1,
+      "style": "neat",
+      "synthetic": true,
+      "template": "bluestem_landscape",
+      "ticket": true,
+      "ticket_id": "T0012",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-08-18",
+        "job_location": "Harlow Creek Bridge",
+        "material_type": "3/4 Crushed Limestone",
+        "supplier": "Tallgrass Quarry Co",
+        "ticket_number": "38224",
+        "tonnage": "20.72"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 2,
+      "style": "neat",
+      "synthetic": true,
+      "template": "tallgrass_delivery",
+      "ticket": true,
+      "ticket_id": "T0013",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 3,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-06-10",
+        "job_location": "Larkspur Rd & 9th",
+        "material_type": "Dense Graded Aggregate",
+        "supplier": "Ironvale Sand & Gravel",
+        "ticket_number": "S15731",
+        "tonnage": "25.71"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "ironvale_carbon",
+      "ticket": true,
+      "ticket_id": "T0014",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-03-21",
+        "job_location": "Plant Rd Gate 2",
+        "material_type": "Dense Graded Aggregate",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H23931",
+        "tonnage": "22.61"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 1,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0015",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-09-01",
+        "job_location": "Sta 42+50 Harlow Rd",
+        "material_type": "Dense Graded Aggregate",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "176931",
+        "tonnage": "15.55"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 2,
+      "style": "neat",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0016",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-03-09",
+        "job_location": "Lot 7 Fenwick Park",
+        "material_type": "Hot Mix Asphalt",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58192",
+        "tonnage": "20.06"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 3,
+      "style": "neat",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0017",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-07-13",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Screened Topsoil",
+        "supplier": "Kestrel Fill & Grading",
+        "ticket_number": "K7494",
+        "tonnage": "13.03"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "kestrel_fill",
+      "ticket": true,
+      "ticket_id": "T0019",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-03-27",
+        "job_location": "88 Covey Ln",
+        "material_type": "No. 8 Stone",
+        "supplier": "Copperleaf Recycled Aggregates",
+        "ticket_number": "C38087",
+        "tonnage": "17.13"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 1,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "copperleaf_grid",
+      "ticket": true,
+      "ticket_id": "T0020",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-06-05",
+        "job_location": "88 Covey Ln",
+        "material_type": "Binder Course 12.5mm",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58219",
+        "tonnage": "22.92"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 2,
+      "style": "neat",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0021",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-06-28",
+        "job_location": "Fenwick Park Bldg C",
+        "material_type": "Hot Mix Asphalt",
+        "supplier": "Bluestem Asphalt Supply",
+        "ticket_number": "B735416",
+        "tonnage": "22.57"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 3,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "bluestem_landscape",
+      "ticket": true,
+      "ticket_id": "T0022",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-07-24",
+        "job_location": "Lot 7 Fenwick Park",
+        "material_type": "Crusher Run",
+        "supplier": "Granite Hollow Stone",
+        "ticket_number": "743601",
+        "tonnage": "15.91"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "granite_stub",
+      "ticket": true,
+      "ticket_id": "T0023",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-07-02",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Crusher Run",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "176968",
+        "tonnage": "15.00"
+      },
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 1,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0024",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 2,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "easy",
+      "file": "benchmark-mini-easy-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 3,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-10-05",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Fill Sand",
+        "supplier": "Ironvale Sand & Gravel",
+        "ticket_number": "S15724",
+        "tonnage": "13.92"
+      },
+      "file": "benchmark-mini-easy-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 1,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "ironvale_carbon",
+      "ticket": true,
+      "ticket_id": "T0002",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-06-22",
+        "job_location": "88 Covey Ln",
+        "material_type": "Select Fill",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68552",
+        "tonnage": "12.88"
+      },
+      "file": "benchmark-mini-easy-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 2,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0004",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "easy",
+      "expected": {
+        "delivery_date": "2026-06-20",
+        "job_location": "Quail Run Ph 2",
+        "material_type": "Mason Sand",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68586",
+        "tonnage": "19.62"
+      },
+      "file": "benchmark-mini-easy-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 3,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0018",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-10-16",
+        "job_location": "Fenwick Park Bldg C",
+        "material_type": "Binder Course 12.5mm",
+        "supplier": "Bluestem Asphalt Supply",
+        "ticket_number": "B735440",
+        "tonnage": "22.40"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "bluestem_landscape",
+      "ticket": true,
+      "ticket_id": "T0026",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-06-11",
+        "job_location": "Sta 42+50 Harlow Rd",
+        "material_type": "Binder Course 12.5mm",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58223",
+        "tonnage": "15.53"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 1,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0027",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-04-03",
+        "job_location": "Quail Run Ph 2",
+        "material_type": "Dense Graded Aggregate",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H23961",
+        "tonnage": "25.81"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 2,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0028",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-06-03",
+        "job_location": "Bridge Abutment East",
+        "material_type": "Base Rock",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "176979",
+        "tonnage": "22.90"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 3,
+      "style": "neat",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0029",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-07-09",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Dense Graded Aggregate",
+        "supplier": "Tallgrass Quarry Co",
+        "ticket_number": "38237",
+        "tonnage": "22.32"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "tallgrass_delivery",
+      "ticket": true,
+      "ticket_id": "T0030",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-06-01",
+        "job_location": "Quail Run Lot 31",
+        "material_type": "Rip Rap Class 2",
+        "supplier": "Granite Hollow Stone",
+        "ticket_number": "743618",
+        "tonnage": "17.19"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 1,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "granite_stub",
+      "ticket": true,
+      "ticket_id": "T0031",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-05-08",
+        "job_location": "1200 Larkspur Rd",
+        "material_type": "Common Fill",
+        "supplier": "Kestrel Fill & Grading",
+        "ticket_number": "K7496",
+        "tonnage": "12.67"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 2,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "kestrel_fill",
+      "ticket": true,
+      "ticket_id": "T0034",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-10-17",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Mason Sand",
+        "supplier": "Ironvale Sand & Gravel",
+        "ticket_number": "S15737",
+        "tonnage": "21.08"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 3,
+      "style": "neat",
+      "synthetic": true,
+      "template": "ironvale_carbon",
+      "ticket": true,
+      "ticket_id": "T0035",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-09-16",
+        "job_location": "Lot 7 Fenwick Park",
+        "material_type": "Base Rock",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "177012",
+        "tonnage": "4.32"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0036",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-08-08",
+        "job_location": "Quail Run Lot 31",
+        "material_type": "No. 57 Stone",
+        "supplier": "Granite Hollow Stone",
+        "ticket_number": "743656",
+        "tonnage": "25.84"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 1,
+      "style": "faint",
+      "synthetic": true,
+      "template": "granite_stub",
+      "ticket": true,
+      "ticket_id": "T0037",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-08-20",
+        "job_location": "Quail Run Ph 2",
+        "material_type": "Base Mix 19mm",
+        "supplier": "Bluestem Asphalt Supply",
+        "ticket_number": "B735454",
+        "tonnage": "23.21"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 2,
+      "style": "messy",
+      "synthetic": true,
+      "template": "bluestem_landscape",
+      "ticket": true,
+      "ticket_id": "T0040",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-03-17",
+        "job_location": "Plant Rd Gate 2",
+        "material_type": "Asphalt Millings",
+        "supplier": "Copperleaf Recycled Aggregates",
+        "ticket_number": "C38122",
+        "tonnage": "13.97"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 3,
+      "style": "neat",
+      "synthetic": true,
+      "template": "copperleaf_grid",
+      "ticket": true,
+      "ticket_id": "T0041",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-03-02",
+        "job_location": "Fenwick Park Bldg C",
+        "material_type": "No. 57 Stone",
+        "supplier": "Tallgrass Quarry Co",
+        "ticket_number": "38270",
+        "tonnage": "14.34"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "tallgrass_delivery",
+      "ticket": true,
+      "ticket_id": "T0043",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-09-18",
+        "job_location": "Quail Run Ph 2",
+        "material_type": "Common Fill",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H23980",
+        "tonnage": "10.92"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 1,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0044",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-05-07",
+        "job_location": "Plant Rd Gate 2",
+        "material_type": "Crusher Run",
+        "supplier": "Copperleaf Recycled Aggregates",
+        "ticket_number": "C38138",
+        "tonnage": "21.81"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 2,
+      "style": "neat",
+      "synthetic": true,
+      "template": "copperleaf_grid",
+      "ticket": true,
+      "ticket_id": "T0045",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-03-12",
+        "job_location": "Plant Rd Gate 2",
+        "material_type": "Dense Graded Aggregate",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "177039",
+        "tonnage": "21.35"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 3,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0046",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-07-25",
+        "job_location": "88 Covey Ln",
+        "material_type": "No. 57 Stone",
+        "supplier": "Ironvale Sand & Gravel",
+        "ticket_number": "S15763",
+        "tonnage": "16.62"
+      },
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "ironvale_carbon",
+      "ticket": true,
+      "ticket_id": "T0047",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 1,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "moderate",
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 2,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "moderate",
+      "file": "benchmark-mini-moderate-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 3,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-05-02",
+        "job_location": "Quail Run Ph 2",
+        "material_type": "No. 8 Stone",
+        "supplier": "Copperleaf Recycled Aggregates",
+        "ticket_number": "C38111",
+        "tonnage": "25.85"
+      },
+      "file": "benchmark-mini-moderate-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 1,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "copperleaf_grid",
+      "ticket": true,
+      "ticket_id": "T0025",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-06-11",
+        "job_location": "Larkspur Phase 2",
+        "material_type": "Mason Sand",
+        "supplier": "Ironvale Sand & Gravel",
+        "ticket_number": "S15732",
+        "tonnage": "13.62"
+      },
+      "file": "benchmark-mini-moderate-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 2,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "ironvale_carbon",
+      "ticket": true,
+      "ticket_id": "T0032",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-04-06",
+        "job_location": "Bridge Abutment East",
+        "material_type": "Washed Concrete Sand",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68602",
+        "tonnage": "17.64"
+      },
+      "file": "benchmark-mini-moderate-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 3,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0033",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-06-03",
+        "job_location": "Lot 7 Fenwick Park",
+        "material_type": "Common Fill",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68636",
+        "tonnage": "14.68"
+      },
+      "file": "benchmark-mini-moderate-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 4,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0038",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-10-06",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Surface Mix 9.5mm",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58225",
+        "tonnage": "23.55"
+      },
+      "file": "benchmark-mini-moderate-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 5,
+      "position": 0,
+      "style": "messy",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0039",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-08-27",
+        "job_location": "Quail Run Lot 31",
+        "material_type": "Screened Topsoil",
+        "supplier": "Kestrel Fill & Grading",
+        "ticket_number": "K7513",
+        "tonnage": "14.90"
+      },
+      "file": "benchmark-mini-moderate-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 6,
+      "position": 0,
+      "style": "messy",
+      "synthetic": true,
+      "template": "kestrel_fill",
+      "ticket": true,
+      "ticket_id": "T0042",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "moderate",
+      "expected": {
+        "delivery_date": "2026-09-09",
+        "job_location": "Bridge Abutment East",
+        "material_type": "Pea Gravel",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68645",
+        "tonnage": "25.76"
+      },
+      "file": "benchmark-mini-moderate-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 7,
+      "position": 0,
+      "style": "neat",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0048",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-03-20",
+        "job_location": "Larkspur Phase 2",
+        "material_type": "Washed Concrete Sand",
+        "supplier": "Ironvale Sand & Gravel",
+        "ticket_number": "S15797",
+        "tonnage": "22.97"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "ironvale_carbon",
+      "ticket": true,
+      "ticket_id": "T0049",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-09-07",
+        "job_location": null,
+        "material_type": "No. 57 Stone",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "177070",
+        "tonnage": "20.96"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 1,
+      "style": "faint",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0050",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-10-11",
+        "job_location": "Fenwick Park Bldg C",
+        "material_type": "3/4 Crushed Limestone",
+        "supplier": "Tallgrass Quarry Co",
+        "ticket_number": "38293",
+        "tonnage": "14.31"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 2,
+      "style": "faint",
+      "synthetic": true,
+      "template": "tallgrass_delivery",
+      "ticket": true,
+      "ticket_id": "T0051",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-07-24",
+        "job_location": "Plant Rd Gate 2",
+        "material_type": "Surface Mix 9.5mm",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58241",
+        "tonnage": "2.87"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 3,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0052",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-10-15",
+        "job_location": "Fenwick Park Bldg C",
+        "material_type": null,
+        "supplier": null,
+        "ticket_number": null,
+        "tonnage": "12.89"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": false,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "granite_stub",
+      "ticket": true,
+      "ticket_id": "T0054",
+      "visible_fraction": 0.8552
+    },
+    {
+      "difficulty": "hard",
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 1,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-05-14",
+        "job_location": "Larkspur Rd & 9th",
+        "material_type": "Structural Fill",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H23997",
+        "tonnage": "21.70"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 2,
+      "style": "messy",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0056",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": null,
+        "job_location": null,
+        "material_type": null,
+        "supplier": "Copperleaf Recycled Aggregates",
+        "ticket_number": "C38167",
+        "tonnage": "12.44"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": false,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 3,
+      "style": "messy",
+      "synthetic": true,
+      "template": "copperleaf_grid",
+      "ticket": true,
+      "ticket_id": "T0057",
+      "visible_fraction": 0.8004
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-10-01",
+        "job_location": "Bridge Abutment East",
+        "material_type": "Common Fill",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68674",
+        "tonnage": "16.90"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 0,
+      "style": "messy",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0055",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-05-15",
+        "job_location": "Fenwick Park Bldg C",
+        "material_type": "Structural Fill",
+        "supplier": "Kestrel Fill & Grading",
+        "ticket_number": "K7537",
+        "tonnage": "15.00"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 1,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "kestrel_fill",
+      "ticket": true,
+      "ticket_id": "T0058",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 2,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-08-29",
+        "job_location": "Sta 42+50 Harlow Rd",
+        "material_type": "Surface Mix 9.5mm",
+        "supplier": "Bluestem Asphalt Supply",
+        "ticket_number": "B735479",
+        "tonnage": null
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 3,
+      "style": "messy",
+      "synthetic": true,
+      "template": "bluestem_landscape",
+      "ticket": true,
+      "ticket_id": "T0059",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-03-07",
+        "job_location": "Larkspur Rd & 9th",
+        "material_type": "Crusher Run",
+        "supplier": "Granite Hollow Stone",
+        "ticket_number": "743696",
+        "tonnage": "15.34"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "granite_stub",
+      "ticket": true,
+      "ticket_id": "T0060",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-07-05",
+        "job_location": null,
+        "material_type": null,
+        "supplier": null,
+        "ticket_number": null,
+        "tonnage": null
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": false,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 1,
+      "style": "messy",
+      "synthetic": true,
+      "template": "copperleaf_grid",
+      "ticket": true,
+      "ticket_id": "T0061",
+      "visible_fraction": 0.8701
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-06-05",
+        "job_location": "Larkspur Phase 2",
+        "material_type": "Common Fill",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H24029",
+        "tonnage": "19.18"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 2,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0062",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-03-14",
+        "job_location": "Larkspur Phase 2",
+        "material_type": "3/4 Crushed Limestone",
+        "supplier": "Tallgrass Quarry Co",
+        "ticket_number": "38299",
+        "tonnage": null
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 3,
+      "style": "messy",
+      "synthetic": true,
+      "template": "tallgrass_delivery",
+      "ticket": true,
+      "ticket_id": "T0063",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-08-30",
+        "job_location": "4410 Fenwick Pkwy",
+        "material_type": "Washed Concrete Sand",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68677",
+        "tonnage": "16.22"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 0,
+      "style": "faint",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0064",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-10-14",
+        "job_location": "4410 Fenwick Pkwy",
+        "material_type": "Screened Topsoil",
+        "supplier": "Kestrel Fill & Grading",
+        "ticket_number": "K7566",
+        "tonnage": "13.65"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 1,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "kestrel_fill",
+      "ticket": true,
+      "ticket_id": "T0066",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 2,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-09-17",
+        "job_location": "Larkspur Rd & 9th",
+        "material_type": "Surface Mix 9.5mm",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58256",
+        "tonnage": "21.07"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 3,
+      "style": "faint",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0067",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-07-12",
+        "job_location": "Larkspur Phase 2",
+        "material_type": "No. 57 Stone",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "177074",
+        "tonnage": "19.99"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 0,
+      "style": "messy",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0068",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-07-14",
+        "job_location": "4410 Fenwick Pkwy",
+        "material_type": "Structural Fill",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H24046",
+        "tonnage": "18.49"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 1,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0069",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-05-29",
+        "job_location": "Quail Run Ph 2",
+        "material_type": "Base Mix 19mm",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58259",
+        "tonnage": "15.32"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 2,
+      "style": "messy",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0070",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-10-20",
+        "job_location": "Larkspur Phase 2",
+        "material_type": "Dense Graded Aggregate",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "177107",
+        "tonnage": null
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 3,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0071",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-10-10",
+        "job_location": "4410 Fenwick Pkwy",
+        "material_type": "Washed Concrete Sand",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68712",
+        "tonnage": "23.42"
+      },
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 7,
+      "position": 0,
+      "style": "rushed",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0072",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 7,
+      "position": 1,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "hard",
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 7,
+      "position": 2,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "hard",
+      "file": "benchmark-mini-hard-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 7,
+      "position": 3,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-07-24",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Base Mix 19mm",
+        "supplier": "Bluestem Asphalt Supply",
+        "ticket_number": "B735455",
+        "tonnage": "15.25"
+      },
+      "file": "benchmark-mini-hard-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 1,
+      "position": 0,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "bluestem_landscape",
+      "ticket": true,
+      "ticket_id": "T0053",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "hard",
+      "expected": {
+        "delivery_date": "2026-08-13",
+        "job_location": "Bridge Abutment East",
+        "material_type": "3/4 Crushed Limestone",
+        "supplier": "Ironvale Sand & Gravel",
+        "ticket_number": "S15822",
+        "tonnage": "17.55"
+      },
+      "file": "benchmark-mini-hard-1up-01.pdf",
+      "fully_visible": true,
+      "layout": "single",
+      "page": 2,
+      "position": 0,
+      "style": "messy",
+      "synthetic": true,
+      "template": "ironvale_carbon",
+      "ticket": true,
+      "ticket_id": "T0065",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-07-14",
+        "job_location": null,
+        "material_type": "Base Mix 19mm",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58281",
+        "tonnage": "2.46"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 0,
+      "style": "faint",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0073",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-07-08",
+        "job_location": "4410 Fenwick Pkwy",
+        "material_type": "Crusher Run",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68732",
+        "tonnage": "24.26"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 1,
+      "style": "messy",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0074",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-08-02",
+        "job_location": "Bridge Abutment East",
+        "material_type": "Rip Rap Class 1",
+        "supplier": "Granite Hollow Stone",
+        "ticket_number": "743715",
+        "tonnage": "12.82"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 2,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "granite_stub",
+      "ticket": true,
+      "ticket_id": "T0076",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 1,
+      "position": 3,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-04-04",
+        "job_location": "Larkspur Rd & 9th",
+        "material_type": "Binder Course 12.5mm",
+        "supplier": "Bluestem Asphalt Supply",
+        "ticket_number": "B735515",
+        "tonnage": "19.55"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 0,
+      "style": "faint",
+      "synthetic": true,
+      "template": "bluestem_landscape",
+      "ticket": true,
+      "ticket_id": "T0077",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-08-21",
+        "job_location": "Larkspur Rd & 9th",
+        "material_type": "Crushed Concrete RCA",
+        "supplier": "Copperleaf Recycled Aggregates",
+        "ticket_number": "C38176",
+        "tonnage": "23.42"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 1,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "copperleaf_grid",
+      "ticket": true,
+      "ticket_id": "T0078",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-05-25",
+        "job_location": "1200 Larkspur Rd",
+        "material_type": "Base Rock",
+        "supplier": null,
+        "ticket_number": "38324",
+        "tonnage": "18.32"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": false,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 2,
+      "style": "messy",
+      "synthetic": true,
+      "template": "tallgrass_delivery",
+      "ticket": true,
+      "ticket_id": "T0079",
+      "visible_fraction": 0.8829
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-07-31",
+        "job_location": "Ashby Water Plant",
+        "material_type": null,
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "177121",
+        "tonnage": null
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 2,
+      "position": 3,
+      "style": "faint",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0080",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-03-28",
+        "job_location": "Quail Run Lot 31",
+        "material_type": "Screened Topsoil",
+        "supplier": "Kestrel Fill & Grading",
+        "ticket_number": "K7591",
+        "tonnage": "12.81"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 0,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "kestrel_fill",
+      "ticket": true,
+      "ticket_id": "T0081",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-05-29",
+        "job_location": "1200 Larkspur Rd",
+        "material_type": "3/4 Crushed Limestone",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H24047",
+        "tonnage": "21.91"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 1,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0082",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-06-04",
+        "job_location": "88 Covey Ln",
+        "material_type": "Binder Course 12.5mm",
+        "supplier": "Bluestem Asphalt Supply",
+        "ticket_number": "B735522",
+        "tonnage": "22.82"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 2,
+      "style": "messy",
+      "synthetic": true,
+      "template": "bluestem_landscape",
+      "ticket": true,
+      "ticket_id": "T0083",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-08-04",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Dense Graded Aggregate",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H24050",
+        "tonnage": "23.46"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 3,
+      "position": 3,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0084",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-03-21",
+        "job_location": "Sta 42+50 Harlow Rd",
+        "material_type": "Crusher Run",
+        "supplier": "Copperleaf Recycled Aggregates",
+        "ticket_number": "C38179",
+        "tonnage": "22.18"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 0,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "copperleaf_grid",
+      "ticket": true,
+      "ticket_id": "T0085",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": null,
+        "job_location": null,
+        "material_type": null,
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58289",
+        "tonnage": "22.87"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": false,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 1,
+      "style": "messy",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0086",
+      "visible_fraction": 0.7785
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-10-01",
+        "job_location": "Sta 42+50 Harlow Rd",
+        "material_type": "Washed Concrete Sand",
+        "supplier": null,
+        "ticket_number": "S15877",
+        "tonnage": "13.81"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": false,
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 2,
+      "style": "messy",
+      "synthetic": true,
+      "template": "ironvale_carbon",
+      "ticket": true,
+      "ticket_id": "T0087",
+      "visible_fraction": 0.8941
+    },
+    {
+      "difficulty": "extreme",
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 4,
+      "position": 3,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-06-15",
+        "job_location": "4410 Fenwick Pkwy",
+        "material_type": "No. 8 Stone",
+        "supplier": "Northfork Rock & Supply",
+        "ticket_number": "68753",
+        "tonnage": "19.89"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 0,
+      "style": "faint",
+      "synthetic": true,
+      "template": "northfork_long",
+      "ticket": true,
+      "ticket_id": "T0088",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-07-12",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Common Fill",
+        "supplier": "Kestrel Fill & Grading",
+        "ticket_number": "K7596",
+        "tonnage": "15.89"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 1,
+      "style": "faint",
+      "synthetic": true,
+      "template": "kestrel_fill",
+      "ticket": true,
+      "ticket_id": "T0089",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 2,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-04-16",
+        "job_location": "Ashby Water Plant",
+        "material_type": "Crusher Run",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "177133",
+        "tonnage": "22.61"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 5,
+      "position": 3,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0090",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-10-15",
+        "job_location": "Plant Rd Gate 2",
+        "material_type": null,
+        "supplier": "Granite Hollow Stone",
+        "ticket_number": "743730",
+        "tonnage": "15.63"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 0,
+      "style": "faint",
+      "synthetic": true,
+      "template": "granite_stub",
+      "ticket": true,
+      "ticket_id": "T0091",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-09-27",
+        "job_location": "Fenwick Park Bldg C",
+        "material_type": "Crusher Run",
+        "supplier": "Tallgrass Quarry Co",
+        "ticket_number": "38342",
+        "tonnage": "15.13"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 1,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "tallgrass_delivery",
+      "ticket": true,
+      "ticket_id": "T0092",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-06-09",
+        "job_location": "Quail Run Lot 31",
+        "material_type": "No. 57 Stone",
+        "supplier": "Tallgrass Quarry Co",
+        "ticket_number": "38381",
+        "tonnage": "21.43"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 2,
+      "style": "messy",
+      "synthetic": true,
+      "template": "tallgrass_delivery",
+      "ticket": true,
+      "ticket_id": "T0093",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-09-06",
+        "job_location": "Sta 42+50 Harlow Rd",
+        "material_type": "Base Mix 19mm",
+        "supplier": "Prairie Line Paving Materials",
+        "ticket_number": "P58296",
+        "tonnage": "22.33"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 6,
+      "position": 3,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "prairie_plant",
+      "ticket": true,
+      "ticket_id": "T0094",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 7,
+      "position": 0,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-09-02",
+        "job_location": "Sta 42+50 Harlow Rd",
+        "material_type": "Screened Topsoil",
+        "supplier": "Cobalt Creek Materials",
+        "ticket_number": "H24076",
+        "tonnage": "11.65"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 7,
+      "position": 1,
+      "style": "messy",
+      "synthetic": true,
+      "template": "cobalt_haul",
+      "ticket": true,
+      "ticket_id": "T0095",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": null,
+        "job_location": "Larkspur Rd & 9th",
+        "material_type": "Base Rock",
+        "supplier": "Ridgeback Hollow Aggregates",
+        "ticket_number": "177149",
+        "tonnage": "19.50"
+      },
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "fully_visible": true,
+      "layout": "grid_2x2",
+      "page": 7,
+      "position": 2,
+      "style": "faint",
+      "synthetic": true,
+      "template": "ridgeback_weigh",
+      "ticket": true,
+      "ticket_id": "T0096",
+      "visible_fraction": 1.0
+    },
+    {
+      "difficulty": "extreme",
+      "file": "benchmark-mini-extreme-4up-01.pdf",
+      "layout": "grid_2x2",
+      "page": 7,
+      "position": 3,
+      "synthetic": true,
+      "ticket": false
+    },
+    {
+      "difficulty": "extreme",
+      "expected": {
+        "delivery_date": "2026-10-11",
+        "job_location": null,
+        "material_type": null,
+        "supplier": "Ironvale Sand & Gravel",
+        "ticket_number": null,
+        "tonnage": "12.32"
+      },
+      "file": "benchmark-mini-extreme-1up-01.pdf",
+      "fully_visible": false,
+      "layout": "single",
+      "page": 1,
+      "position": 0,
+      "style": "difficult",
+      "synthetic": true,
+      "template": "ironvale_carbon",
+      "ticket": true,
+      "ticket_id": "T0075",
+      "visible_fraction": 0.8529
+    }
+  ],
+  "stamp": "SYNTHETIC — engineering benchmark, not real-world accuracy",
+  "synthetic": true
+}
