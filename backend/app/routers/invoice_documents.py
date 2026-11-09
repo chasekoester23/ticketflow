@@ -180,7 +180,27 @@ def upload_document(file: UploadFile = File(...), project_id: int | None = Form(
 
     store = storage.current()
     key = store.save(f"invoices/{organization_id}/{uuid.uuid4().hex}.pdf", data)
+    # From here until the commit succeeds, any failure (a simultaneous duplicate at
+    # the flush or the commit, the database going away, a reader bug) must take the
+    # stored file with it, or storage fills with copies no record points at.
+    try:
+        document = _record_upload(db, user, data, key, name, checksum, page_count, project_id)
+        db.commit()
+    except IntegrityError:
+        # Someone uploaded this exact file at the same moment. Theirs stands.
+        db.rollback()
+        store.delete(key)
+        raise HTTPException(409, "This exact file was just uploaded by someone else.") from None
+    except BaseException:
+        db.rollback()
+        store.delete(key)
+        raise
+    return _document_out(db, document)
 
+
+def _record_upload(db: Session, user: User, data: bytes, key: str, name: str, checksum: str,
+                   page_count: int, project_id: int | None) -> InvoiceDocument:
+    """Draft the stored file and add its rows to the session. Doesn't commit."""
     status, message, unread, extractor_name, drafted = "needs_review", None, [], "manual", []
     try:
         extractor = invoice_extraction.get_invoice_extractor()
@@ -194,12 +214,14 @@ def upload_document(file: UploadFile = File(...), project_id: int | None = Form(
                 status, message, drafted = "unsupported", result.unsupported_reason, []
             elif not drafted:
                 message = "No material lines were recognized. Add them by hand beside the original."
+            elif result.notes:
+                message = " ".join(result.notes)
     except InvoiceExtractionError as exc:
         # The original stays stored, and people can still enter lines by hand.
         status, message = "failed", str(exc)
 
     document = InvoiceDocument(
-        organization_id=organization_id, project_id=project_id, original_name=name, storage_path=key,
+        organization_id=user.organization_id, project_id=project_id, original_name=name, storage_path=key,
         sha256=checksum, page_count=page_count, status=status, extractor=extractor_name, message=message,
         unread_rows=unread, created_by_user_id=user.id,
     )
@@ -214,14 +236,7 @@ def upload_document(file: UploadFile = File(...), project_id: int | None = Form(
             date_from=draft.date_from, date_to=draft.date_to, ticket_list=draft.ticket_list,
         ))
     _event(db, document, user, "uploaded", new=name)
-    try:
-        db.commit()
-    except IntegrityError:
-        # Someone uploaded this exact file at the same moment. Theirs stands.
-        db.rollback()
-        store.delete(key)
-        raise HTTPException(409, "This exact file was just uploaded by someone else.") from None
-    return _document_out(db, document)
+    return document
 
 
 @router.get("/{document_id}")
@@ -289,17 +304,31 @@ def add_line(document_id: int, page: int = 1, db: Session = Depends(get_db),
     return _line_out(line)
 
 
+_LINE_CHANGED = {"code": "line_changed", "message": "Someone else changed this line while you had it open. "
+                 "Your changes were not saved. The latest figures are shown now: check them against the invoice."}
+
+
 @router.patch("/{document_id}/lines/{line_id}")
 def edit_line(document_id: int, line_id: int, patch: DraftLinePatch, db: Session = Depends(get_db),
-              user: User = Depends(require("invoices.manage"))):
+              user: User = Depends(require("invoices.manage")), if_match: str | None = Header(None)):
+    """Needs the revision the editor was looking at (If-Match), so one manager's
+    save can't silently overwrite figures another manager saved meanwhile."""
     document = _document_or_404(db, document_id, user.organization_id)
     _require_open(document)
+    # One edit or confirm of this line at a time: the revision check below and the
+    # write after it can't interleave with someone else's.
+    take_turn(db, "invoice-draft-line", user.organization_id, line_id)
     line = _line_or_404(db, document, line_id)
+    db.refresh(line)
     if line.state != "pending_review":
         raise HTTPException(409, "This line is no longer a draft. Correct the saved comparison instead.")
     changes = patch.model_dump(exclude_unset=True)
     if changes.get("project_id") is not None:
         _project_or_404(db, changes["project_id"], user.organization_id)
+    if if_match is None:
+        raise HTTPException(428, "Reload this invoice and try again: saving a draft line needs the revision you were editing.")
+    if if_match.strip().strip('"') != line_revision(line):
+        raise HTTPException(409, _LINE_CHANGED)
     for name, new in changes.items():
         if isinstance(new, str):
             new = new.strip() or ("" if name == "ticket_list" else None)
@@ -335,7 +364,9 @@ def confirm_line(document_id: int, line_id: int, db: Session = Depends(get_db),
     as typed entry, with the same overlap rules. Never approves payment."""
     document = _document_or_404(db, document_id, user.organization_id)
     _require_open(document)
+    take_turn(db, "invoice-draft-line", user.organization_id, line_id)
     line = _line_or_404(db, document, line_id)
+    db.refresh(line)
     if line.state != "pending_review":
         raise HTTPException(409, f"This line is already {line.state.replace('_', ' ')}.")
     if if_match is not None and if_match.strip().strip('"') != line_revision(line):

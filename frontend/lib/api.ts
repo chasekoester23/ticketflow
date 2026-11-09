@@ -669,8 +669,11 @@ export async function uploadInvoiceDocument(file: File, projectId?: number): Pro
 export async function addDraftLine(id: number, page: number) {
   await check(await apiFetch(`${DOCS}/${id}/lines?page=${page}`, { method: "POST" }));
 }
-export async function saveDraftLine(id: number, lineId: number, body: Record<string, string | number | null>) {
-  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}`, json("PATCH", body)));
+// The revision the person was editing: the server refuses the save if someone else saved first.
+export async function saveDraftLine(id: number, lineId: number, body: Record<string, string | number | null>, revision?: string) {
+  const init = json("PATCH", body);
+  if (revision) (init.headers as Record<string, string>)["If-Match"] = revision;
+  await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}`, init));
 }
 export async function confirmDraftLine(id: number, lineId: number, revision?: string) {
   await check(await apiFetch(`${DOCS}/${id}/lines/${lineId}/confirm`, { method: "POST", headers: revision ? { "If-Match": revision } : {} }));

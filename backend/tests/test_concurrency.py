@@ -322,3 +322,23 @@ def test_reports_stay_consistent_while_people_edit_and_approve(race):
     for ticket in tickets:
         if ticket["status"] == "verified":
             assert ticket["tonnage_confirmed"] and ticket["verified_by"] == "A Manager"
+
+
+def test_two_managers_saving_one_draft_line_at_once_never_overwrite_each_other(race, monkeypatch):
+    """Both hold the same revision and save different quantities. Both are held at the
+    revision check until the other arrives, so without a lock both checks would pass
+    and the later write would silently replace the earlier one."""
+    from app.routers import invoice_documents
+    document = race.client.post("/api/invoice-documents", files={"file": ("i.pdf", letterhead_supplier(), "application/pdf")}).json()
+    line = race.client.post(f"/api/invoice-documents/{document['id']}/lines").json()
+    url = f"/api/invoice-documents/{document['id']}/lines/{line['id']}"
+
+    def save(quantity):
+        return lambda: race.client.patch(url, json={"billed_quantity": quantity}, headers={"If-Match": line["revision"]})
+
+    with race.meeting_at(monkeypatch, invoice_documents, "line_revision"):
+        results = race.run(save("10.000"), save("20.000"))
+    assert sorted(r.status_code for r in results) == [200, 409], [r.text for r in results]
+    [kept] = [r.json()["billed_quantity"] for r in results if r.status_code == 200]
+    after = race.client.get(f"/api/invoice-documents/{document['id']}").json()
+    assert next(l for l in after["lines"] if l["id"] == line["id"])["billed_quantity"] == kept

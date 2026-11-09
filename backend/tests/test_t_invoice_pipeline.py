@@ -140,7 +140,7 @@ def test_every_planted_mistake_gets_the_exact_result(client, make):
         for draft, line in zip(body["lines"], document.lines):
             key = line.result
             url = f"/api/invoice-documents/{body['id']}/lines/{draft['id']}"
-            corrected = client.patch(url, json={"project_id": project, **key.correct})
+            corrected = client.patch(url, json={"project_id": project, **key.correct}, headers={"If-Match": draft["revision"]})
             assert corrected.status_code == 200, corrected.text
             assert corrected.json()["blockers"] == [], corrected.json()["blockers"]
             confirmed = client.post(url + "/confirm", headers={"If-Match": corrected.json()["revision"]})
@@ -261,7 +261,42 @@ def test_adjacent_unit_and_price_columns_stay_separate():
     assert (line.material_name, line.unit) == ("Base Rock", "ton")
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: a PDF holding two invoices is drafted as one: every row gets the first invoice's number and the rows are merged, with nothing on screen saying so")
+def _two_page_invoice(first_number: str, second_number: str) -> bytes:
+    buffer, pdf = fx._canvas()
+    xs = (50, 120, 200, 330, 400, 490)
+    head = ("Date", "Ticket No", "Description", "Tons", "Rate", "Amount")
+    fx._text(pdf, [(50, 750, f"Invoice #: {first_number}"), (300, 750, "Vendor: Ridgeline Aggregates")])
+    fx._table(pdf, 700, xs, head, [("10/06/2026", "9001", "Sand", "10.000", "15.0000", "150.00")])
+    pdf.showPage()
+    fx._text(pdf, [(50, 750, f"Invoice #: {second_number}"), (300, 750, "Vendor: Ridgeline Aggregates")])
+    fx._table(pdf, 700, xs, head, [("10/07/2026", "9002", "Sand", "12.000", "15.0000", "180.00")])
+    return fx._finish(buffer, pdf)
+
+
+def test_each_invoice_in_one_pdf_keeps_its_own_number_quantity_and_tickets():
+    """Two invoices scanned together: each row is drafted under the invoice it was
+    printed under, never merged into the first, and the document says so."""
+    from app.services.invoice_extraction import TextLayerExtractor
+    result = TextLayerExtractor().extract(_two_page_invoice("FIRST-1", "SECOND-2"), ())
+    drafted = sorted((l.page, l.invoice_number, l.supplier_name, l.billed_quantity, l.billed_subtotal, l.ticket_list)
+                     for l in result.lines)
+    assert [d[:5] for d in drafted] == [
+        (1, "FIRST-1", "Ridgeline Aggregates", Decimal("10.000"), Decimal("150.00")),
+        (2, "SECOND-2", "Ridgeline Aggregates", Decimal("12.000"), Decimal("180.00"))]
+    assert "9001" in drafted[0][5] and "9002" not in drafted[0][5]
+    assert "9002" in drafted[1][5] and "9001" not in drafted[1][5]
+    assert result.notes and "FIRST-1" in result.notes[0] and "SECOND-2" in result.notes[0]
+
+
+def test_one_invoice_repeating_its_number_on_every_page_stays_one_invoice():
+    """Continuation pages print the same number again. That isn't a second invoice."""
+    from app.services.invoice_extraction import TextLayerExtractor
+    result = TextLayerExtractor().extract(_two_page_invoice("SAME-1", "SAME-1"), ())
+    [line] = result.lines
+    assert (line.invoice_number, line.billed_quantity, line.billed_subtotal) == ("SAME-1", Decimal("22.000"), Decimal("330.00"))
+    assert result.notes == []
+
+
 def test_a_pdf_holding_two_invoices_doesnt_pass_its_rows_off_as_one():
     """A statement or a scanned-together pair. Must be split, or refused, or flagged."""
     from app.services.invoice_extraction import TextLayerExtractor
@@ -298,18 +333,21 @@ def test_saved_comparisons_never_outnumber_the_lines_people_confirmed(client):
     project = _project(client)
     _approve_deliveries(client, case, project)
     first = _upload(client, case.documents[0].pdf).json()
-    client.patch(f"/api/invoice-documents/{first['id']}/lines/{first['lines'][0]['id']}", json={"project_id": project})
+    client.patch(f"/api/invoice-documents/{first['id']}/lines/{first['lines'][0]['id']}", json={"project_id": project},
+                 headers={"If-Match": first["lines"][0]["revision"]})
     assert client.post(f"/api/invoice-documents/{first['id']}/lines/{first['lines'][0]['id']}/confirm").status_code == 200
     assert _upload(client, case.documents[1].pdf).status_code == 409
     second = _upload(client, case.documents[2].pdf).json()
-    client.patch(f"/api/invoice-documents/{second['id']}/lines/{second['lines'][0]['id']}", json={"project_id": project})
+    client.patch(f"/api/invoice-documents/{second['id']}/lines/{second['lines'][0]['id']}", json={"project_id": project},
+                 headers={"If-Match": second["lines"][0]["revision"]})
     refused = client.post(f"/api/invoice-documents/{second['id']}/lines/{second['lines'][0]['id']}/confirm")
     assert refused.status_code == 409
     with _session() as db:
         assert db.scalar(select(func.count()).select_from(InvoiceComparison)) == 1
     # Sent a third time for a later period: it's allowed, and shouts about the repeat.
     third = _upload(client, fx._iso_dates("PP-900-Z", "Placeholder Paving", [("2026-11-20", "PP-1", "Asphalt Mix", "18.000", "60.0000", "1,080.00")])).json()
-    client.patch(f"/api/invoice-documents/{third['id']}/lines/{third['lines'][0]['id']}", json={"project_id": project})
+    client.patch(f"/api/invoice-documents/{third['id']}/lines/{third['lines'][0]['id']}", json={"project_id": project},
+                 headers={"If-Match": third["lines"][0]["revision"]})
     confirmed = client.post(f"/api/invoice-documents/{third['id']}/lines/{third['lines'][0]['id']}/confirm")
     assert confirmed.status_code == 200
     line = client.get(f"/api/invoice-comparisons/{confirmed.json()['comparison_id']}").json()
