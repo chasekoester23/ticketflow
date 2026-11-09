@@ -218,6 +218,13 @@ def wrong_value(record: dict, spec: dict, plan: dict, r) -> str:
             new = text[:i] + str((int(text[i]) + r.choice([1, 2, 7, 9])) % 10) + text[i + 1:]
             if new != text:
                 return new
-    words = text.split()
-    return " ".join(words[:-1] + [words[-1][::-1]]) if len(words) > 1 else text[::-1] + "X"
+    # No digits: the writer started the wrong job or product, then corrected it.
+    from .records import MATERIALS, PROJECTS
+    key = ALIASES.get(spec["field"], spec["field"])
+    pool = [loc for _, _, locs in PROJECTS for loc in locs] if key == "job_location" else \
+        [m for names in MATERIALS.values() for m in names]
+    if plan.get("caps"):
+        pool = [x.upper() for x in pool]
+    choices = [x for x in pool if x.casefold() != text.casefold()]
+    return r.choice(choices)
 
