@@ -54,6 +54,26 @@ class User(Base):
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=utcnow)
 
 
+class AccessRequest(Base):
+    """A company asking for a pilot workspace, from the public sign-up page.
+
+    Deliberately holds no company data and grants nothing: it's a note for whoever
+    runs this server. organization_id is set only once a workspace has been made.
+    """
+    __tablename__ = "access_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    contact_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    email: Mapped[str] = mapped_column(String(254), nullable=False, index=True)
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    monthly_tickets: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # new | contacted | provisioned | declined
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="new", server_default="new", index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 class LoginSession(Base):
     __tablename__ = "login_sessions"
     token_digest: Mapped[str] = mapped_column(String(64), primary_key=True)

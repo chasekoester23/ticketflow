@@ -412,7 +412,7 @@ def test_every_route_learns_who_is_asking_unless_deliberately_public():
     is can't be scoping anything. Generated from the live route list."""
     from fastapi.routing import APIRoute
     from app.route_inventory import ROUTERS
-    public = {"/api/auth/login", "/api/auth/logout", "/api/setup", "/api/setup/status"}
+    public = {"/api/auth/login", "/api/auth/logout", "/api/setup", "/api/setup/status", "/api/access-requests"}
     identity = {"current_organization_id", "authenticated_user", "current_user"}
     unscoped = [f"{sorted(route.methods)} {route.path}" for router in ROUTERS for route in router.routes
                 if isinstance(route, APIRoute) and route.path not in public

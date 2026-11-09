@@ -25,7 +25,7 @@ _MAX_TRACKED = 10_000
 _LABELS = {"uploads": "uploads", "exports": "exports", "reports": "reports"}
 
 _lock = threading.Lock()
-_windows: dict[tuple[str, int], tuple[float, int]] = {}
+_windows: dict[tuple[str, int | str], tuple[float, int]] = {}
 
 
 def reset() -> None:
@@ -34,7 +34,7 @@ def reset() -> None:
         _windows.clear()
 
 
-def allowed(bucket: str, user_id: int, limit: int) -> int | None:
+def allowed(bucket: str, user_id: int | str, limit: int) -> int | None:
     """None if this request may go ahead, otherwise the seconds until it may."""
     now = time.monotonic()
     with _lock:

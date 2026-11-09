@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     rate_limit_uploads_per_minute: int = Field(default=30, ge=0)
     rate_limit_exports_per_minute: int = Field(default=30, ge=0)
     rate_limit_reports_per_minute: int = Field(default=120, ge=0)
+    # Per network address, for the public request-access form.
+    rate_limit_access_requests_per_minute: int = Field(default=5, ge=0)
     # First-run setup works only from this machine, unless this is set for that one step.
     allow_remote_setup: bool = False
 

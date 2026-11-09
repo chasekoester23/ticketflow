@@ -26,7 +26,7 @@ from app.auth import current_user
 from app.config import settings
 from app.db import engine_options, enforce_references, normalized_url
 from app.main import app
-from app.models import Batch, LoginSession, Organization, Project, ReviewTiming, Ticket, UploadedFile, User
+from app.models import AccessRequest, Batch, LoginSession, Organization, Project, ReviewTiming, Ticket, UploadedFile, User
 from app.routers import api as api_module
 from scripts import migrate_sqlite_to_postgres as migrate
 
@@ -614,6 +614,7 @@ def build_fictional_business(url: str, storage: Path, monkeypatch) -> dict:
             db.add_all([first_owner, second_owner])
             db.flush()
             db.add(LoginSession(token_digest="a" * 64, user_id=first_owner.id, expires_at=datetime(2031, 1, 2, 3, 4, 5, 678)))
+            db.add(AccessRequest(company_name="Fictional Applicant", contact_name="Fictional Person", email="person@fictional.example"))
             db.commit()
             ids = {"first": first.id, "second": second.id, "first_owner": first_owner.id, "second_owner": second_owner.id}
 

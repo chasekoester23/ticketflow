@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.auth import password_hash  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
-from app.models import Organization, User  # noqa: E402
+from app.models import User  # noqa: E402
+from app.services.workspaces import create_workspace  # noqa: E402
 
 
 def main() -> int:
@@ -50,11 +51,7 @@ def main() -> int:
             print(str(exc), file=sys.stderr)
             return 1
         try:
-            organization = Organization(name=name)
-            db.add(organization)
-            db.flush()
-            db.add(User(organization_id=organization.id, username=username,
-                         password_hash=encoded, role="owner"))
+            create_workspace(db, company_name=name, owner_username=username, encoded_password=encoded)
             db.commit()
         except IntegrityError:
             db.rollback()
