@@ -146,7 +146,6 @@ def test_an_ancient_date_is_kept_exactly_in_every_export(client, value):
     assert months == [value[:7]]
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: compute_flags has a check for future dates but none for implausibly old ones, so a ticket dated 1900-01-01 (a spreadsheet's empty date) or 0001-01-01 is approved with no warning")
 @pytest.mark.parametrize("value", ["1900-01-01", "0001-01-01"])
 def test_an_implausibly_old_delivery_date_needs_a_second_look_before_approval(client, value):
     [ticket] = _deliveries([dict(ticket_number="O2", delivery_date=date.fromisoformat(value), tonnage=Decimal("20.000"))])
