@@ -21,6 +21,7 @@ test("signed-out visitor cannot reach ticket review workspace", async ({ page })
 
 test("sign-in renders a workspace and sign-out returns to login", async ({ page }) => {
   const calls = { login: 0, logout: 0 };
+  let signedIn = false;
   await page.route("**/api/auth/**", (route) => {
     const { pathname } = new URL(route.request().url());
     if (route.request().method() === "OPTIONS") {
@@ -31,14 +32,16 @@ test("sign-in renders a workspace and sign-out returns to login", async ({ page 
       if (route.request().headers()["x-ticketflow-request"] !== "1") {
         return json(route, { detail: "Missing CSRF header" }, 403);
       }
+      signedIn = true;
       return json(route, profile("owner"));
     }
     if (pathname === "/api/auth/logout") {
       calls.logout++;
+      signedIn = false;
       return json(route, { ok: true });
     }
     if (pathname === "/api/auth/me") {
-      return json(route, profile("owner"));
+      return signedIn ? json(route, profile("owner")) : json(route, { detail: "Sign in" }, 401);
     }
     return json(route, { detail: "Not found" }, 404);
   });
@@ -52,7 +55,7 @@ test("sign-in renders a workspace and sign-out returns to login", async ({ page 
 
   await page.goto("/login");
   await page.getByLabel("Username").fill("owner");
-  await page.getByLabel("Password").fill("correct-long-password");
+  await page.getByLabel("Password", { exact: true }).fill("correct-long-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL("/");
   await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();

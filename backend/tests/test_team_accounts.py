@@ -116,7 +116,7 @@ def test_every_mutating_api_route_declares_a_permission():
 
 def test_every_api_route_rejects_anonymous_requests(client):
     """Reads are protected too; only the sign-in endpoints are public."""
-    public = {"/api/auth/login", "/api/auth/logout", "/api/setup", "/api/setup/status"}  # Setup: see test_b_onboarding.py
+    public = {"/api/auth/login", "/api/auth/logout", "/api/setup", "/api/setup/status", "/api/access-requests"}  # Setup: see test_b_onboarding.py
     app.dependency_overrides.pop(current_user, None)
     leaked = []
     for route in all_routes():

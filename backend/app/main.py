@@ -18,7 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import rate_limit
 from .config import configuration_problems, settings
 from .db import Base, engine
-from .routers import api, auth as auth_router, invoice_documents, invoices, pricing, projects, records, reports, setup, system, team, scans
+from .routers import access_requests, api, auth as auth_router, invoice_documents, invoices, pricing, projects, records, reports, setup, system, team, scans
 from .services import system_health
 from .services.job_log import frames
 from .auth import current_user
@@ -235,6 +235,7 @@ async def csrf_header_gate(request: Request, call_next):
 
 app.include_router(auth_router.router)
 app.include_router(setup.router)  # Public until the first user exists. See routers/setup.py.
+app.include_router(access_requests.router)  # Public, and grants nothing. See routers/access_requests.py.
 app.include_router(api.router, dependencies=[Depends(current_user)])
 app.include_router(pricing.router, dependencies=[Depends(current_user)])
 app.include_router(invoices.router, dependencies=[Depends(current_user)])

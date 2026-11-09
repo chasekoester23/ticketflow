@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { complete, draftKeys, mockReview, ticket } from "./f_helpers.mjs";
+import { complete, draftKeys, mockReview, ticket, json } from "./f_helpers.mjs";
 
 const REVIEW = "/upload?batch=5&ticket=101";
 
@@ -173,6 +173,7 @@ test("signing out clears every draft on this computer", async ({ page }) => {
   await expect.poll(async () => (await draftKeys(page)).length).toBe(2);
   let asked = "";
   page.on("dialog", (dialog) => { if (dialog.type() === "confirm") asked = dialog.message(); dialog.accept(); });
+  await page.route("**/api/auth/me", (route) => json(route, { detail: "Sign in" }, 401));
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
   expect(asked).toContain("clears unsaved ticket work");

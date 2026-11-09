@@ -45,6 +45,7 @@ const setupLinks: NavLink[] = [
   { href: "/system", label: "System health", icon: "health", requires: "system.read" },
 ];
 const links = [...workLinks, ...setupLinks];
+const PUBLIC_PATHS = ["/welcome", "/login", "/signup"];
 const pageTitles: Record<string, string> = {
   "/account": "Account settings", "/records/names": "Name cleanup",
   "/invoices/documents": "Invoice PDFs",
@@ -55,7 +56,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
-  const isLogin = pathname === "/login";
+  const isPublic = PUBLIC_PATHS.includes(pathname);
   const current = links.find((l) => l.href === pathname);
   const allowed = (l: NavLink) => !l.requires || account?.permissions?.includes(l.requires);
   const navLink = ({ href, label, icon }: NavLink) => {
@@ -72,13 +73,14 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   const mustChangePassword = Boolean(account?.must_change_password);
 
   useEffect(() => {
-    if (isLogin) {
-      setChecking(false);
-      return;
-    }
     let cancelled = false;
     getAuthMe().then((me) => {
       if (cancelled) return;
+      // Someone already signed in has no use for the public pages.
+      if (isPublic) {
+        window.location.replace(me.must_change_password ? "/account" : "/");
+        return;
+      }
       // A temporary password issued by an owner must be replaced first.
       if (me.must_change_password && window.location.pathname !== "/account") {
         window.location.replace("/account");
@@ -88,12 +90,20 @@ export default function AuthShell({ children }: { children: ReactNode }) {
       setAccount(me);
       setChecking(false);
     }).catch(() => {
-      if (!cancelled) window.location.replace("/login");
+      // A first visit gets the welcome page. A deep link usually means an expired session.
+      if (!cancelled && !isPublic) window.location.replace(window.location.pathname === "/" ? "/welcome" : "/login");
     });
     return () => { cancelled = true; };
-  }, [isLogin]);
+  }, [isPublic]);
 
   useEffect(() => { setMenuOpen(false); }, [pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpen(false); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [menuOpen]);
 
   // A table wider than a phone scrolls sideways inside its box. A keyboard can
   // only scroll what it can reach, so a box that scrolls becomes a tab stop.
@@ -132,7 +142,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
     };
   }, [checking, pathname]);
 
-  if (isLogin) return <main className="tf-login-layout">{children}</main>;
+  if (isPublic) return <>{children}</>;
   if (checking || !account) {
     return <main className="flex min-h-screen items-center justify-center bg-[#f4f5f6] text-sm text-slate-600" role="status">
       Checking your TicketFlow session…
@@ -142,7 +152,8 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   return <div className="tf-app-shell">
     <a href="#main-content" className="tf-skip-link">Skip to main content</a>
     {menuOpen && <button aria-label="Close navigation" className="tf-mobile-scrim" onClick={() => setMenuOpen(false)} />}
-    <aside className={`tf-sidebar ${menuOpen ? "tf-sidebar-open" : ""}`}>
+    <aside id="main-menu" className={`tf-sidebar ${menuOpen ? "tf-sidebar-open" : ""}`}>
+      <button type="button" aria-label="Close menu" className="tf-sidebar-close" onClick={() => setMenuOpen(false)}><Icon name="close" size={18} /></button>
       <a href="/" className="tf-sidebar-brand" aria-label="TicketFlow home">
         <span className="tf-brand-mark"><Icon name="layers" size={21} /></span>
         <span className="tf-brand-type">TICKET<span>FLOW</span><small>FIELD OPERATIONS</small></span>
@@ -156,23 +167,25 @@ export default function AuthShell({ children }: { children: ReactNode }) {
           <div className="tf-nav">{setupLinks.filter(allowed).map(navLink)}</div>
         </>}
       </nav>
+      <a href="/account" className="tf-sidebar-account">
+        <span className="tf-account-avatar" aria-hidden="true">{initial}</span>
+        <span>{personName}<small>{account.role_label} · Your account</small></span>
+      </a>
     </aside>
 
     <div className="tf-shell-content">
       <header className="tf-topbar">
         <div className="flex min-w-0 items-center gap-3">
-          <button type="button" aria-label="Open navigation" className="tf-menu-toggle"
+          <button type="button" aria-label="Open navigation" aria-expanded={menuOpen} aria-controls="main-menu" className="tf-menu-toggle"
             onClick={() => setMenuOpen(true)}><Icon name="menu" /></button>
           <div className="tf-topbar-context">
-            <span className="tf-topbar-parent">Workspace</span>
-            <Icon name="chevron" size={14} />
+            <span className="tf-organization-name" title={account.organization_name ?? "Workspace"}>
+              {account.organization_name ?? "Workspace"}
+            </span>
             <strong>{current?.label ?? pageTitles[pathname] ?? "TicketFlow"}</strong>
           </div>
         </div>
         <div className="tf-topbar-right">
-          <span className="tf-organization-name" title={account.organization_name ?? "Workspace"}>
-            {account.organization_name ?? "Workspace"}
-          </span>
           <a href="/account" className="tf-account-link" title="Account settings">
             <span className="tf-account-avatar" aria-hidden="true">{initial}</span>
             <span className="tf-account-name">{personName}<small>{account.role_label}</small></span>
