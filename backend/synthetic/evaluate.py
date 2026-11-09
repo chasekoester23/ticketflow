@@ -211,6 +211,25 @@ def snapshot_detection(Session) -> set[tuple]:
                 .join(UploadedFile, UploadedFile.id == Ticket.file_id)}
 
 
+def failed_files(Session) -> dict[str, str]:
+    """File name -> error for every file the pipeline failed by itself, before any
+    person touched the scan manifest (e.g. "No ticket content detected")."""
+    from app.models import UploadedFile
+    with Session() as db:
+        return {f.original_name: f.error or "" for f in db.query(UploadedFile).filter(UploadedFile.status == "failed")}
+
+
+def crop_checks(Session) -> set[tuple]:
+    """(file name, page, position) of every ticket TicketFlow asked a person to
+    check against the original scan because its crop was uncertain."""
+    from app.models import Ticket, UploadedFile
+    from app.services.splitter import CROP_CHECK_PREFIX
+    with Session() as db:
+        return {(name, t.source_page, t.position) for t, name in db.query(Ticket, UploadedFile.original_name)
+                .join(UploadedFile, UploadedFile.id == Ticket.file_id)
+                if any(f.startswith(CROP_CHECK_PREFIX) for f in (t.flags or []))}
+
+
 def resolve_slots(client, Session, docs: dict, extractor) -> dict:
     """What a person does with the scan manifest: a slot the detector didn't treat
     as a ticket, but which holds one on paper, is marked as a ticket (one click
@@ -345,7 +364,15 @@ def _summarise_crops(rows: list[dict]) -> dict:
            "ticket_slots_by_detection": dict(Counter(str(r["detection"]) for r in tickets)),
            "crops_showing_another_ticket_over_1pct": sum(1 for r in rows if r.get("intrusion", 0) > 0.01),
            "blank_slots": len(blanks), "blank_slots_with_a_record": sum(1 for r in blanks if r["record"]),
-           "blank_slots_detected_as_content": sum(1 for r in blanks if r["detection"] == "content")}
+           "blank_slots_detected_as_content": sum(1 for r in blanks if r["detection"] == "content"),
+           # A real ticket the detector called faint (a person must mark it) or empty (could be lost).
+           "tickets_read_as_faint": sum(1 for r in tickets if r["detection"] == "faint"),
+           "tickets_read_as_empty": sum(1 for r in tickets if r["detection"] == "empty"),
+           "blank_slots_read_as_faint": sum(1 for r in blanks if r["detection"] == "faint"),
+           # Every slot a person is asked to look at: faint, or a crop flagged for checking.
+           "crop_checks": sum(1 for r in rows if r.get("crop_check")),
+           "needs_a_look": sum(1 for r in rows if r["detection"] == "faint" or r.get("crop_check")),
+           "files_failed_before_manifest": len({r["file"] for r in rows if r.get("file_failed_before_manifest")})}
     return out
 
 
@@ -420,6 +447,7 @@ def evaluate(dataset: Path, *, extractor_name: str = "oracle", workdir: Path | N
                                        authorize_paid=authorize_paid)
             batches, timing = upload_all(client, Session, docs, extractor)
             automatic = snapshot_detection(Session)
+            failed_early = failed_files(Session)
             crops = crop_measurements(Session, docs, automatic)
             t0 = time.perf_counter()
             manifest = resolve_slots(client, Session, docs, extractor)
@@ -427,6 +455,10 @@ def evaluate(dataset: Path, *, extractor_name: str = "oracle", workdir: Path | N
             t0 = time.perf_counter()
             review = review_all(client, Session, docs, catch_rate, seed)
             timing["review_seconds"] = time.perf_counter() - t0
+            checked = crop_checks(Session)
+            for row in crops:
+                row["crop_check"] = (row["file"], row["page"], row["position"]) in checked
+                row["file_failed_before_manifest"] = row["file"] in failed_early
             finance = financial_check(Session, docs)
             truth_path = Path(workdir) / "truth.json"
             truth_path.write_text((docs["root"] / "truth.json").read_text(encoding="utf-8"), encoding="utf-8")
