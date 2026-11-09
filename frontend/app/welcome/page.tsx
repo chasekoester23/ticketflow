@@ -6,6 +6,9 @@ export const metadata = {
   description: "TicketFlow reads your material delivery tickets, puts each one beside its scan for your office to check, and compares approved tons with the supplier's invoice.",
 };
 
+const WIDTH = 1960;
+const HEIGHT = 1130;
+
 const INVOICE: { ticket: string; date: string; billed: string; approved: string | null; result: string; over?: string }[] = [
   { ticket: "48207", date: "11/03", billed: "21.18", approved: "21.18", result: "Matched" },
   { ticket: "48208", date: "11/03", billed: "20.64", approved: "20.64", result: "Matched" },
@@ -63,30 +66,30 @@ export default function WelcomePage() {
           <h1>Know what was delivered<br /> before you pay for it.</h1>
           <div className="tf-s-hero-lower">
             <div className="tf-s-hero-copy">
-              <p>TicketFlow reads your delivery tickets, puts each one beside its scan for your office to check, then compares the approved tons with the supplier&apos;s invoice.</p>
-              <div className="tf-s-hero-actions">
-                <Link href="/signup" className="tf-pub-button tf-pub-button-primary">Request access</Link>
-                <Link href="/login" className="tf-s-text-link">Sign in</Link>
+              <div>
+                <p className="tf-s-hero-text">TicketFlow reads your delivery tickets, puts each one beside its scan for your office to check, then compares the approved tons with the supplier&apos;s invoice.</p>
+                <div className="tf-s-hero-actions">
+                  <Link href="/signup" className="tf-pub-button tf-pub-button-primary">Request access</Link>
+                  <Link href="/login" className="tf-s-text-link">Sign in</Link>
+                </div>
               </div>
-              <p className="tf-s-pilot">TicketFlow is in a private pilot. We set up each company ourselves.</p>
+              <p className="tf-s-pilot">Private pilot. We set up each company ourselves.</p>
             </div>
             <figure className="tf-s-shot">
-              <img src="/site/review.webp" width={2000} height={1177} alt="TicketFlow's review screen: a scanned delivery ticket on the left, the values read from it on the right, and an Accept button." />
+              <picture>
+                <source media="(max-width: 620px)" srcSet="/site/review-phone.webp" />
+                <img src="/site/review.webp" width={WIDTH} height={HEIGHT} alt="TicketFlow's review screen: a scanned delivery ticket beside the values read from it, with an Accept button." />
+              </picture>
               <figcaption className="tf-s-caption">TicketFlow&apos;s review screen, with fictional data.</figcaption>
             </figure>
           </div>
         </div>
       </section>
 
-      <section className="tf-s-wrap tf-s-paper" aria-label="The problem">
-        <p>A load of stone leaves the scale house with one piece of paper. It rides in the truck, sits in a foreman&apos;s door pocket for a week, and comes back to the office with a rubber band around it.</p>
-        <p>Then someone types it into a spreadsheet, and the invoice shows up before they&apos;re done.</p>
-      </section>
-
       <section id="tickets" className="tf-s-wrap tf-s-tickets" aria-labelledby="tickets-title">
         <header>
-          <h2 id="tickets-title">The handwriting becomes a record. A person signs off on it.</h2>
-          <p className="tf-s-lead">Scan the stack, four tickets to a page if that&apos;s how your copier works. Each value is read off the ticket and shown beside the original. Nothing counts toward your tons until someone in your office approves it.</p>
+          <h2 id="tickets-title">Paper delivery tickets pile up fast. Your office shouldn&apos;t have to key every load into a spreadsheet just to check an invoice.</h2>
+          <p className="tf-s-lead">Scan the stack. TicketFlow reads each ticket and shows the values beside the original. Nothing counts toward your tons until someone in your office approves it.</p>
         </header>
         <div className="tf-s-stage">
           <Ticket />
@@ -134,8 +137,8 @@ export default function WelcomePage() {
             <div className="tf-s-inv-copy">
               <h2 id="invoices-title">Then the invoice comes in.</h2>
               <p className="tf-s-sum">$801.42</p>
-              <p className="tf-s-sum-label">billed on this sample invoice that the tickets don&apos;t support.</p>
-              <p className="tf-s-body">A tonnage that doesn&apos;t match, a ticket you never received, the same load billed twice. TicketFlow shows each one by line and in dollars, so you can take it up with the supplier before you pay. It also shows approved deliveries nobody has billed yet.</p>
+              <p className="tf-s-sum-label">billed on this fictional invoice that the tickets don&apos;t support.</p>
+              <p className="tf-s-body">A tonnage that doesn&apos;t match, a ticket you never received, a load billed twice. Each one shows up by line and in dollars, before you pay. So do approved deliveries nobody has billed yet.</p>
             </div>
           </div>
           <p className="tf-s-caption">Fictional invoice and figures, using TicketFlow&apos;s own result labels.</p>
@@ -144,11 +147,11 @@ export default function WelcomePage() {
 
       <section className="tf-s-wrap tf-s-office" aria-labelledby="office-title">
         <h2 id="office-title">Your office checks tickets instead of typing them.</h2>
-        <p className="tf-s-office-lead">The scan and the values sit side by side, and the keyboard takes your AP staff through the stack.</p>
         <dl className="tf-s-roles">
-          <div><dt>Project managers</dt><dd>Delivered tons by job and material whenever you ask, without waiting on month-end paperwork.</dd></div>
-          <div><dt>Controllers, owners</dt><dd>Every approval has a name on it, approved figures are locked, and each company&apos;s records stay apart from every other&apos;s.</dd></div>
-          <div><dt>The field</dt><dd>Nothing changes on the job. Foremen keep turning in the same tickets, and there&apos;s nothing to install on a truck.</dd></div>
+          <div><dt>Accounts payable</dt><dd>The scan and the values side by side, and the keyboard moves you through the stack.</dd></div>
+          <div><dt>Project managers</dt><dd>Delivered tons by job and material, any day of the month.</dd></div>
+          <div><dt>Controllers, owners</dt><dd>Every approval has a name on it, and approved figures are locked.</dd></div>
+          <div><dt>The field</dt><dd>Nothing changes. Foremen keep turning in the same tickets.</dd></div>
         </dl>
       </section>
 
@@ -156,7 +159,7 @@ export default function WelcomePage() {
         <div className="tf-s-wrap">
           <div>
             <h2 id="pilot-title">We&apos;re bringing on a small number of contractors.</h2>
-            <p>You can&apos;t sign yourself up yet. Tell us what you buy and roughly how many tickets you handle a month, and we&apos;ll talk it through. No account is created until we have.</p>
+            <p>You can&apos;t sign yourself up yet. Tell us what you buy and about how many tickets you handle a month, and we&apos;ll talk it through.</p>
           </div>
           <div className="tf-s-hero-actions">
             <Link href="/signup" className="tf-pub-button tf-pub-button-white">Request access</Link>
