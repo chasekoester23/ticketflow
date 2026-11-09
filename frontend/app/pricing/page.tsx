@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   Material, NameAliasRow, PricingEventRow, Rate, RateSheetPlan, Supplier, addAlias, createMaterial, createSupplier, deleteItem,
@@ -71,7 +72,7 @@ export default function PricingPage() {
     <div className="tf-page-heading">
       <div><h1 className="tf-page-title">Suppliers & rates</h1>
         <p className="tf-page-description">Maintain the supplier and material price catalog used during ticket verification.</p></div>
-      <a className="tf-secondary-button" href="/records">View delivery records <span aria-hidden="true">→</span></a>
+      <Link prefetch={false} className="tf-secondary-button" href="/records">View delivery records <span aria-hidden="true">→</span></Link>
     </div>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
     {!canManage && <p className="tf-notice" role="note">Suppliers, materials and rates are maintained by managers and owners. You can view the current schedule.</p>}

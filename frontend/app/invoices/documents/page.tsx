@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   ApiError, InvoiceDocument, InvoiceDraftLine, Project, addDraftLine, confirmDraftLine, getInvoiceDocument, invoiceOriginalUrl,
@@ -94,7 +95,7 @@ function LineForm({ line, document, projects, canManage, onDone, onError }: {
       <p className="font-bold">Needed before confirming</p>
       <ul className="mt-1 list-disc pl-5">{line.blockers.map((b) => <li key={b}>{b}</li>)}</ul>
     </div>}
-    {line.comparison_id && <p className="mt-3 text-[12px]"><a className="tf-link" href="/invoices">Saved as comparison #{line.comparison_id} →</a></p>}
+    {line.comparison_id && <p className="mt-3 text-[12px]"><Link prefetch={false} className="tf-link" href="/invoices">Saved as comparison #{line.comparison_id} →</Link></p>}
     {editable && <div className="mt-4 flex flex-wrap items-center gap-2">
       <button type="button" className="tf-secondary-button" disabled={busy || !dirty} onClick={() => void run(save)}>Save changes</button>
       <button type="button" className="tf-primary-button" disabled={busy || dirty || line.blockers.length > 0}
@@ -166,7 +167,7 @@ export default function InvoiceDocumentsPage() {
         <h1 className="tf-page-title">Invoice PDFs</h1>
         <p className="tf-page-description">Upload a supplier invoice, correct the draft lines beside the original, then confirm the ones to compare.</p>
       </div>
-      <a href="/invoices" className="tf-secondary-button">Invoice comparison →</a>
+      <Link prefetch={false} href="/invoices" className="tf-secondary-button">Invoice comparison →</Link>
     </div>
     <p className="rounded border border-[#e2e7ec] bg-white px-4 py-3 text-[12px] leading-5 text-[#47576a]">
       <strong>Drafts only — not approval for payment.</strong> Nothing counts until a manager confirms a line.

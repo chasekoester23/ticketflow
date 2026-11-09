@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   addTeamMember, listAccountEvents, listTeam, resetTeamMemberPassword, updateTeamMember,
@@ -156,7 +157,7 @@ export default function TeamPage() {
                     : <span className="tf-status tf-status-open">Active</span>}
                 </td>
                 <td className="text-right">
-                  {m.is_you ? <a href="/account" className="tf-link">Account settings</a>
+                  {m.is_you ? <Link prefetch={false} href="/account" className="tf-link">Account settings</Link>
                     : confirmingThis ? <span className="inline-flex flex-wrap items-center justify-end gap-2 text-[12px] text-[#5d6b7b]">
                       {confirmingThis === "deactivate" ? "Sign them out and block access?" : "Issue a new temporary password?"}
                       <button type="button" className="tf-secondary-button min-h-[30px] py-1" disabled={busy}

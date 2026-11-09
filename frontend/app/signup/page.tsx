@@ -181,12 +181,12 @@ export default function SignupPage() {
     <p className="tf-pub-aside-note">Next you&apos;ll add your team from the Team page, each with their own sign-in, then create a project and upload your first tickets.</p>
   </> : <>
     <p className="tf-pub-kicker">How a pilot starts</p>
-    <ol className="tf-pub-steps">
-      <li><strong>Tell us about your company</strong><span>Who to contact and roughly how many tickets you handle.</span></li>
-      <li><strong>We set up your workspace</strong><span>It&apos;s kept separate from every other company on TicketFlow.</span></li>
-      <li><strong>You sign in as its owner</strong><span>You&apos;ll replace your temporary password the first time.</span></li>
-      <li><strong>Add your team and first project</strong><span>Then upload your first delivery tickets.</span></li>
-    </ol>
+    <p className="tf-pub-statement tf-pub-statement-small">We set up each company ourselves.</p>
+    <ul className="tf-pub-steps">
+      <li>You tell us what you buy and roughly how many tickets you handle.</li>
+      <li>We create your company&apos;s workspace and an owner account.</li>
+      <li>You change the temporary password, add your office staff, and set up your first job.</li>
+    </ul>
   </>}>
     {mode === "checking" && <p role="status" className="tf-pub-lead">Connecting to TicketFlow…</p>}
     {mode === "setup" && <SetupForm onAlreadySetUp={alreadySetUp} />}

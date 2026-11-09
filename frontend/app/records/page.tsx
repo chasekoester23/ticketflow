@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BulkResult, Filters, Project, RecordsPage as RecordsResult, RecordsSort, SavedView, Ticket, bulkEditTickets,
@@ -217,8 +218,8 @@ export default function RecordsPage() {
       <div><h1 className="tf-page-title">Delivery records</h1>
         <p className="tf-page-description">Search, audit, and export material delivery tickets by project and status.</p></div>
       <div className="flex flex-wrap gap-2">
-        {canEdit && <a href="/records/names" className="tf-secondary-button">Name cleanup</a>}
-        {canUpload && <a href="/upload" className="tf-primary-button"><span aria-hidden="true">+</span> New ticket upload</a>}
+        {canEdit && <Link prefetch={false} href="/records/names" className="tf-secondary-button">Name cleanup</Link>}
+        {canUpload && <Link prefetch={false} href="/upload" className="tf-primary-button"><span aria-hidden="true">+</span> New ticket upload</Link>}
       </div>
     </div>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
@@ -311,7 +312,7 @@ export default function RecordsPage() {
         <thead><tr>
           {canEdit && <th className="w-8"><input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={togglePage} /></th>}
           {HEADERS.map((h) => <th key={h.label} className={`${h.align ?? ""} ${h.narrow ? "tf-hide-narrow" : ""}`} aria-sort={h.sort === sort ? (direction === "asc" ? "ascending" : "descending") : undefined}>
-            {h.sort ? <button type="button" className="font-[inherit] uppercase tracking-[inherit] hover:text-[#19232e]" onClick={() => toggleSort(h.sort as RecordsSort)}>
+            {h.sort ? <button type="button" className="font-[inherit] hover:text-[#19232e]" onClick={() => toggleSort(h.sort as RecordsSort)}>
               {h.label}{h.sort === sort && <span aria-hidden="true"> {direction === "asc" ? "▲" : "▼"}</span>}
             </button> : h.label}
           </th>)}
@@ -331,7 +332,7 @@ export default function RecordsPage() {
             {STATUS_LABEL[t.status] ?? t.status}
           </span>{t.duplicates.length > 0 &&
             <span className="ml-1.5 text-[10px] font-bold text-red-700" title={t.duplicates.join("\n")}>Possible duplicate</span>}</td>
-          <td className="whitespace-nowrap"><a href={`/upload?batch=${t.batch_id}&ticket=${t.id}`}>Review →</a></td>
+          <td className="whitespace-nowrap"><Link prefetch={false} href={`/upload?batch=${t.batch_id}&ticket=${t.id}`}>Review →</Link></td>
         </tr>)}</tbody>
       </table></div>
       {!loading && !rows.length && <div className="tf-empty" data-testid="records-empty">
@@ -340,7 +341,7 @@ export default function RecordsPage() {
           <button className="tf-link mt-2" onClick={() => { setViewId(""); setFilters({}); }}>Clear filters</button>
         </> : canUpload ? <>
           <p>No delivery tickets yet. Upload a batch of scanned tickets, then enter and check each one beside its scan.</p>
-          <a className="tf-link mt-2 inline-block" href="/upload">Upload scanned tickets →</a>
+          <Link prefetch={false} className="tf-link mt-2 inline-block" href="/upload">Upload scanned tickets →</Link>
         </> : <p>No delivery tickets yet. They appear here once someone on your team uploads and enters them.</p>}
       </div>}
       {total > 0 && <nav className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e9edf0] px-5 py-3 text-xs text-[#526273]" aria-label="Pages of records">

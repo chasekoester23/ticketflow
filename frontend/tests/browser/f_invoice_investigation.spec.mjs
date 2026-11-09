@@ -67,7 +67,7 @@ test("a server without the unbilled check yet leaves the rest of the report work
   await page.goto("/reports/project?project_id=1");
   await expect(page.getByRole("region", { name: "Unbilled deliveries" })).toContainText("doesn't offer the unbilled check yet");
   await expect(page.getByRole("region", { name: "Project totals" })).toContainText("41.00");
-  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(0);
+  await expect(page.locator("[role=alert]:not(#__next-route-announcer__)").filter({ hasText: /\S/ })).toHaveCount(0);
 });
 
 test("report figures lead to the tickets and invoice lines behind them", async ({ page }) => {

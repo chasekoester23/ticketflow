@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { PilotReport, Project, getPilotReport, listProjects, pilotReportCsvUrl } from "../../lib/api";
 
@@ -9,7 +10,7 @@ function Row({ label, value, href, attention }: { label: string; value: number |
   return <tr>
     <td>{label}</td>
     <td className={"text-right tabular-nums " + (attention && Number(value) > 0 ? "font-bold text-[#a14a1b]" : "font-semibold")}>{value}</td>
-    <td className="text-right">{href && Number(value) > 0 && <a className="tf-link" href={href}>Show</a>}</td>
+    <td className="text-right">{href && Number(value) > 0 && <Link prefetch={false} className="tf-link" href={href}>Show</Link>}</td>
   </tr>;
 }
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -58,7 +59,7 @@ export default function ReportsPage() {
         <div className="tf-panel-heading"><h2 className="tf-panel-title">Batches needing attention</h2></div>
         <ul className="divide-y divide-[#edf0f2]">{report.batches_needing_attention.map((b) => <li key={b.batch_id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-[12px]">
           <span><strong>Batch #{b.batch_id}</strong> · {b.reasons.join(" · ")}</span>
-          <a className="tf-link" href={"/upload?batch=" + b.batch_id}>Open scan check</a>
+          <Link prefetch={false} className="tf-link" href={"/upload?batch=" + b.batch_id}>Open scan check</Link>
         </li>)}</ul>
       </section>}
       <div className="grid items-start gap-5 lg:grid-cols-3">

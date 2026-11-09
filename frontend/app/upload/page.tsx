@@ -1,5 +1,6 @@
 "use client";
 
+import { setNavigationGuard } from "../../lib/navigation-guard";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Batch,
@@ -463,7 +464,12 @@ export default function Home() {
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
+    // Like the warning above, this keeps what was typed: it comes back when the ticket reopens.
+    setNavigationGuard(() => window.confirm("You have unsaved ticket corrections. Leave this ticket? They stay on this computer until you come back to it."));
+    return () => {
+      window.removeEventListener("beforeunload", warn);
+      setNavigationGuard(null);
+    };
   }, [formDirty]);
 
   const previous = useMemo(() => previousValues(tickets, selected), [tickets, selected]);
@@ -519,11 +525,11 @@ export default function Home() {
       {canUpload && !opening && (!batch || showUpload) && <UploadPanel projects={projects} onUploaded={onUploaded} onError={setError} />}
 
       {batch && (
-        <section className="tf-panel px-4 py-3" aria-label="Batch summary">
+        <section className="tf-panel px-3 py-2" aria-label="Batch summary">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
               <a href="/upload" className="tf-link" onClick={(event) => { if (!mayLeaveTicket()) event.preventDefault(); }}>← All uploads</a>
-              <h1 className="mt-0.5 text-[15px] font-bold text-[#1d2b38]">
+              <h1 className="text-[15px] font-semibold text-[#1d2b38]">
                 Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}
                 {project && <span className="ml-2 font-medium text-[#657182]">{project.code} · {project.name}</span>}
                 {canMove && !moving && <button type="button" className="tf-link ml-2 text-[11px]" onClick={() => setMoving(true)}>Change project</button>}
@@ -536,7 +542,7 @@ export default function Home() {
                 </select>
                 <button type="button" className="tf-link text-[11px]" onClick={() => setMoving(false)}>Cancel</button>
               </label>}
-              <p className="mt-0.5 text-xs text-[#657182]">{tickets.length} tickets · {counts.verified} accepted · {counts.flagged} flagged · {counts.review} awaiting review · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</p>
+              <p className="mt-0.5 text-xs text-[#657182]">{tickets.length} tickets · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" className="tf-secondary-button" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts"><kbd className="tf-kbd">?</kbd> Shortcuts</button>
@@ -549,7 +555,7 @@ export default function Home() {
               {canUpload && <button type="button" className="tf-secondary-button" aria-expanded={showUpload} onClick={() => setShowUpload((v) => !v)}>New upload</button>}
             </div>
           </div>
-          {tickets.length > 0 && <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          {tickets.length > 0 && <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
             <div className="tf-progress min-w-[160px] flex-1" role="progressbar" aria-label="Tickets accepted or skipped" aria-valuenow={done} aria-valuemax={tickets.length} aria-valuemin={0}>
               <div style={{ width: progress + "%" }} />
             </div>
@@ -611,30 +617,26 @@ export default function Home() {
 
           <section className="tf-panel tf-review-pane flex flex-col">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e7eaee] px-3 py-2">
-              <div className="min-w-0">
-                <h2 className="text-[13px] font-bold text-[#1d2b38]">Original scanned ticket</h2>
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                <h2 className="text-[13px] font-semibold text-[#1d2b38]">Original scanned ticket</h2>
                 <p className="text-[11px] text-[#657182]" data-testid="position"><strong className="font-bold text-[#293948]">Ticket {selected + 1} of {tickets.length}</strong> · {counts.review} to review · Page {current.source_page}, crop {current.position + 1}</p>
-                <div role="status" data-testid="jump-status" className="text-[11px] font-semibold text-[#8a4f14]">{jumpStatus}</div>
+                <div role="status" data-testid="jump-status" className="basis-full text-[11px] font-semibold text-[#8a4f14] empty:hidden">{jumpStatus}</div>
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
-                {!queueOpen && <button type="button" className="tf-secondary-button !min-h-0 !px-2 !py-1" onClick={() => setQueueOpen(true)}>Show queue</button>}
-                <button type="button" onClick={() => setZoom(zoomOut)} disabled={zoom <= 1} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40" aria-label="Zoom out">−</button>
+                {!queueOpen && <button type="button" className="tf-tool" onClick={() => setQueueOpen(true)}>Show queue</button>}
+                <button type="button" onClick={() => setZoom(zoomOut)} disabled={zoom <= 1} className="tf-tool" aria-label="Zoom out">−</button>
                 <span className="w-10 text-center text-[11px] tabular-nums text-[#526273]" data-testid="zoom-level">{Math.round(zoom * 100)}%</span>
-                <button type="button" onClick={() => setZoom(zoomIn)} disabled={zoom >= 4} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40" aria-label="Zoom in">+</button>
-                <button type="button" onClick={() => setRotation((v) => (v + 90) % 360)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1">Rotate</button>
+                <button type="button" onClick={() => setZoom(zoomIn)} disabled={zoom >= 4} className="tf-tool" aria-label="Zoom in">+</button>
+                <button type="button" onClick={() => setRotation((v) => (v + 90) % 360)} className="tf-tool">Rotate</button>
                 <a href={ticketImageUrl(current.id)} target="_blank" rel="noreferrer" className="tf-link px-1 text-[11px]">Open full image</a>
+                <span className="tf-tool-gap" aria-hidden="true" />
+                <button type="button" disabled={selected === 0} onClick={() => selectTicket(selected - 1)} className="tf-tool">Previous</button>
+                <button type="button" disabled={selected >= tickets.length - 1} onClick={() => selectTicket(selected + 1)} className="tf-tool">Next</button>
               </div>
             </div>
             <ScanViewer src={ticketImageUrl(current.id) + (imageVersion ? "?v=" + imageVersion : "")}
               alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
               zoom={zoom} rotation={rotation} onZoom={setZoom} />
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e7eaee] px-3 py-1.5">
-              <p className="text-[11px] text-[#5f6c7b]">Click to zoom on a spot, drag to pan. Zoom and rotation carry to the next ticket.</p>
-              <div className="flex items-center gap-1.5">
-                <button type="button" disabled={selected === 0} onClick={() => selectTicket(selected - 1)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40">Previous</button>
-                <button type="button" disabled={selected >= tickets.length - 1} onClick={() => selectTicket(selected + 1)} className="tf-secondary-button !min-h-0 !px-2.5 !py-1 disabled:opacity-40">Next</button>
-              </div>
-            </div>
           </section>
 
           <ReviewForm
@@ -664,7 +666,7 @@ export default function Home() {
         <table className="tf-table"><tbody>
           {SHORTCUTS.map(([keys, what]) => <tr key={keys}><td className="whitespace-nowrap"><kbd className="tf-kbd">{keys}</kbd></td><td>{what}</td></tr>)}
         </tbody></table>
-        <p className="border-t border-[#e9edf0] px-4 py-2.5 text-[11px] text-[#5f6c7b]">Single keys work when the cursor isn&apos;t in a field. No key approves more than the ticket in front of you.</p>
+        <p className="border-t border-[#e9edf0] px-4 py-2.5 text-[11px] text-[#5f6c7b]">Click the scan to zoom on a spot and drag to pan; zoom and rotation carry to the next ticket. Single keys work when the cursor isn&apos;t in a field. No key approves more than the ticket in front of you.</p>
       </Dialog>}
     </div>
   );
