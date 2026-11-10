@@ -18,7 +18,17 @@ from .validation import ExtractedTicket
 
 
 class ExtractionError(Exception):
-    pass
+    """A ticket the reader couldn't read. The message goes on the ticket for a person.
+
+    kind says what went wrong, so a batch can be explained and a bad key stops the batch:
+    rate_limited | temporary | timeout | configuration | rejected | invalid_response | unexpected.
+    """
+
+    def __init__(self, message: str, *, kind: str = "invalid_response", status: int | None = None, attempts: int = 1):
+        super().__init__(message)
+        self.kind = kind
+        self.status = status
+        self.attempts = attempts
 
 
 class Extractor(Protocol):

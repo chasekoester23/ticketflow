@@ -1,5 +1,6 @@
 """Application settings. Every secret comes from environment variables (or a local .env file)."""
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -26,6 +27,21 @@ class Settings(BaseSettings):
     extraction_provider: str = "gemini"  # gemini | anthropic
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.1-pro-preview"
+    # How the worker talks to the reader. See docs/engineering/ocr-performance.md.
+    # Tickets read at the same time. Each one is a separate request to the provider.
+    extraction_concurrency: int = Field(default=4, ge=1, le=16)
+    # Tries per ticket for a temporary failure (rate limit, 5xx, timeout). 1 means no retry.
+    extraction_max_attempts: int = Field(default=3, ge=1, le=6)
+    extraction_retry_base_seconds: float = Field(default=1.0, ge=0, le=30)
+    extraction_retry_max_seconds: float = Field(default=20.0, ge=0, le=120)
+    extraction_timeout_seconds: float = Field(default=60.0, ge=5, le=600)
+    # webp_lossless sends exactly the pixels png would, at about 40% less to upload on a
+    # real scan. jpeg is far smaller but lossy: switch only after a live benchmark agrees.
+    gemini_image_format: Literal["png", "webp_lossless", "jpeg"] = "webp_lossless"
+    gemini_jpeg_quality: int = Field(default=92, ge=60, le=100)
+    gemini_max_image_side: int = Field(default=1800, ge=512, le=4096)
+    # Unset leaves the model's own default. Lower thinking is faster; measure before changing it.
+    gemini_thinking_level: Literal["minimal", "low", "medium", "high"] | None = None
     anthropic_api_key: str | None = None
     extraction_model: str = "claude-sonnet-5-5"  # legacy Anthropic model setting
     # Optional comparison-only provider; never selected by the live worker.
