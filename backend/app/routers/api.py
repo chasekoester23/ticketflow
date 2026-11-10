@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
@@ -18,7 +18,7 @@ from ..db import SessionLocal, get_db
 from ..models import AuditEvent, Batch, InvoiceTicketLink, Project, ScanEvent, ScanSlot, Ticket, UploadedFile, User, as_utc
 from ..permissions import has_permission, require
 from ..rate_limit import limited
-from ..schemas import BatchOut, BatchQueueRow, FlagIn, TicketOut, TicketPatch, VerifyIn
+from ..schemas import BatchOut, BatchProgress, BatchQueueRow, FlagIn, TicketOut, TicketPatch, VerifyIn
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
 from ..services import pipeline, jobqueue, scan_manifest, storage
@@ -239,7 +239,26 @@ def get_batch(batch_id: int, db: Session = Depends(get_db), organization_id: int
     ))
     if not batch:
         raise HTTPException(404, "Batch not found")
-    return batch
+    out = BatchOut.model_validate(batch)
+    if batch.status in ("uploaded", "processing"):
+        out.progress = batch_progress(db, batch)
+    return out
+
+
+def batch_progress(db: Session, batch: Batch) -> BatchProgress:
+    """Counted from what's on record, the same way the worker decides what to read."""
+    file_ids = select(UploadedFile.id).where(UploadedFile.batch_id == batch.id)
+    expected = db.scalar(select(func.count()).select_from(ScanSlot).where(
+        ScanSlot.file_id.in_(file_ids),
+        or_(ScanSlot.detection == "content", ScanSlot.decision == "real_ticket"))) or 0
+    counts = dict(db.execute(select(Ticket.status, func.count()).where(Ticket.batch_id == batch.id).group_by(Ticket.status)).all())
+    again = db.scalar(select(func.count()).select_from(Ticket).where(
+        Ticket.batch_id == batch.id, Ticket.status == "failed", Ticket.error == pipeline.READING_AGAIN)) or 0
+    failed = counts.get("failed", 0)
+    return BatchProgress(
+        expected=expected, read=sum(counts.values()) - failed, failed=failed - again, reading_again=again,
+        files_waiting=sum(1 for f in batch.files if f.status == "uploaded"),
+    )
 
 
 class BatchProjectIn(BaseModel):

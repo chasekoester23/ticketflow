@@ -6,6 +6,7 @@ They provide ZERO evidence of actual real-handwriting accuracy.
 from __future__ import annotations
 
 import base64
+import io
 from types import SimpleNamespace
 
 import pytest
@@ -70,13 +71,17 @@ def test_gemini_candidate_uses_json_response_and_resizes_to_shared_1800px_cap():
     original = Image.new("RGB", (2500, 2200), "white")
     ticket, raw = extractor.extract(original)
     assert ticket.tonnage == TICKETS[0]["tonnage"]
+    meta = raw.pop("_ticketflow")
     assert raw == TICKETS[0]
+    assert meta["model"] == "gemini-3.1-pro-preview" and meta["attempts"] == 1
     assert len(client.calls) == 1
     req = client.calls[0]
     assert req["model"] == "gemini-3.1-pro-preview"
     assert req["config"]["response_mime_type"] == "application/json"
     assert "Net Tons" in req["contents"][0]
-    assert max(req["contents"][1].size) == 1800
+    part = req["contents"][1].inline_data
+    assert part.mime_type == "image/webp"  # lossless: the same pixels as PNG
+    assert max(Image.open(io.BytesIO(part.data)).size) == 1800
     assert original.size == (2500, 2200)
 
 

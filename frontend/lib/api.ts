@@ -70,7 +70,9 @@ export async function logOut(): Promise<void> {
 
 export type Project = { id: number; code: string; name: string; job_location: string | null; description: string | null; status: string };
 export type FileOut = { id: number; original_name: string; status: string; error: string | null };
-export type Batch = { id: number; project_id: number | null; expected_ticket_count?: number | null; layout: string; intake_mode?: "extract" | "manual"; status: string; created_at: string; files: FileOut[] };
+/** How far the reader has got, while a batch is processed. */
+export type BatchProgress = { expected: number; read: number; failed: number; reading_again: number; files_waiting: number };
+export type Batch = { id: number; project_id: number | null; expected_ticket_count?: number | null; progress?: BatchProgress | null; layout: string; intake_mode?: "extract" | "manual"; status: string; created_at: string; files: FileOut[] };
 export type Ticket = {
   id: number;
   batch_id: number;

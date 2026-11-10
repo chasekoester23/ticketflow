@@ -131,13 +131,17 @@ def test_a_worker_killed_while_writing_a_crop_doesnt_leave_a_broken_image(stack)
 
 
 def test_a_killed_worker_reads_again_only_what_it_never_saved(stack):
-    """AI reads cost money, and a reviewer's work on a saved file must never be redone."""
+    """AI reads cost money, and a reviewer's work on a saved file must never be redone.
+    Tickets are read several at a time, so a kill can cost the reads still in flight,
+    and nothing else: every saved ticket stays saved and is never read again."""
     client = stack.signed_in()
     batch_id = scan_batch(client, 3, intake="extract")
     worker = stack.start_worker(pause_at="between_files")
     wait_until(stack.paused, seconds=120, what="the first file to be saved")
     log = stack.work / "reads.log"
-    assert log.read_text().count("read") == 4
+    reads_at_kill = log.read_text().count("read")
+    saved_at_kill = len(stack.batch_tickets(client, batch_id))
+    assert saved_at_kill >= 4 and reads_at_kill >= saved_at_kill
     os.kill(worker.pid, 9)
     worker.wait(10)
     stack.clear_pause()
@@ -148,7 +152,9 @@ def test_a_killed_worker_reads_again_only_what_it_never_saved(stack):
     before = stack.verified()
     stack.start_worker(stand_in_reader=True)
     stack.wait_for_batch(client, batch_id, "ready_for_review")
-    assert log.read_text().count("read") == 12, "four reads for each of three files, none repeated"
+    in_flight = reads_at_kill - saved_at_kill
+    assert in_flight <= settings.extraction_concurrency * 4
+    assert log.read_text().count("read") == 12 + in_flight, "only the reads in flight at the kill are repeated"
     assert len(stack.batch_tickets(client, batch_id)) == 12
     assert stack.verified() == before and Decimal(approved["tonnage"]) == Decimal("31.250")
 

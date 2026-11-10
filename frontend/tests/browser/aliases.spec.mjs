@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { profile } from "./accounts.mjs";
 
 const cors = {
-  "access-control-allow-origin": "http://127.0.0.1:3000",
+  "access-control-allow-origin": `http://127.0.0.1:${process.env.TF_TEST_PORT ?? "3000"}`,
   "access-control-allow-credentials": "true",
   "access-control-allow-headers": "content-type, x-ticketflow-request",
   "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",

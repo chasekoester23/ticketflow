@@ -12,6 +12,15 @@ class FileOut(BaseModel):
     error: str | None
 
 
+class BatchProgress(BaseModel):
+    """How far the reader has got with a batch, while it's being processed."""
+    expected: int  # crops with something on them, so far: the reader's whole job
+    read: int  # tickets ready for review
+    failed: int  # couldn't be read
+    reading_again: int  # failed before, being read again now
+    files_waiting: int  # files not opened yet; expected grows as they are
+
+
 class BatchOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -22,6 +31,7 @@ class BatchOut(BaseModel):
     created_at: datetime
     expected_ticket_count: int | None = None
     files: list[FileOut] = []
+    progress: BatchProgress | None = None
 
     @field_validator("created_at")
     @classmethod

@@ -19,7 +19,7 @@ from app.services.validation import ExtractedTicket  # noqa: E402
 from scripts import run_worker  # noqa: E402
 
 POINT = os.environ.get("TF_PAUSE_AT", "")
-counts = {"crops": 0, "files": 0, "writes": 0}
+counts = {"crops": 0, "files": 0, "writes": 0, "finished": 0}
 
 
 def arrive() -> None:
@@ -41,7 +41,8 @@ class LoggedReader:
 
 
 real_batch = jobqueue.pipeline.process_batch
-real_file = pipeline.process_file
+real_file = pipeline.prepare_file
+real_finish = pipeline.finish_file
 real_slot = scan_manifest.record_slot
 real_save = storage.LocalStorage.save
 
@@ -56,9 +57,16 @@ def process_batch(*args, **kwargs):
 
 def process_file(*args, **kwargs):
     counts["files"] += 1
-    if POINT == "between_files" and counts["files"] == 2:
-        arrive()
     return real_file(*args, **kwargs)
+
+
+def finish_file(db, state):
+    """Files are read in parallel, so "between files" means: once the first is saved."""
+    real_finish(db, state)
+    if POINT == "between_files" and state.prepared and not state.pending and not state.aborted:
+        counts["finished"] += 1
+        if counts["finished"] == 1:
+            arrive()
 
 
 def record_slot(*args, **kwargs):
@@ -83,7 +91,8 @@ def save(self, key, data, *, replace=False):
 
 
 jobqueue.pipeline.process_batch = process_batch
-pipeline.process_file = process_file
+pipeline.prepare_file = process_file
+pipeline.finish_file = finish_file
 scan_manifest.record_slot = record_slot
 storage.LocalStorage.save = save
 run_worker.get_extractor = LoggedReader

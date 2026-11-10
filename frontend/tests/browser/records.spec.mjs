@@ -3,7 +3,7 @@ import { profile } from "./accounts.mjs";
 
 // Fictional records. The mock follows backend/app/routers/records.py.
 const cors = {
-  "access-control-allow-origin": "http://127.0.0.1:3000",
+  "access-control-allow-origin": `http://127.0.0.1:${process.env.TF_TEST_PORT ?? "3000"}`,
   "access-control-allow-credentials": "true",
   "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "access-control-allow-headers": "content-type, x-ticketflow-request",

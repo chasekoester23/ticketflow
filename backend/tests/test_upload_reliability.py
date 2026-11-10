@@ -62,17 +62,17 @@ def test_retry_requires_failure_and_cannot_reprocess_successful_batch(client):
 
 
 def test_processing_error_on_one_file_preserves_other_files(client, monkeypatch):
-    original = pipeline.process_file
+    original = pipeline.prepare_file
     call_count = 0
 
-    def fail_first(db, file, layout, extractor):
+    def fail_first(db, reader, file, layout, *, manual):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             raise RuntimeError("synthetic renderer crash")
-        return original(db, file, layout, extractor)
+        return original(db, reader, file, layout, manual=manual)
 
-    monkeypatch.setattr(pipeline, "process_file", fail_first)
+    monkeypatch.setattr(pipeline, "prepare_file", fail_first)
     result = _post(client, [
         ("bad-one.pdf", make_scan_pdf(), "application/pdf"),
         ("good-one.pdf", make_scan_pdf(), "application/pdf"),
@@ -87,7 +87,7 @@ def test_processing_error_on_one_file_preserves_other_files(client, monkeypatch)
     assert len(good_tickets) == 4
     kept_ids = {t["id"] for t in good_tickets}
 
-    monkeypatch.setattr(pipeline, "process_file", original)
+    monkeypatch.setattr(pipeline, "prepare_file", original)
     retry = client.post(f"/api/batches/{bid}/retry")
     assert retry.status_code == 200
     batch_after = client.get(f"/api/batches/{bid}").json()
