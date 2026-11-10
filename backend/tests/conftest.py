@@ -31,6 +31,16 @@ from app.services.validation import ExtractedTicket
 from .sample_data import TICKETS
 
 
+@pytest.fixture(autouse=True)
+def _read_in_call_order(monkeypatch):
+    """FixtureExtractor answers in the order it's called, so the tests that use it read one
+    ticket at a time. The parallel reading itself is tested with readers that recognise
+    each crop (test_ocr_speed_reliability.py), and the real worker in the kill tests runs
+    with the default concurrency."""
+    from app.config import settings as app_settings
+    monkeypatch.setattr(app_settings, "extraction_concurrency", 1)
+
+
 class FixtureExtractor:
     """TEST ONLY: returns known ground truth in order, standing in for the vision API.
     Production code never uses this; with no API key the real pipeline fails loudly."""

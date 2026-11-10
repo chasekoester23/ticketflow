@@ -17,7 +17,7 @@ async function launch(page, deepLink = 101) {
   const tickets = [fixture(101, "10482"), fixture(102, "10483")];
   const log = { verified: [], flagged: [], patched: [] };
   const cors = {
-    "access-control-allow-origin": "http://127.0.0.1:3000",
+    "access-control-allow-origin": `http://127.0.0.1:${process.env.TF_TEST_PORT ?? "3000"}`,
     "access-control-allow-credentials": "true",
     "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
     "access-control-allow-headers": "content-type",
@@ -168,7 +168,7 @@ test("a rejected verification never advances or counts unapproved tonnage", asyn
     route.fulfill({
       status: 422, contentType: "application/json",
       headers: {
-        "access-control-allow-origin": "http://127.0.0.1:3000",
+        "access-control-allow-origin": `http://127.0.0.1:${process.env.TF_TEST_PORT ?? "3000"}`,
         "access-control-allow-credentials": "true",
       },
       body: JSON.stringify({ detail: "Resolve ticket issues before verification: Tonnage missing" }),

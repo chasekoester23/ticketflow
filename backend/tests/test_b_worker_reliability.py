@@ -285,9 +285,10 @@ def test_running_a_batch_many_times_never_duplicates_a_ticket_or_slot(client, mo
         assert db.scalar(select(func.count()).select_from(UploadedFile).where(UploadedFile.batch_id == batch_id)) == 1
 
 
-def test_a_crash_partway_through_a_file_saves_nothing_from_that_file(client, monkeypatch):
-    """Each file commits once, at its end. So a crash can't leave half a file's
-    tickets behind for a rerun to trip over."""
+def test_a_crash_partway_through_a_file_keeps_only_whole_tickets_and_the_rerun_reads_the_rest(client, monkeypatch):
+    """Each ticket is saved as soon as it's read, so a person can start reviewing. A crash
+    leaves only whole tickets behind, and the rerun reads only the crops still missing,
+    never a second ticket for the same crop."""
     batch_id = _upload(client, monkeypatch)
 
     class DiesOnTheThirdCrop(FixtureExtractor):
@@ -302,11 +303,15 @@ def test_a_crash_partway_through_a_file_saves_nothing_from_that_file(client, mon
         with pytest.raises(KeyboardInterrupt):
             pipeline.process_batch(db, batch.id, DiesOnTheThirdCrop())
     with _db() as db:
-        assert db.scalar(select(func.count()).select_from(Ticket).where(Ticket.batch_id == batch_id)) == 0
+        saved = list(db.scalars(select(Ticket).where(Ticket.batch_id == batch_id)))
+        assert len(saved) < 4
+        assert all(t.status == "needs_review" and t.ticket_number for t in saved)
         assert jobqueue.recover_interrupted(db) == 1
         claimed = jobqueue.claim_next(db)
         assert claimed[0] == job_id
-        jobqueue.execute_claimed(db, *claimed, extractor_factory=FixtureExtractor)
+        rerun = FixtureExtractor()
+        jobqueue.execute_claimed(db, *claimed, extractor_factory=lambda: rerun)
+    assert rerun.calls == 4 - len(saved)
     rows = client.get(f"/api/batches/{batch_id}/tickets").json()
     assert len(rows) == 4 and len({(r["source_page"], r["position"]) for r in rows}) == 4
 
@@ -357,7 +362,8 @@ def test_a_failure_logs_its_kind_and_where_but_never_what_it_says(client, monkey
             jobqueue.execute_claimed(db, *jobqueue.claim_next(db), extractor_factory=Blows)
     lines = _lines(caplog)
     assert SECRET not in json.dumps(lines)
-    failed = next(line for line in lines if line["event"] == "file_failed")
+    # Only that ticket fails, and it's logged by kind and place.
+    failed = next(line for line in lines if line["event"] == "ticket_read_failed")
     assert failed["batch_id"] == batch_id and failed["error"] == "ValueError"
     assert any("extract" in frame for frame in failed["trace"])
 

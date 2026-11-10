@@ -18,7 +18,7 @@ import {
   moveBatch,
   recordReviewTiming,
   retryBatch,
-  ticketImageUrl,
+  ticketImageUrl, type BatchProgress,
 } from "../../lib/api";
 import { isSigningOut, removeTicketDrafts } from "../../lib/drafts";
 import { lastPlace, rememberPlace } from "../../lib/places";
@@ -150,10 +150,17 @@ export default function Home() {
   }, []);
 
   const manifestStates = useRef("");
+  // What's open now, by ticket, so tickets arriving while a batch is read never move someone off theirs.
+  const shownRef = useRef<{ tickets: Ticket[]; selected: number }>({ tickets: [], selected: 0 });
   const refresh = useCallback(async (id: number) => {
     const [b, t] = await Promise.all([getBatch(id), getTickets(id)]);
     setBatch(b);
-    setTickets((old) => reuseUnchanged(old, t));
+    const { tickets: before, selected: at } = shownRef.current;
+    const next = reuseUnchanged(before, t);
+    setTickets(next);
+    const openId = before[at]?.id;
+    const moved = openId === undefined ? -1 : next.findIndex((ticket) => ticket.id === openId);
+    if (moved >= 0 && moved !== at) setSelected(moved);
     // The scan check adds evidence; failing to load it must not stop review.
     manifestStates.current = statesOf(t);
     getManifest(id).then(setManifest).catch(() => setManifest(null));
@@ -202,6 +209,7 @@ export default function Home() {
 
   // Keep the address on the current ticket, so a reload or a shared link lands here.
   const current = tickets[selected];
+  shownRef.current = { tickets, selected };
   shownTicket.current = current?.id;
   useEffect(() => {
     if (batchId === undefined) return;
@@ -563,6 +571,9 @@ export default function Home() {
             <span className="text-xs text-[#657182]"><strong className="text-[#216c43]">{counts.verified}</strong> accepted · <strong className="text-[#995a18]">{counts.review}</strong> to review · <strong className="text-[#995a18]">{counts.flagged}</strong> flagged for later{counts.skipped > 0 && <> · <strong>{counts.skipped}</strong> skipped</>}</span>
             {pace !== null && <span className="text-xs text-[#657182]" data-testid="session-pace">This session: {session.accepted} accepted, about {pace} s each</span>}
           </div>}
+          {batch.progress && batch.status === "processing" && batch.intake_mode !== "manual" && (
+            <ReadingProgress progress={batch.progress} />
+          )}
           {batch.status === "uploaded" && (
             <p className={workerRunning === false ? "mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900" : "tf-notice mt-3"} role="status" data-testid="queue-status">
               {workerRunning === false && <strong>The processing worker isn&apos;t running, so this upload is waiting. </strong>}
@@ -670,4 +681,27 @@ export default function Home() {
       </Dialog>}
     </div>
   );
+}
+
+/** Tickets appear for review as each is read; this says how many are left. */
+function ReadingProgress({ progress }: { progress: BatchProgress }) {
+  const { expected, read, failed, reading_again: again, files_waiting: waiting } = progress;
+  const finished = read + failed;
+  const share = expected ? Math.min(100, Math.round((finished / expected) * 100)) : 0;
+  const parts = [
+    failed ? `${failed} couldn't be read` : "",
+    again ? `${again} being read again` : "",
+    waiting ? `${waiting} file${waiting === 1 ? "" : "s"} still to open` : "",
+  ].filter(Boolean);
+  return <div className="mt-2" role="status" aria-live="polite" data-testid="reading-progress">
+    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs">
+      <span className="font-semibold text-[#293948]">
+        Reading tickets: {read} of {expected}{waiting ? "+" : ""} ready{parts.length ? " · " + parts.join(" · ") : ""}
+      </span>
+      {read > 0 && <span className="text-[#5f6c7b]">Ready tickets can be reviewed now.</span>}
+    </div>
+    <div className="tf-progress mt-1" role="progressbar" aria-label="Tickets read" aria-valuemin={0} aria-valuemax={expected} aria-valuenow={finished}>
+      <div style={{ width: share + "%", background: "var(--tf-orange-action)" }} />
+    </div>
+  </div>;
 }

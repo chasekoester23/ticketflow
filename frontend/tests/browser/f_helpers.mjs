@@ -3,7 +3,7 @@ import { profile } from "./accounts.mjs";
 // Fictional tickets. The mock follows backend/app/routers/api.py, including revisions:
 // a stale If-Match is refused the way the server refuses it.
 export const cors = {
-  "access-control-allow-origin": "http://127.0.0.1:3000",
+  "access-control-allow-origin": `http://127.0.0.1:${process.env.TF_TEST_PORT ?? "3000"}`,
   "access-control-allow-credentials": "true",
   "access-control-allow-methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
   "access-control-allow-headers": "content-type, if-match, x-ticketflow-request",

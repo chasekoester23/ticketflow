@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { profile } from "./accounts.mjs";
 
 const cors = {
-  "access-control-allow-origin": "http://127.0.0.1:3000", "access-control-allow-credentials": "true",
+  "access-control-allow-origin": `http://127.0.0.1:${process.env.TF_TEST_PORT ?? "3000"}`, "access-control-allow-credentials": "true",
   "access-control-allow-methods": "GET, POST, PUT, OPTIONS", "access-control-allow-headers": "content-type, x-ticketflow-request",
 };
 const json = (route, value, status = 200) => route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(value) });
