@@ -8,7 +8,7 @@ from io import StringIO
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import false, func, or_, select
+from sqlalchemy import case, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
@@ -162,6 +162,7 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
     tickets = sum(by_status.values())
     return {
         "tickets": tickets,
+        "failed": by_status.get("failed", 0),
         "needs_review": sum(by_status.get(name, 0) for name in ("needs_review", "failed", "flagged")),
         "flagged": by_status.get("flagged", 0),
         "verified": by_status.get("verified", 0),
@@ -177,7 +178,60 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
             {"id": b.id, "status": b.status, "created_at": as_utc(b.created_at), "files": file_counts.get(b.id, 0),
              "project": projects.get(b.project_id)} for b in recent
         ],
+        "projects": _active_projects(db, organization_id, project_id),
+        "activity": _recent_activity(db, organization_id, project_id),
     }
+
+
+OPEN_STATUSES = ("needs_review", "flagged", "failed")
+ACTIVITY = {"verified": "approved", "flagged": "flagged", "skipped": "skipped"}
+
+
+def _active_projects(db: Session, organization_id: int, project_id: int | None, limit: int = 8) -> list[dict]:
+    """Each active job: its tickets, what's still open, approved tons and the last upload."""
+    query = select(Project).where(Project.organization_id == organization_id, Project.status == "active")
+    if project_id is not None:
+        query = query.where(Project.id == project_id)
+    jobs = list(db.scalars(query))
+    if not jobs:
+        return []
+    ids = [job.id for job in jobs]
+    counts = {row.project_id: row for row in db.execute(
+        select(Batch.project_id, func.count(Ticket.id).label("tickets"),
+               func.sum(case((Ticket.status.in_(OPEN_STATUSES), 1), else_=0)).label("open"),
+               aggregates.counted_tons().label("tons"))
+        .select_from(Ticket).join(Batch, Batch.id == Ticket.batch_id)
+        .where(Ticket.organization_id == organization_id, Batch.project_id.in_(ids))
+        .group_by(Batch.project_id))}
+    uploads = dict(db.execute(select(Batch.project_id, func.max(Batch.created_at)).where(
+        Batch.organization_id == organization_id, Batch.project_id.in_(ids)).group_by(Batch.project_id)).all())
+    rows = [{
+        "id": job.id, "code": job.code, "name": job.name,
+        "tickets": counts[job.id].tickets if job.id in counts else 0,
+        "open": int(counts[job.id].open or 0) if job.id in counts else 0,
+        "verified_tons": str(aggregates.as_decimal(counts[job.id].tons if job.id in counts else 0, 3)),
+        "last_upload": as_utc(uploads[job.id]) if uploads.get(job.id) else None,
+    } for job in jobs]
+    # Most recently worked on first; jobs with no uploads yet after, by number.
+    rows.sort(key=lambda r: (r["last_upload"] is None, -(r["last_upload"].timestamp()) if r["last_upload"] else 0, r["code"]))
+    return rows[:limit]
+
+
+def _recent_activity(db: Session, organization_id: int, project_id: int | None, limit: int = 8) -> list[dict]:
+    """Who approved, flagged or skipped which ticket, most recent first, from the audit trail."""
+    query = (select(AuditEvent.created_at, AuditEvent.new_value, Ticket.id, Ticket.ticket_number, Ticket.batch_id,
+                    User.display_name, User.username)
+             .join(Ticket, Ticket.id == AuditEvent.ticket_id)
+             .outerjoin(User, User.id == AuditEvent.actor_user_id)
+             .where(Ticket.organization_id == organization_id, AuditEvent.field == "status",
+                    AuditEvent.new_value.in_(tuple(ACTIVITY)))
+             .order_by(AuditEvent.id.desc()).limit(limit))
+    if project_id is not None:
+        query = query.where(Ticket.batch_id.in_(select(Batch.id).where(
+            Batch.organization_id == organization_id, Batch.project_id == project_id)))
+    return [{"at": as_utc(row.created_at), "action": ACTIVITY[row.new_value], "ticket_id": row.id,
+             "ticket_number": row.ticket_number, "batch_id": row.batch_id,
+             "by": row.display_name or row.username} for row in db.execute(query)]
 
 
 def _pilot(db: Session, organization_id: int, project_id: int | None) -> dict:

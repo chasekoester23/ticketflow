@@ -549,6 +549,10 @@ export type Dashboard = {
   pending_tons: string | number; unpriced_tickets: number; pending_cost_tickets: number;
   by_supplier: Group[]; by_material: Group[];
   recent_batches: { id: number; status: string; created_at: string; files: number; project: string | null }[];
+  // Newer servers only.
+  failed?: number;
+  projects?: { id: number; code: string; name: string; tickets: number; open: number; verified_tons: string; last_upload: string | null }[];
+  activity?: { at: string; action: "approved" | "flagged" | "skipped"; ticket_id: number; ticket_number: string | null; batch_id: number; by: string | null }[];
 };
 export async function getDashboard(projectId?: string): Promise<Dashboard> {
   return (await check(await apiFetch(`${API}/api/dashboard${projectId ? `?project_id=${projectId}` : ""}`))).json();

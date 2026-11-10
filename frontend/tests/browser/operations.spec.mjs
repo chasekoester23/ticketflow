@@ -48,24 +48,54 @@ test("clerks don't see the system page in the menu", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
   await expect(page.getByRole("link", { name: "System health" })).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Getting started" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Setup checklist" })).toHaveCount(0);
 });
 
-test("getting started shows what's left and goes away when finished", async ({ page }) => {
+test("a new company's setup is one line that says what's next, and goes away when finished", async ({ page }) => {
   const state = { complete: false, steps: [
     { key: "project", title: "Create your first project", detail: "d", href: "/projects", done: true },
     { key: "catalog", title: "Add suppliers, materials and rates", detail: "d", href: "/pricing", done: false },
+    { key: "approve", title: "Approve your first ticket", detail: "d", href: "/upload", done: false },
   ] };
   await mock(page, "owner", { "/api/onboarding": (route) => json(route, state) });
   await page.goto("/");
-  const panel = page.getByRole("region", { name: "Getting started" });
-  await expect(panel).toContainText("1 of 2 done");
-  await expect(panel.getByRole("link", { name: "Add suppliers, materials and rates" })).toHaveAttribute("href", "/pricing");
-  await expect(panel.getByRole("link", { name: "Create your first project" })).toHaveCount(0);
+  const strip = page.getByRole("region", { name: "Setup checklist" });
+  await expect(strip).toContainText("1 of 3 done");
+  await expect(strip.getByRole("link", { name: "Add suppliers, materials and rates" })).toHaveAttribute("href", "/pricing");
+  await expect(strip.getByRole("link", { name: "Create your first project" })).toHaveCount(0);
+  expect((await strip.boundingBox()).height).toBeLessThan(60);
+  await strip.getByRole("button", { name: "All steps" }).click();
+  await expect(strip.getByRole("listitem")).toHaveCount(3);
   state.complete = true;
   await page.reload();
   await expect(page.getByRole("heading", { name: "Delivery operations" })).toBeVisible();
-  await expect(panel).toHaveCount(0);
+  await expect(strip).toHaveCount(0);
+});
+
+test("the setup line can be dismissed, stays dismissed, and can be brought back", async ({ page }) => {
+  const state = { complete: false, steps: [{ key: "catalog", title: "Add suppliers, materials and rates", detail: "d", href: "/pricing", done: false }] };
+  await mock(page, "owner", { "/api/onboarding": (route) => json(route, state) });
+  await page.goto("/");
+  const strip = page.getByRole("region", { name: "Setup checklist" });
+  await strip.getByRole("button", { name: "Dismiss" }).click();
+  await expect(strip).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Delivery operations" })).toBeVisible();
+  await expect(strip).toHaveCount(0);
+  await page.getByRole("button", { name: "Show the setup checklist" }).click();
+  await expect(strip).toBeVisible();
+});
+
+test("a company that has approved tickets doesn't see the setup checklist", async ({ page }) => {
+  const state = { complete: false, steps: [
+    { key: "approve", title: "Approve your first ticket", detail: "d", href: "/upload", done: true },
+    { key: "invoice", title: "Compare your first invoice", detail: "d", href: "/invoices/documents", done: false },
+  ] };
+  await mock(page, "owner", { "/api/onboarding": (route) => json(route, state) });
+  await page.goto("/");
+  await expect(page.getByRole("region", { name: "Needs attention" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Setup checklist" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show the setup checklist" })).toHaveCount(0);
 });
 
 test("an upload stuck behind a stopped worker says so plainly", async ({ page }) => {
