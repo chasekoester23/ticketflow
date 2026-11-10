@@ -21,7 +21,7 @@ from ..rate_limit import limited
 from ..schemas import BatchOut, BatchProgress, BatchQueueRow, FlagIn, TicketOut, TicketPatch, VerifyIn
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
-from ..services import pipeline, jobqueue, scan_manifest, storage
+from ..services import consistency, pipeline, jobqueue, scan_manifest, storage
 from ..services.locks import take_turn
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
@@ -338,11 +338,15 @@ def list_tickets(batch_id: int, db: Session = Depends(get_db), organization_id: 
     tickets = db.scalars(q).all()
     table = pricing_svc.rate_table(db, organization_id)
     index = dup_svc.load_index(db, organization_id, tickets)
-    names = pricing_svc.catalog_names(db, organization_id)
+    # One read of the catalog serves both the exact rate lookup and the "did you mean" check.
+    similar = consistency.similar_names(db, organization_id)
+    names = similar.normalized()
     people = names_by_id(db, organization_id)
     aliases = pricing_svc.alias_suggestions(db, organization_id, names)
+    numbers = consistency.ticket_numbers(db, organization_id)
     return [
-        _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names, people=people, aliases=aliases)
+        _out(db, ticket, organization_id, table, duplicate_index=index, catalog=names, people=people, aliases=aliases,
+             similar=similar, numbers=numbers)
         for ticket in tickets
     ]
 
@@ -353,6 +357,8 @@ def _out(
     catalog: tuple[set[str], set[str]] | None = None,
     people: dict[int, str] | None = None,
     aliases: dict[tuple[str, str], str] | None = None,
+    similar: consistency.SimilarNames | None = None,
+    numbers: consistency.TicketNumbers | None = None,
 ) -> TicketOut:
     """Ticket plus pricing and duplicates, reusing per-list data when supplied."""
     table = table if table is not None else pricing_svc.rate_table(db, organization_id)
@@ -376,6 +382,8 @@ def _out(
             t, aliases if aliases is not None else pricing_svc.alias_suggestions(db, organization_id)),
         as_read={field: str(t.raw_extraction[field]) for field in EDITABLE
                  if isinstance(t.raw_extraction, dict) and t.raw_extraction.get(field) not in (None, "")},
+        similar=(similar or consistency.similar_names(db, organization_id)).for_ticket(t),
+        number_warning=(numbers or consistency.ticket_numbers(db, organization_id)).warning(t),
         revision=ticket_revision(t, price),
     ))
 

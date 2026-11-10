@@ -83,6 +83,10 @@ def apply_extraction(ticket: Ticket, extracted, raw: dict) -> None:
         job_location=ticket.job_location, raw_date=extracted.delivery_date,
         raw_tonnage=extracted.tonnage,
     )
+    hours = raw.get("hours") if isinstance(raw, dict) else None
+    if hours not in (None, "") and ticket.tonnage is None:
+        # Hourly trucking isn't priced yet (docs/engineering/billing-units.md). Say so, rather than "tonnage missing".
+        ticket.flags = [*ticket.flags, f"Hourly ticket ({hours} h): TicketFlow prices by the ton for now, so there are no tons to approve. Flag it or skip it."]
     ticket.status = "needs_review"  # tonnage must be human-confirmed
     ticket.tonnage_confirmed = False
     ticket.error = None

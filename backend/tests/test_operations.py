@@ -328,3 +328,18 @@ def test_clerks_cant_import_rates(client):
 
 def test_header_row_is_skipped_only_when_first():
     assert [r.line for r in rate_sheet.parse("Supplier\tMaterial\tRate\nA\tB\t1")] == [2]
+
+
+def test_a_backup_only_on_this_computer_says_so_and_a_verified_copy_elsewhere_is_ok(client, monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+    folder = tmp_path / "b" / "ticketflow-20261110-120000"
+    folder.mkdir(parents=True)
+    (folder / "manifest.json").write_text(json.dumps({"taken_at": datetime.now(timezone.utc).isoformat(), "counts": {}}))
+    monkeypatch.setattr(settings, "backup_dir", tmp_path / "b")
+    check = _check(client.get("/api/system/status").json(), "Backups")
+    assert check["state"] == "attention" and "only on this computer" in check["message"] and "--copy-to" in check["action"]
+    (folder / "copied.json").write_text(json.dumps({"verified_at": "2026-11-10T12:00:00+00:00", "same_disk": True}))
+    assert _check(client.get("/api/system/status").json(), "Backups")["state"] == "attention"  # same disk doesn't count
+    (folder / "copied.json").write_text(json.dumps({"verified_at": "2026-11-10T12:00:00+00:00", "same_disk": False}))
+    check = _check(client.get("/api/system/status").json(), "Backups")
+    assert check["state"] == "ok" and "verified copy off this computer" in check["message"]

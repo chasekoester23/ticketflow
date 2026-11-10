@@ -86,6 +86,10 @@ export type Ticket = {
   job_location: string | null;
   flags: string[];
   status: "needs_review" | "verified" | "flagged" | "skipped" | "failed";
+  /** Why the ticket number may really be the job, PO or truck number. Never blocks approval. */
+  number_warning?: string | null;
+  /** Catalog names these probably mean, apart from words like Inc or Trucking. Suggestions only. */
+  similar?: Partial<Record<"supplier" | "material_type", string>>;
   tonnage_confirmed: boolean;
   error: string | null;
   unit_price_override: string | null;

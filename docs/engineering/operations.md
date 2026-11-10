@@ -16,6 +16,13 @@ For whoever runs an installation. Everything here is local. Hosting is covered i
 
 ## Backups
 
+**Setting up, once:**
+
+1. From `backend/`, run `python scripts/backup.py`, then `python scripts/restore_drill.py --latest`. The drill must say PASSED.
+2. Keep a copy off this computer: `python scripts/backup.py --copy-to /Volumes/YourDrive/ticketflow`, using an external drive or a folder your cloud storage syncs. Until there's a verified copy on another disk, System Health says the backup is "only on this computer".
+3. Make it daily: `python scripts/backup.py --print-schedule launchd --copy-to /Volumes/YourDrive/ticketflow --keep 14` prints a schedule to install.
+
+
 ```bash
 cd backend
 python scripts/backup.py                                    # to backend/backups/, or set BACKUP_DIR

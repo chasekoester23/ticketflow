@@ -80,7 +80,12 @@ def latest_backup() -> dict | None:
         except (OSError, ValueError, KeyError):
             continue
         if newest is None or taken > newest["taken_at"]:
-            newest = {"taken_at": taken, "tickets": data.get("counts", {}).get("tickets")}
+            try:
+                copied = json.loads((manifest.parent / "copied.json").read_text())
+                off_device = not copied.get("same_disk", True)
+            except (OSError, ValueError, AttributeError):
+                off_device = False
+            newest = {"taken_at": taken, "tickets": data.get("counts", {}).get("tickets"), "off_device": off_device}
     return newest
 
 
@@ -188,16 +193,24 @@ def build(db: Session, organization_id: int) -> dict:
         checks.append(_check("Duplicate safeguards", "ok", "The database enforces the rules that stop double counting."))
 
     backup = latest_backup()
+    copy_somewhere = ("Keep one off this computer too: python scripts/backup.py --copy-to /Volumes/YourDrive/ticketflow "
+                      "(an external drive, or a folder your cloud storage syncs).")
     if backup is None:
-        checks.append(_check("Backups", "problem", "No backup found. A lost disk would lose every approved ticket.",
-                             "From the backend folder, run: python scripts/backup.py"))
+        checks.append(_check("Backups", "problem", "No backup yet. A lost or broken disk would lose every approved ticket and scan.",
+                             "From the backend folder, run: python scripts/backup.py, then python scripts/restore_drill.py --latest "
+                             "to prove it restores. " + copy_somewhere + " For a daily backup: python scripts/backup.py "
+                             "--print-schedule launchd prints a schedule to install."))
     else:
         age_days = (datetime.now(timezone.utc) - backup["taken_at"]).days
         if age_days >= BACKUP_OLD_DAYS:
             checks.append(_check("Backups", "attention", f"The latest backup is {age_days} days old.",
-                                 "From the backend folder, run: python scripts/backup.py"))
+                                 "From the backend folder, run: python scripts/backup.py. To make it daily: "
+                                 "python scripts/backup.py --print-schedule launchd"))
+        elif not backup["off_device"]:
+            checks.append(_check("Backups", "attention", f"Latest backup is {age_days} day(s) old, but it's only on this computer.",
+                                 copy_somewhere))
         else:
-            checks.append(_check("Backups", "ok", f"Latest backup is {age_days} day(s) old."))
+            checks.append(_check("Backups", "ok", f"Latest backup is {age_days} day(s) old, with a verified copy off this computer."))
 
     try:
         free = shutil.disk_usage(settings.storage_dir).free

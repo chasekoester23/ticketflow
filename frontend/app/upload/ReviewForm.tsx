@@ -295,6 +295,8 @@ export const ReviewForm = memo(function ReviewForm({
     if (!canEdit) return null;
     const about = key === "tonnage" ? tons : key === "delivery_date" ? dateMessage(values[key]) : null;
     if (about) return about;
+    // Worked out by the server for the saved number, so it shows until that number is changed.
+    if (key === "ticket_number" && ticket.number_warning && values[key] === saved[key] && values[key]) return { tone: "warning", text: ticket.number_warning };
     return !values[key].trim() && (leftBlank[key] || triedAccept) ? { tone: "problem", text: REQUIRED_TEXT[key] } : null;
   };
   // What the server would refuse to approve. Saying so here saves the round trip,
@@ -436,6 +438,13 @@ export const ReviewForm = memo(function ReviewForm({
               <button type="button" className="tf-link tf-rv-note"
                 onClick={() => setValues({ ...values, [f.key]: ticket.suggestions?.[f.key] ?? values[f.key] })}>
                 Use your catalog name: {ticket.suggestions[f.key]}
+              </button>
+            )}
+            {canEdit && !ticket.suggestions?.[f.key] && (f.key === "supplier" || f.key === "material_type") && ticket.similar?.[f.key]
+              && ticket.similar[f.key] !== values[f.key] && values[f.key] === saved[f.key] && (
+              <button type="button" className="tf-link tf-rv-note"
+                onClick={() => setValues({ ...values, [f.key]: ticket.similar?.[f.key as "supplier" | "material_type"] ?? values[f.key] })}>
+                Did you mean {ticket.similar[f.key]}? Use the catalog name
               </button>
             )}
             {canEdit && f.key === "delivery_date" && !values[f.key] && previous[f.key] && (

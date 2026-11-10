@@ -536,12 +536,15 @@ export default function Home() {
         <section className="tf-panel px-3 py-2" aria-label="Batch summary">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
               <a href="/upload" className="tf-link" onClick={(event) => { if (!mayLeaveTicket()) event.preventDefault(); }}>← All uploads</a>
               <h1 className="text-[15px] font-semibold text-[#1d2b38]">
                 Batch #{batch.id} · {BATCH_LABEL[batch.status] ?? batch.status}
                 {project && <span className="ml-2 font-medium text-[#657182]">{project.code} · {project.name}</span>}
                 {canMove && !moving && <button type="button" className="tf-link ml-2 text-[11px]" onClick={() => setMoving(true)}>Change project</button>}
               </h1>
+              <span className="text-xs text-[#657182]">{tickets.length} tickets · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</span>
+              </div>
               {moving && <label className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold text-[#49586a]">Move this batch to
                 <select className="tf-field !min-h-0 !py-1 !text-xs" aria-label="Move this batch to project" defaultValue=""
                   onChange={(e) => { if (e.target.value) void onMove(Number(e.target.value)); }}>
@@ -550,7 +553,6 @@ export default function Home() {
                 </select>
                 <button type="button" className="tf-link text-[11px]" onClick={() => setMoving(false)}>Cancel</button>
               </label>}
-              <p className="mt-0.5 text-xs text-[#657182]">{tickets.length} tickets · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" className="tf-secondary-button" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts"><kbd className="tf-kbd">?</kbd> Shortcuts</button>
@@ -568,7 +570,9 @@ export default function Home() {
               <div style={{ width: progress + "%" }} />
             </div>
             <span className="text-xs font-bold tabular-nums text-[#293948]">{done} / {tickets.length} resolved</span>
-            <span className="text-xs text-[#657182]"><strong className="text-[#216c43]">{counts.verified}</strong> accepted · <strong className="text-[#995a18]">{counts.review}</strong> to review · <strong className="text-[#995a18]">{counts.flagged}</strong> flagged for later{counts.skipped > 0 && <> · <strong>{counts.skipped}</strong> skipped</>}</span>
+            <span className="text-xs text-[#657182]"><strong className="text-[#216c43]">{counts.verified}</strong> accepted · <strong className="text-[#995a18]">{counts.review}</strong> to review · {counts.flagged > 0
+              ? <button type="button" className="tf-link text-xs" onClick={() => { setReviewFilter("flagged"); setQueueOpen(true); }}>{counts.flagged} flagged for later</button>
+              : <><strong className="text-[#995a18]">0</strong> flagged for later</>}{counts.skipped > 0 && <> · <strong>{counts.skipped}</strong> skipped</>}</span>
             {pace !== null && <span className="text-xs text-[#657182]" data-testid="session-pace">This session: {session.accepted} accepted, about {pace} s each</span>}
           </div>}
           {batch.progress && batch.status === "processing" && batch.intake_mode !== "manual" && (

@@ -341,8 +341,12 @@ export default function InvoiceComparisonPage() {
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Link prefetch={false} href="/invoices/documents" className="tf-secondary-button">Invoice PDFs →</Link>
         <Link prefetch={false} href="/records" className="tf-secondary-button">View ticket records →</Link>
+        {canManage && <button type="button" className="tf-secondary-button" onClick={() => setShowForm(true)}>Enter a line by hand</button>}
+        {/* Most invoices arrive as a PDF: reading one drafts its lines for a person to confirm. */}
+        <Link prefetch={false} href="/invoices/documents" className={canManage ? "tf-primary-button" : "tf-secondary-button"}>
+          {canManage ? <><span aria-hidden="true">+</span> Upload an invoice PDF</> : "Invoice PDFs →"}
+        </Link>
       </div>
     </div>
 
@@ -393,7 +397,10 @@ export default function InvoiceComparisonPage() {
       </div>}
     </section>}
 
-    {canManage && !formOpen && <div><button type="button" className="tf-primary-button" onClick={() => setShowForm(true)}><span aria-hidden="true">+</span> Record an invoice line</button></div>}
+    {canManage && !formOpen && <p className="text-[12px] text-[#5f6c7b]">
+      Got a PDF? <Link prefetch={false} className="tf-link text-[12px]" href="/invoices/documents">Upload it</Link> and TicketFlow drafts each line for you to check.
+      No PDF? <button type="button" className="tf-link text-[12px]" onClick={() => setShowForm(true)}>Record an invoice line</button> by hand.
+    </p>}
     {canManage && formOpen && <section className="tf-panel">
       <div className="tf-panel-heading">
         <div>

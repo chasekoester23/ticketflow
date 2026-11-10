@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import settings  # noqa: E402
 from app.services import document_audit  # noqa: E402
 
+COPIED_FILE = "copied.json"
 COUNT_TABLES = ("organizations", "users", "projects", "batches", "tickets", "audit_events", "invoice_comparisons")
 # What makes a folder ours to remove: this name, and a manifest only this script writes.
 OWN_FOLDER = re.compile(r"^ticketflow-\d{8}-\d{6}(-\d+)?$")
@@ -390,8 +391,11 @@ def main(argv: list[str] | None = None) -> int:
         except (CopyFailed, OSError) as exc:
             print(f"The off-device copy failed, so nothing older was removed: {exc}", file=sys.stderr)
             return 1
-        if target.on_the_same_disk_as(folder):
+        same_disk = target.on_the_same_disk_as(folder)
+        if same_disk:
             print("Warning: that folder is on the same disk as this backup, so it won't survive losing the disk.", file=sys.stderr)
+        # So System Health can tell a backup that would survive losing this disk. Where it went isn't recorded.
+        _write_private_json(folder / COPIED_FILE, {"verified_at": datetime.now(timezone.utc).isoformat(), "same_disk": same_disk})
     if args.keep is not None and not problems:
         for path in prune(args.output_dir, args.keep):
             print(f"Removed older backup {path.name}")

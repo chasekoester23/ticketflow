@@ -174,7 +174,8 @@ export default function DashboardPage() {
           <Metric label="Needs review" value={data.needs_review.toLocaleString()} note={`${data.flagged.toLocaleString()} flagged, ${failed.toLocaleString()} unreadable`} attention={data.needs_review > 0} />
           <Metric label="Accepted tickets" value={data.verified.toLocaleString()} note="Individually approved records" />
           <Metric label="Verified tonnage" value={tons(data.total_tons)} note={`${tons(data.pending_tons)} unverified tons excluded`} />
-          <Metric label="Material cost" value={money(data.total_cost)} note={data.unpriced_tickets ? `${data.unpriced_tickets} accepted tickets missing rates` : "Verified, priced deliveries only"} />
+          <Metric label="Material cost" value={money(data.total_cost)} attention={data.unpriced_tickets > 0}
+            note={data.unpriced_tickets ? `Incomplete: leaves out ${data.unpriced_tickets} approved ticket${data.unpriced_tickets === 1 ? "" : "s"} with no rate` : "Verified, priced deliveries only"} />
         </div>
       </section>
 
