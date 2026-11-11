@@ -23,7 +23,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .db import get_db
+from .db import get_db, scope_to_organization
 from .models import LoginSession, Organization, User
 
 COOKIE_NAME = "ticketflow_session"
@@ -269,6 +269,8 @@ def authenticated_user(request: Request, db: Session = Depends(get_db)) -> User:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account organization unavailable")
     request.state.session_digest = session.token_digest
     request.state.user_id = user.id  # For the request log. Never anything from a record.
+    # With POSTGRES_RLS, the rest of this request can only reach this company's rows.
+    scope_to_organization(db, user.organization_id)
     return user
 
 

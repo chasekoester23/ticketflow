@@ -1,8 +1,8 @@
 """Is this installation healthy? Answers the questions an owner actually has.
 
 Reads only. Never returns a secret, a path, or anything from a company's records
-beyond counts. The heartbeat is a file because the worker is a single-machine
-process; a hosted queue would report through its own service.
+beyond counts. Each worker records itself in worker_heartbeats, which any process
+can read. A local worker also touches a heartbeat file, as before.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from ..config import BASE_DIR, settings
-from ..models import Batch, InvoiceDocument, ProcessingJob, ScanSlot, Ticket, UploadedFile, as_utc
+from ..models import Batch, InvoiceDocument, ProcessingJob, ScanSlot, Ticket, UploadedFile, WorkerHeartbeat, as_utc
 from . import storage
 
 HEARTBEAT_NAME = "worker.heartbeat"
@@ -68,9 +68,37 @@ def worker_last_seen_seconds() -> float | None:
         return None
 
 
-def worker_running() -> bool:
+def _stale_seconds() -> float:
+    return max(WORKER_STALE_SECONDS, 3 * settings.worker_heartbeat_seconds)
+
+
+def live_workers(db: Session) -> list[WorkerHeartbeat]:
+    """Workers that have beaten recently, from any machine. Never says which company's job
+    each holds: this is shown to every company."""
+    since = datetime.now(timezone.utc) - timedelta(seconds=_stale_seconds())
+    return list(db.scalars(select(WorkerHeartbeat).where(WorkerHeartbeat.last_seen_at >= since)
+                           .order_by(WorkerHeartbeat.last_seen_at.desc())))
+
+
+def _table_last_seen_seconds(db: Session | None) -> float | None:
+    try:
+        if db is not None:
+            newest = db.scalar(select(func.max(WorkerHeartbeat.last_seen_at)))
+        else:
+            from ..db import engine  # noqa: PLC0415 - the app's own database, for callers without a session
+            with engine.connect() as connection:
+                newest = connection.scalar(select(func.max(WorkerHeartbeat.last_seen_at)))
+    except Exception:  # No table yet, or no database: the file alone answers.
+        return None
+    return None if newest is None else max(0.0, (datetime.now(timezone.utc) - as_utc(newest)).total_seconds())
+
+
+def worker_running(db: Session | None = None) -> bool:
     seen = worker_last_seen_seconds()
-    return seen is not None and seen <= WORKER_STALE_SECONDS
+    if seen is not None and seen <= WORKER_STALE_SECONDS:
+        return True
+    table = _table_last_seen_seconds(db)
+    return table is not None and table <= _stale_seconds()
 
 
 def expected_revision() -> str | None:
@@ -269,13 +297,18 @@ def build(db: Session, organization_id: int) -> dict:
     checks = []
 
     seen = worker_last_seen_seconds()
+    table_seen = _table_last_seen_seconds(db)
+    if table_seen is not None and (seen is None or table_seen < seen):
+        seen = table_seen
+    workers = live_workers(db) if table_seen is not None else []
     company_batches = select(Batch.id).where(Batch.organization_id == organization_id)
     job_counts = dict(db.execute(select(ProcessingJob.status, func.count()).where(
         ProcessingJob.batch_id.in_(company_batches)).group_by(ProcessingJob.status)).all())
     pending = job_counts.get("pending", 0)
     running = job_counts.get("running", 0)
-    if worker_running():
-        checks.append(_check("Processing worker", "ok", f"Running, last seen {int(seen or 0)} seconds ago."))
+    if worker_running(db):
+        count = f"{len(workers)} workers running" if len(workers) > 1 else "Running"
+        checks.append(_check("Processing worker", "ok", f"{count}, last seen {int(seen or 0)} seconds ago."))
     elif pending or running:
         checks.append(_check("Processing worker", "problem",
                              f"Not running, and {pending + running} upload(s) are waiting on it.",
@@ -364,7 +397,10 @@ def build(db: Session, organization_id: int) -> dict:
         "checks": checks,
         "queue": {"pending": pending, "running": running, "failed_jobs": job_counts.get("failed", 0),
                   "oldest_pending_seconds": int(oldest_seconds) if oldest_seconds is not None else None},
-        "worker": {"running": worker_running(), "last_seen_seconds": int(seen) if seen is not None else None},
+        "worker": {"running": worker_running(db), "last_seen_seconds": int(seen) if seen is not None else None,
+                   "live_workers": len(workers),
+                   "coordination": settings.worker_coordination,
+                   "max_concurrent_jobs_per_organization": settings.max_concurrent_jobs_per_organization or None},
         "database": {"kind": db.get_bind().dialect.name, "revision": revision, "expected_revision": expected},
         "invoice_reader": settings.invoice_extractor,
         "metrics": metrics(db, organization_id),

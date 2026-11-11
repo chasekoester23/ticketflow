@@ -55,7 +55,10 @@ class Stack:
     def environment(self, **extra) -> dict:
         return {**os.environ, "DATABASE_URL": self.url, "STORAGE_DIR": str(self.storage), "BACKUP_DIR": str(self.work / "backups"),
                 "EXTRACTION_PROVIDER": "gemini", "GEMINI_API_KEY": "", "ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": "",
-                "PYTHONPATH": str(BACKEND), "PYTHONWARNINGS": "ignore", **extra}
+                "PYTHONPATH": str(BACKEND), "PYTHONWARNINGS": "ignore",
+                # The single-machine worker these tests kill and restart. Database-coordinated
+                # workers have their own tests in test_cloud_workers.py.
+                "WORKER_COORDINATION": "local", **extra}
 
     def start_server(self, *, largest_file_bytes: int | None = None) -> None:
         """``largest_file_bytes``: the kernel refuses to grow any file past this, for this
@@ -84,14 +87,14 @@ class Stack:
             os.kill(self.server.pid, signal.SIGKILL)
             self.server.wait(10)
 
-    def start_worker(self, *, pause_at: str | None = None, stand_in_reader: bool = False) -> subprocess.Popen:
+    def start_worker(self, *, pause_at: str | None = None, stand_in_reader: bool = False, **env: str) -> subprocess.Popen:
         """The real worker, unmodified. With a pause point or the stand-in reader it's the
         same code run by ``fixtures_worker``, so a kill lands exactly where it's aimed."""
         log = open(self.work / "worker.log", "ab")
         command = [sys.executable, str(Path(__file__).with_name("fixtures_worker.py"))] if pause_at or stand_in_reader \
             else [sys.executable, "scripts/run_worker.py", "--poll-seconds", "0.25"]
         extra = {"TF_PAUSE_AT": pause_at or "", "TF_PAUSE_FILE": str(self.work / "paused"), "TF_READ_LOG": str(self.work / "reads.log")}
-        worker = subprocess.Popen(command, cwd=BACKEND, env=self.environment(**extra), stdout=log, stderr=log)
+        worker = subprocess.Popen(command, cwd=BACKEND, env=self.environment(**extra, **env), stdout=log, stderr=log)
         log.close()
         self.workers.append(worker)
         return worker

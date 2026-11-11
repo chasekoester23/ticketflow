@@ -210,7 +210,7 @@ class Batch(Base):
 
 
 class ProcessingJob(Base):
-    """Durable extraction work item. Claimed by the local single-instance worker."""
+    """Durable extraction work item. Claimed by one worker at a time, under a lease."""
 
     __tablename__ = "processing_jobs"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -220,6 +220,46 @@ class ProcessingJob(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Which worker holds a running job, and until when. The holder renews the lease from its
+    # heartbeat. Once it lapses, any worker may set the job back to pending. See jobqueue.py.
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkerHeartbeat(Base):
+    """One row per live worker process, so any process can see who is working on what."""
+
+    __tablename__ = "worker_heartbeats"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    host: Mapped[str] = mapped_column(String(255))
+    pid: Mapped[int] = mapped_column(Integer)
+    mode: Mapped[str] = mapped_column(String(20))
+    version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    current_job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class ExtractionUsage(Base):
+    """One reader call per ticket: what it used, never what it read. Cost is worked out
+    when reported, from MODEL_PRICES, so a price change never rewrites history."""
+
+    __tablename__ = "extraction_usage"
+    __table_args__ = (Index("ix_extraction_usage_org_created", "organization_id", "created_at"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey("batches.id"), nullable=True, index=True)
+    ticket_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    thinking_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    seconds: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(30))  # ok, or the failure's kind
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

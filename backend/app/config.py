@@ -1,5 +1,6 @@
 """Application settings. Every secret comes from environment variables (or a local .env file)."""
 import ipaddress
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
@@ -152,6 +153,25 @@ class Settings(BaseSettings):
     # Optional. If set, failed backups and failed health checks POST a small JSON
     # message here (a chat webhook, an uptime service's heartbeat). Nothing else is sent.
     alert_webhook_url: str | None = None
+
+    # ---- Workers, per-company limits, usage and PostgreSQL reliability (workstream B).
+    # See docs/engineering/workers.md and docs/engineering/postgres.md.
+    # auto: database leases on PostgreSQL, the single-machine file lock on SQLite.
+    worker_coordination: Literal["auto", "local", "database"] = "auto"
+    # A claimed job belongs to its worker until this long after its last heartbeat.
+    worker_lease_seconds: int = Field(default=90, ge=15, le=3600)
+    worker_heartbeat_seconds: float = Field(default=10.0, ge=0.2, le=300)
+    # 0 means no limit. Per company: jobs running at once, and ticket reads a calendar month (UTC).
+    max_concurrent_jobs_per_organization: int = Field(default=0, ge=0, le=100)
+    monthly_ticket_reads_per_organization: int = Field(default=0, ge=0)
+    # US dollars per million tokens, per model, e.g. {"gemini-3.1-pro-preview": {"input": 0, "output": 0}}.
+    # Unset by default, so cost shows as unknown. Never guessed. Thinking tokens bill as output.
+    model_prices: dict[str, dict[str, Decimal]] = {}
+    database_pool_recycle_seconds: int = Field(default=1800, ge=-1)
+    database_pool_timeout_seconds: int = Field(default=30, ge=1, le=600)
+    database_pool_pre_ping: bool = True
+    # Row-level security on PostgreSQL, as defence in depth. Off until scripts/postgres_rls.py enable has run.
+    postgres_rls: bool = False
 
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver", "0.0.0.0"}

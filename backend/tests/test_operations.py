@@ -98,10 +98,10 @@ def test_worker_run_beats_and_clears_its_heartbeat(client, monkeypatch):
     monkeypatch.setattr(run_worker, "get_extractor", FixtureExtractor)
     real_claim = run_worker.claim_next
 
-    def claim(db):
+    def claim(db, *args):
         time.sleep(0.05)
         seen.append(system_health.heartbeat_path().exists())
-        return real_claim(db)
+        return real_claim(db, *args)
 
     monkeypatch.setattr(run_worker, "claim_next", claim)
     assert run_worker.run(once=True, poll_seconds=0.25) == 0
