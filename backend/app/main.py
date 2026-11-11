@@ -11,12 +11,13 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm.exc import StaleDataError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import rate_limit
 from .config import configuration_problems, settings
+from .proxy import ProxyHeaders
 from .db import Base, engine
 from .routers import access_requests, api, auth as auth_router, invoice_documents, invoices, pricing, projects, records, reports, setup, system, team, scans
 from .services import system_health
@@ -141,6 +142,7 @@ async def log_requests(request: Request, call_next):
                                            f"If it keeps happening, quote reference {request_id}.", "request_id": request_id},
                                 status_code=500)
     route = request.scope.get("route")
+    system_health.count_request(status)
     request_log.info(json.dumps({
         "request_id": request_id, "method": request.method, "route": getattr(route, "path", "unmatched"),
         "status": status, "ms": round((time.perf_counter() - started) * 1000, 1),
@@ -204,20 +206,64 @@ app.add_middleware(
     # Retry-After lets the page say how long to wait after a 429 or 503.
     expose_headers=["X-Request-ID", "Retry-After"],
 )
-app.add_middleware(
-    TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts, www_redirect=False,
-)
+# Probes for a load balancer or platform. They say nothing beyond "up", so a platform's
+# own health checker may reach them by its own hostname (HEALTHCHECK_HOSTS) and over
+# plain HTTP inside its network. Nothing else gets either exception.
+PROBES = frozenset({"/health", "/health/live", "/health/ready"})
+
+
+def https_required() -> bool:
+    return settings.require_https or settings.ticketflow_env == "production"
+
+
+@app.middleware("http")
+async def https_gate(request: Request, call_next):
+    """Plain HTTP is refused once HTTPS is required. The scheme is the one the browser
+    used, as reported by a trusted proxy (see app/proxy.py), never a client's own claim.
+    Inside the host check, so a redirect only ever points at an approved host."""
+    if https_required() and request.url.scheme != "https" and request.url.path not in PROBES:
+        if request.method in ("GET", "HEAD"):
+            return RedirectResponse(str(request.url.replace(scheme="https", port=None)), status_code=308)
+        return JSONResponse({"detail": "HTTPS is required. Nothing was changed."}, status_code=403)
+    return await call_next(request)
+
+
+class _HostGate:
+    """TRUSTED_HOSTS for everything; HEALTHCHECK_HOSTS as well for the probes only.
+    Starlette's TrustedHostMiddleware, reading the settings on each request."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        allowed = list(settings.trusted_hosts)
+        if scope["type"] == "http" and scope["path"] in PROBES:
+            allowed += settings.healthcheck_hosts
+        await TrustedHostMiddleware(self.app, allowed_hosts=allowed, www_redirect=False)(scope, receive, send)
+
+
+app.add_middleware(_HostGate)
+
+
+def allowed_origins() -> set[str]:
+    """Where a browser may send a change from: the separate frontend, or the app's own origin."""
+    return {*settings.cors_origins, *([settings.app_origin] if settings.app_origin else [])}
 
 
 @app.middleware("http")
 async def csrf_header_gate(request: Request, call_next):
     # A custom header prevents ordinary cross-site HTML forms from issuing
-    # state-changing requests with a victim's authentication cookie.
+    # state-changing requests with a victim's authentication cookie. Proxies pass
+    # it through untouched, and the Origin a browser sends is compared with the
+    # configured origins, never with Host or X-Forwarded-Host.
     if request.url.path.startswith("/api/") and request.method in {"POST", "PATCH", "PUT", "DELETE"}:
         if request.headers.get("X-TicketFlow-Request") != "1":
             return JSONResponse({"detail": "Missing required request verification header"}, status_code=403)
         origin = request.headers.get("origin")
-        if origin and origin not in settings.cors_origins:
+        if origin and origin not in allowed_origins():
             return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -249,10 +295,11 @@ app.include_router(invoice_documents.router, dependencies=[Depends(current_user)
 
 
 @app.get("/health")
+@app.get("/health/live")
 def health():
     """Liveness: the process answers. It doesn't touch the database, so a database
     outage doesn't make a supervisor restart a healthy API."""
-    return {"ok": True}
+    return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/health/ready")
@@ -282,3 +329,7 @@ def _extraction_status():
     if settings.extraction_provider == "anthropic":
         return {"extraction_configured": bool(settings.anthropic_api_key), "model": settings.extraction_model}
     return {"extraction_configured": False, "model": "Invalid extraction provider configuration"}
+
+
+# Outermost, so every check above sees the real client address and scheme.
+app.add_middleware(ProxyHeaders, settings=settings)

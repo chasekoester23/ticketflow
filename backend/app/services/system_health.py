@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from alembic.config import Config
@@ -28,6 +29,32 @@ LOW_DISK_BYTES = 2 * 1024 ** 3
 BACKUP_OLD_DAYS = 7
 # The newest of each kind of document are looked for on every visit. scripts/check_documents.py checks all of them.
 DOCUMENT_SAMPLE = 50
+# scripts/backup_pg.py records each run here when the table exists (see docs/operations/backups.md).
+BACKUP_RUNS_TABLE = "backup_runs"
+PG_BACKUP_STATUS_FILE = "pg-backup-latest.json"
+BACKUP_STALE_HOURS = 26  # a daily backup, plus a little slack
+
+
+# ------------------------------------------------------------------ request counts, this process
+
+_started = time.time()
+_counts_lock = threading.Lock()
+_request_counts = {"requests": 0, "server_errors": 0}
+
+
+def count_request(status: int) -> None:
+    """Called once per request by the request log. Counts only, nothing about the request."""
+    with _counts_lock:
+        _request_counts["requests"] += 1
+        if status >= 500:
+            _request_counts["server_errors"] += 1
+
+
+def request_counts() -> dict:
+    with _counts_lock:
+        requests, errors = _request_counts["requests"], _request_counts["server_errors"]
+    return {"since_seconds": int(time.time() - _started), "requests": requests, "server_errors": errors,
+            "error_rate": round(errors / requests, 4) if requests else 0.0}
 
 
 def heartbeat_path() -> Path:
@@ -140,6 +167,99 @@ def _failed_jobs(db: Session, organization_id: int) -> dict:
                   "job: look for job_gave_up or job_failed.")
 
 
+def _timed(probe) -> tuple[bool, float]:
+    started = time.perf_counter()
+    try:
+        probe()
+        ok = True
+    except Exception:  # Any failure at all means unreachable; its text could hold a path or address.
+        ok = False
+    return ok, round((time.perf_counter() - started) * 1000, 1)
+
+
+def storage_reachable() -> tuple[bool, float]:
+    """Asks the document store about a key that never exists: proves it answers, for any driver."""
+    return _timed(lambda: storage.current().exists("health-probe/never-written"))
+
+
+def database_reachable(db: Session) -> tuple[bool, float]:
+    return _timed(lambda: db.execute(text("SELECT 1")))
+
+
+def latest_pg_backup(db: Session) -> dict | None:
+    """The newest successful PostgreSQL backup: from the backup_runs table when it exists
+    (the backup runs as its own service), else a status file beside local backups."""
+    try:
+        if inspect(db.get_bind()).has_table(BACKUP_RUNS_TABLE):
+            row = db.execute(text(f"SELECT finished_at FROM {BACKUP_RUNS_TABLE} WHERE ok = :ok AND kind = 'postgres' "  # noqa: S608
+                                  "ORDER BY finished_at DESC LIMIT 1"), {"ok": True}).first()
+            if row is not None:
+                return {"taken_at": as_utc(row[0]) if isinstance(row[0], datetime) else datetime.fromisoformat(str(row[0])),
+                        "source": "table"}
+    except Exception:
+        db.rollback()
+    try:
+        data = json.loads((settings.backup_dir / PG_BACKUP_STATUS_FILE).read_text())
+        return {"taken_at": datetime.fromisoformat(data["finished_at"]), "source": "file"}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _age_hours(when: datetime | None) -> float | None:
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return round((datetime.now(timezone.utc) - when).total_seconds() / 3600, 1)
+
+
+def metrics(db: Session, organization_id: int) -> dict:
+    """Numbers for the people running TicketFlow. Job and reading numbers are this company's
+    only; the rest describe the installation (this API process, the database, storage and
+    backups) and hold nothing about any company."""
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    company_batches = select(Batch.id).where(Batch.organization_id == organization_id)
+    jobs = dict(db.execute(select(ProcessingJob.status, func.count()).where(
+        ProcessingJob.batch_id.in_(company_batches), ProcessingJob.created_at >= since).group_by(ProcessingJob.status)).all())
+    queued = db.execute(select(func.count(), func.min(ProcessingJob.created_at)).where(
+        ProcessingJob.batch_id.in_(company_batches), ProcessingJob.status == "pending")).one()
+    reader_failures = db.scalar(select(func.count()).select_from(Ticket).where(
+        Ticket.organization_id == organization_id, Ticket.status == "failed", Ticket.created_at >= since)) or 0
+    database_ok, database_ms = database_reachable(db)
+    storage_ok, storage_ms = storage_reachable()
+    local = latest_backup()
+    postgres = latest_pg_backup(db)
+    return {
+        "api": request_counts(),
+        "database": {"reachable": database_ok, "ms": database_ms},
+        "storage": {"reachable": storage_ok, "ms": storage_ms},
+        "queue": {"pending": queued[0] or 0,
+                  "oldest_pending_seconds": int((datetime.now(timezone.utc) - as_utc(queued[1])).total_seconds()) if queued[1] else None},
+        "jobs_24h": {"finished": jobs.get("finished", 0), "failed": jobs.get("failed", 0),
+                     "pending": jobs.get("pending", 0), "running": jobs.get("running", 0)},
+        # Tickets the AI reader couldn't read. Retries of temporary failures aren't recorded
+        # in a table yet; the worker's log has them.
+        "reader_24h": {"failed_tickets": reader_failures, "retries": None},
+        "backups": {
+            "local_age_hours": _age_hours(local["taken_at"]) if local else None,
+            "postgres_age_hours": _age_hours(postgres["taken_at"]) if postgres else None,
+            "stale_after_hours": BACKUP_STALE_HOURS,
+        },
+    }
+
+
+def _postgres_backup_check(db: Session) -> dict:
+    action = ("Run python scripts/backup_pg.py on a daily schedule, and python scripts/restore_pg_drill.py to prove it "
+              "restores. See docs/operations/backups.md.")
+    backup = latest_pg_backup(db)
+    if backup is None:
+        return _check("Backups", "attention", "No record of an encrypted PostgreSQL backup is visible from here.", action)
+    age = _age_hours(backup["taken_at"]) or 0.0
+    if age > BACKUP_STALE_HOURS:
+        return _check("Backups", "problem", f"The latest encrypted PostgreSQL backup is {age:.0f} hours old.", action)
+    return _check("Backups", "ok", f"The latest encrypted PostgreSQL backup finished {age:.0f} hour(s) ago, off this service.")
+
+
 def build(db: Session, organization_id: int) -> dict:
     checks = []
 
@@ -193,9 +313,14 @@ def build(db: Session, organization_id: int) -> dict:
         checks.append(_check("Duplicate safeguards", "ok", "The database enforces the rules that stop double counting."))
 
     backup = latest_backup()
+    if db.get_bind().dialect.name == "postgresql":
+        checks.append(_postgres_backup_check(db))
+        backup = False  # backup.py copies SQLite only; its check doesn't apply here
     copy_somewhere = ("Keep one off this computer too: python scripts/backup.py --copy-to /Volumes/YourDrive/ticketflow "
                       "(an external drive, or a folder your cloud storage syncs).")
-    if backup is None:
+    if backup is False:
+        pass
+    elif backup is None:
         checks.append(_check("Backups", "problem", "No backup yet. A lost or broken disk would lose every approved ticket and scan.",
                              "From the backend folder, run: python scripts/backup.py, then python scripts/restore_drill.py --latest "
                              "to prove it restores. " + copy_somewhere + " For a daily backup: python scripts/backup.py "
@@ -237,4 +362,5 @@ def build(db: Session, organization_id: int) -> dict:
         "worker": {"running": worker_running(), "last_seen_seconds": int(seen) if seen is not None else None},
         "database": {"kind": db.get_bind().dialect.name, "revision": revision, "expected_revision": expected},
         "invoice_reader": settings.invoice_extractor,
+        "metrics": metrics(db, organization_id),
     }
