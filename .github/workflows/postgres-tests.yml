@@ -57,7 +57,7 @@ jobs:
         # the job's own limit, so the next step can name it where logs need no sign-in.
         run: |
           set -o pipefail
-          TF_DURATIONS_LOG=durations.log timeout 21m python -m pytest -q -o faulthandler_timeout=240 --junitxml=results.xml -p no:cacheprovider 2>&1 | tee pytest.log
+          TF_DURATIONS_LOG=durations.log timeout 21m python -m pytest -q -o faulthandler_timeout=240 -o junit_logging=all --junitxml=results.xml -p no:cacheprovider tests/test_cloud_workers.py tests/test_t_failures.py -k "side_by_side or second_worker_refuses or renew_leases" 2>&1 | tee pytest.log  # TEMP-DIAG
       - name: Name a test that hung
         if: always()
         run: |
@@ -80,3 +80,18 @@ jobs:
       - name: Name every failure in one annotation
         if: always()
         run: python scripts/ci_report_failures.py results.xml
+      - name: TEMP-DIAG failure details
+        if: always()
+        run: |
+          python - <<'SCRIPT'
+          import xml.etree.ElementTree as E
+          esc = lambda t: t.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          for case in E.parse("results.xml").getroot().iter("testcase"):
+              f = case.find("failure") if case.find("failure") is not None else case.find("error")
+              if f is None:
+                  continue
+              n = case.get("name")
+              print(f"::error title=DIAG {n}::" + esc((f.text or "")[-3500:]))
+              out = "".join((x.text or "") for x in case.iter() if x.tag in ("system-out", "system-err"))
+              print(f"::warning title=DIAGLOG {n}::" + esc(out[-3500:]))
+          SCRIPT
