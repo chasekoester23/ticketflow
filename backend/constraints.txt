@@ -50,7 +50,7 @@ opencv-python-headless==4.14.0.94
 openpyxl==3.1.5
 opentelemetry-api==1.45.2
 packaging==26.3
-pillow==12.3.0
+pillow==13.0.0
 pluggy==1.7.0
 psycopg-binary==3.3.8
 psycopg==3.3.8
