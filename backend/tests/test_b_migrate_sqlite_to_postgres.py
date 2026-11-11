@@ -26,7 +26,9 @@ from app.auth import current_user
 from app.config import settings
 from app.db import engine_options, enforce_references, normalized_url
 from app.main import app
-from app.models import AccessRequest, Batch, LoginSession, Organization, Project, ReviewTiming, Ticket, UploadedFile, User
+from app.models import (
+    AccessRequest, Batch, ExtractionUsage, LoginSession, Organization, Project, ReviewTiming, Ticket, UploadedFile, User, WorkerHeartbeat,
+)
 from app.routers import api as api_module
 from scripts import migrate_sqlite_to_postgres as migrate
 
@@ -668,6 +670,9 @@ def build_fictional_business(url: str, storage: Path, monkeypatch) -> dict:
         assert client.post("/api/team/members", json={"username": "first-clerk", "display_name": "First Clerk", "role": "clerk"}).status_code == 201
         with Session() as db:
             db.add(ReviewTiming(organization_id=ids["first"], batch_id=1, intake_mode="manual", seconds=Decimal("41.5"), fields_corrected=2))
+            db.add(ExtractionUsage(organization_id=ids["first"], batch_id=1, ticket_id=1, model="stand-in-model", attempts=2,
+                                   prompt_tokens=1000, output_tokens=100, thinking_tokens=None, seconds=Decimal("1.234"), outcome="ok"))
+            db.add(WorkerHeartbeat(id="fictional-worker", host="fictional-host", pid=1, mode="database", current_job_id=None))
             db.commit()
 
         act_as(ids["second"], ids["second_owner"])

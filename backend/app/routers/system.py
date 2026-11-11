@@ -9,7 +9,7 @@ from ..auth import current_organization_id
 from ..db import get_db
 from ..models import Batch, InvoiceComparison, Material, Project, Supplier, SupplierRate, Ticket, User
 from ..permissions import require
-from ..services import system_health
+from ..services import system_health, usage
 
 router = APIRouter(prefix="/api")
 
@@ -17,6 +17,13 @@ router = APIRouter(prefix="/api")
 @router.get("/system/status")
 def system_status(db: Session = Depends(get_db), user: User = Depends(require("system.read"))):
     return system_health.build(db, user.organization_id)
+
+
+@router.get("/system/usage")
+def usage_this_month(db: Session = Depends(get_db), user: User = Depends(require("usage.read"))):
+    """This company's ticket reads, tokens and estimated cost this month. Cost is unknown
+    unless MODEL_PRICES names every model used. Counts only, never a ticket's values."""
+    return usage.report(db, user.organization_id)
 
 
 def _count(db: Session, model, *conditions) -> int:
