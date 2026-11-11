@@ -64,7 +64,7 @@ async function proxy(request: Request): Promise<Response> {
   // compresses for the browser where it should.
   headers.set("accept-encoding", "identity");
   // The address the browser used, for logs and redirects. The backend trusts these only
-  // from the proxies it's told to (uvicorn --forwarded-allow-ips).
+  // from the proxies it's told to (TRUSTED_PROXY_IPS, read by app/proxy.py).
   headers.set("x-forwarded-host", request.headers.get("host") ?? incoming.host);
   const proto = (request.headers.get("x-forwarded-proto") ?? "").split(",").pop()?.trim();
   headers.set("x-forwarded-proto", proto === "https" || proto === "http" ? proto : incoming.protocol.replace(":", ""));

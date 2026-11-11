@@ -110,6 +110,7 @@ def test_worker_run_beats_and_clears_its_heartbeat(client, monkeypatch):
 
 
 def test_missing_and_old_backups_are_called_out(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(system_health, "uses_pg_backups", lambda _db: False)  # backup.py's check; PostgreSQL's is in test_c_internet_facing.py
     monkeypatch.setattr(settings, "backup_dir", tmp_path / "none")
     assert _check(client.get("/api/system/status").json(), "Backups")["state"] == "problem"
     old = tmp_path / "b" / "ticketflow-old"
@@ -331,6 +332,7 @@ def test_header_row_is_skipped_only_when_first():
 
 
 def test_a_backup_only_on_this_computer_says_so_and_a_verified_copy_elsewhere_is_ok(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(system_health, "uses_pg_backups", lambda _db: False)  # backup.py's check; PostgreSQL's is in test_c_internet_facing.py
     from datetime import datetime, timezone
     folder = tmp_path / "b" / "ticketflow-20261110-120000"
     folder.mkdir(parents=True)

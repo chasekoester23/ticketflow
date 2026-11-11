@@ -27,6 +27,14 @@ from .db import get_db
 from .models import LoginSession, Organization, User
 
 COOKIE_NAME = "ticketflow_session"
+# With secure cookies, the browser itself guarantees a __Host- cookie came over HTTPS
+# from this exact host, with no Domain and Path=/: a sibling subdomain or a plain-HTTP
+# page can't plant or overwrite it. Local development keeps the plain name.
+SECURE_COOKIE_NAME = "__Host-ticketflow_session"
+
+
+def session_cookie_name() -> str:
+    return SECURE_COOKIE_NAME if settings.session_secure_cookie else COOKIE_NAME
 SESSION_HOURS = 12
 MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_LENGTH = 1024
@@ -134,8 +142,8 @@ def generate_temporary_password() -> str:
 
 
 def _rate_key(request: Request, username: str) -> str:
-    # A proxy must configure trusted forwarding separately. Never blindly
-    # accept user-supplied X-Forwarded-For values for security decisions.
+    # The real client address: app/proxy.py rewrites it from X-Forwarded-For only for a
+    # request that came through a proxy in TRUSTED_PROXY_IPS. A client's own claim is ignored.
     ip = request.client.host if request.client else "unknown"
     return ip + ":" + username.casefold()
 
@@ -213,7 +221,7 @@ def _naive_utc_now() -> datetime:
 
 
 def _presented_token(request: Request) -> str | None:
-    token = request.cookies.get(COOKIE_NAME)
+    token = request.cookies.get(session_cookie_name())
     if not token or len(token) > 256 or not token.isascii():
         return None
     return token
@@ -314,8 +322,8 @@ def login(request: Request, response: Response, body: Credentials, db: Session) 
     ))
     db.commit()
     response.set_cookie(
-        key=COOKIE_NAME, value=token, httponly=True,
-        secure=settings.session_secure_cookie, samesite="lax", path="/",
+        key=session_cookie_name(), value=token, httponly=True,
+        secure=settings.session_secure_cookie, samesite=settings.session_cookie_samesite, path="/",
         max_age=SESSION_HOURS * 3600,
     )
     response.headers["Cache-Control"] = "no-store"
@@ -329,7 +337,7 @@ def logout(request: Request, response: Response, db: Session) -> dict:
         if active:
             db.delete(active)
             db.commit()
-    response.delete_cookie(COOKIE_NAME, path="/", samesite="lax",
+    response.delete_cookie(session_cookie_name(), path="/", samesite=settings.session_cookie_samesite,
                            secure=settings.session_secure_cookie, httponly=True)
     response.headers["Cache-Control"] = "no-store"
     return {"ok": True}

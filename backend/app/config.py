@@ -1,4 +1,5 @@
 """Application settings. Every secret comes from environment variables (or a local .env file)."""
+import ipaddress
 from pathlib import Path
 from typing import Literal
 
@@ -109,6 +110,49 @@ class Settings(BaseSettings):
     # encryption at rest: 32 random bytes, base64-encoded. Losing it loses the documents.
     storage_encryption_key: SecretStr | None = None
 
+    # ---- Internet-facing security, backups and alerts (docs/security/, docs/operations/) ----
+    # Addresses or networks (CIDR) of the reverse proxies in front of the API, as JSON:
+    # ["100.64.0.0/10", "fd00::/8"]. Only a request arriving from one of these may tell
+    # us the client's address (X-Forwarded-For) or that it came over HTTPS
+    # (X-Forwarded-Proto). Empty trusts no one, so the connecting address is the client.
+    trusted_proxy_ips: list[str] = []
+    # Refuse plain HTTP (GETs are redirected to https). Always on in production.
+    require_https: bool = False
+    # The exact https:// origin people load the app from, when the frontend proxies /api
+    # on its own origin. Mutating requests may come from here as well as CORS_ORIGINS,
+    # which can then be empty: same-origin needs no CORS at all.
+    app_origin: str | None = None
+    # Hosts accepted for /health, /health/live and /health/ready only, such as a
+    # platform's health checker ("healthcheck.railway.app"). Never for anything else.
+    healthcheck_hosts: list[str] = []
+    # "strict" is safe when the app and API are one site; "lax" also suits a link into the app.
+    session_cookie_samesite: Literal["lax", "strict"] = "lax"
+    # scripts/backup_pg.py: AES-256-GCM key, 32 bytes as base64 or hex, and a name for it
+    # that goes in each manifest so the right key can be found years later. Never logged.
+    backup_encryption_key: str | None = None
+    backup_encryption_key_id: str = "primary"
+    # A separate, S3-compatible bucket for backups only: never the documents bucket, and
+    # ideally another provider or account, so one mistake or breach can't lose both.
+    backup_s3_endpoint_url: str | None = None
+    backup_s3_region: str = "auto"
+    backup_s3_bucket: str | None = None
+    backup_s3_access_key_id: str | None = None
+    backup_s3_secret_access_key: str | None = None
+    backup_s3_prefix: str = "ticketflow"
+    # Where scripts/backup_pg.py reads documents from: the documents bucket, with a READ-ONLY
+    # credential of its own. Unset means STORAGE_DIR (a local or mounted folder).
+    backup_source_s3_endpoint_url: str | None = None
+    backup_source_s3_region: str = "auto"
+    backup_source_s3_bucket: str | None = None
+    backup_source_s3_access_key_id: str | None = None
+    backup_source_s3_secret_access_key: str | None = None
+    backup_source_s3_prefix: str = ""
+    backup_keep_daily: int = Field(default=14, ge=1, le=400)
+    backup_keep_monthly: int = Field(default=12, ge=0, le=120)
+    # Optional. If set, failed backups and failed health checks POST a small JSON
+    # message here (a chat webhook, an uptime service's heartbeat). Nothing else is sent.
+    alert_webhook_url: str | None = None
+
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver", "0.0.0.0"}
 
@@ -130,15 +174,40 @@ def configuration_problems(config: Settings) -> list[str]:
             problems.append("Production needs PostgreSQL: set DATABASE_URL to a postgresql:// URL.")
         if not config.session_secure_cookie:
             problems.append("Production needs SESSION_SECURE_COOKIE=true, so sessions only travel over HTTPS.")
-        if not config.cors_origins or any(not origin.startswith("https://") or "*" in origin
-                                          or origin.split("//", 1)[1].split(":")[0].strip("[]") in _LOCAL_HOSTS
-                                          for origin in config.cors_origins):
+        # Empty is allowed with APP_ORIGIN: a same-origin deployment needs no CORS (checked below).
+        if any(not _exact_https_origin(origin) for origin in config.cors_origins):
             problems.append("Production needs CORS_ORIGINS to list the exact https:// address of the frontend, with no wildcards or local addresses.")
         if not config.trusted_hosts or any(host.split(":")[0].strip("[]") in _LOCAL_HOSTS for host in config.trusted_hosts):
             problems.append("Production needs TRUSTED_HOSTS to list only the API's real hostnames, with no local addresses.")
         if config.enable_api_docs:
             problems.append("Production needs ENABLE_API_DOCS=false.")
+        if config.app_origin is not None and not _exact_https_origin(config.app_origin):
+            problems.append("Production needs APP_ORIGIN to be the exact https:// address people open, or unset.")
+    problems += _proxy_problems(config)
     problems += _storage_problems(config)
+    return problems
+
+
+def _exact_https_origin(origin: str) -> bool:
+    host = origin.split("//", 1)[-1]
+    return (origin.startswith("https://") and "*" not in origin and "/" not in host and host != ""
+            and host.split(":")[0].strip("[]") not in _LOCAL_HOSTS)
+
+
+def _proxy_problems(config: Settings) -> list[str]:
+    problems = []
+    for entry in config.trusted_proxy_ips:
+        try:
+            network = ipaddress.ip_network(entry.strip(), strict=False)
+        except ValueError:
+            problems.append(f"TRUSTED_PROXY_IPS has {entry!r}, which isn't an address or network.")
+            continue
+        if network.prefixlen == 0:
+            problems.append("TRUSTED_PROXY_IPS must name your proxies, never every address: anyone could then pick their own address.")
+    if any("*" in host or not host.strip() for host in config.healthcheck_hosts):
+        problems.append("HEALTHCHECK_HOSTS must list exact hostnames, never wildcards.")
+    if config.ticketflow_env == "production" and not config.cors_origins and config.app_origin is None:
+        problems.append("Production needs APP_ORIGIN (same-origin) or CORS_ORIGINS (a separate frontend), so requests can be checked against it.")
     return problems
 
 

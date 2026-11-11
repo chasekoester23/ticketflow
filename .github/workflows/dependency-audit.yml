@@ -1,16 +1,23 @@
 name: Dependency audit
 
-# Reports. It doesn't fail anyone's build yet: findings show as warnings in the
-# annotations, which anyone can read without access to the run's logs. Free, and
-# needs no secrets. The second job is an early warning for version drift.
+# Fails the build on a known vulnerability in a pinned Python package, on a high or
+# critical one in the browser packages, and on a high-severity Bandit finding in our own
+# Python, unless .github/audit-exceptions.json names it with a reason and a review date.
+# Everything found is also listed as annotations, which anyone can read without access to
+# the run's logs. Free, and needs no secrets. The last job is an early warning for drift.
 on:
   push:
     branches: [main, "feature/**"]
     paths:
       - "backend/requirements*.txt"
       - "backend/constraints.txt"
+      - "backend/app/**"
+      - "backend/scripts/**"
       - "frontend/package-lock.json"
+      - ".github/audit-exceptions.json"
       - ".github/workflows/dependency-audit.yml"
+  pull_request:
+    branches: [main]
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -19,7 +26,7 @@ permissions:
   contents: read
 
 jobs:
-  audit:
+  python-packages:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -27,37 +34,88 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "22"
       - name: Install pip-audit
-        run: python -m pip install pip-audit
+        run: python -m pip install pip-audit==2.10.1
       - name: Audit Python packages
         working-directory: backend
-        # Exactly the pinned versions CI runs. No resolving, so what's reported is what's installed.
+        # Exactly the pinned versions CI runs, all requirement files together. No resolving,
+        # so what's reported is what's installed.
         run: |
           python -m pip_audit -r constraints.txt --no-deps --disable-pip --format json -o pip-audit.json || true
           python - <<'SCRIPT'
-          import json
-          found = [(p["name"], p["version"], v["id"], ",".join(v.get("fix_versions") or []) or "no fix listed")
+          import json, sys
+          allowed = json.load(open("../.github/audit-exceptions.json"))["python"]
+          found = [(p["name"], p["version"], v["id"], v.get("aliases") or [], ",".join(v.get("fix_versions") or []) or "no fix listed")
                    for p in json.load(open("pip-audit.json"))["dependencies"] for v in p.get("vulns", [])]
-          print(f"Python: {len(found)} known vulnerabilities in pinned packages")
-          for name, version, ident, fix in found[:40]:
-              print(f"::warning title=Python dependency::{name} {version}: {ident}, fixed in {fix}")
+          failing = [f for f in found if f[2] not in allowed and not set(f[3]) & set(allowed)]
+          print(f"Python: {len(found)} known vulnerabilities in pinned packages, {len(failing)} not excepted")
+          for name, version, ident, _aliases, fix in found[:60]:
+              level = "error" if (name, version, ident, _aliases, fix) in failing else "warning"
+              print(f"::{level} title=Python dependency::{name} {version}: {ident}, fixed in {fix}")
+          sys.exit(1 if failing else 0)
           SCRIPT
+
+  browser-packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
       - name: Audit browser packages
         working-directory: frontend
+        # High and critical fail unless excepted by advisory. Moderate and low are listed.
         run: |
           npm audit --json > npm-audit.json || true
-          python - <<'SCRIPT'
-          import json
+          python3 - <<'SCRIPT'
+          import json, sys
+          allowed = json.load(open("../.github/audit-exceptions.json"))["npm"]
           report = json.load(open("npm-audit.json"))
-          found = report.get("vulnerabilities", {})
           print("npm:", report.get("metadata", {}).get("vulnerabilities", {}))
-          for name, item in list(found.items())[:40]:
-              fix = item.get("fixAvailable")
-              fix = fix if isinstance(fix, bool) else fix.get("name", "") + " " + fix.get("version", "")
-              print(f"::warning title=npm dependency::{name} ({item.get('severity')}, {'direct' if item.get('isDirect') else 'indirect'}), range {item.get('range')}, fix: {fix}")
+          failing = []
+          for name, item in report.get("vulnerabilities", {}).items():
+              advisories = [v for v in item.get("via", []) if isinstance(v, dict)]
+              for advisory in advisories:
+                  ident = advisory.get("url", "").rsplit("/", 1)[-1]
+                  serious = advisory.get("severity") in ("high", "critical")
+                  level = "error" if serious and ident not in allowed else "warning"
+                  if level == "error":
+                      failing.append(ident)
+                  print(f"::{level} title=npm dependency::{name} ({advisory.get('severity')}): {ident} {advisory.get('title', '')[:120]}"
+                        + (" [excepted]" if ident in allowed else ""))
+          print(f"{len(failing)} high or critical advisories not excepted")
+          sys.exit(1 if failing else 0)
+          SCRIPT
+
+  bandit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Bandit
+        run: python -m pip install bandit==1.9.4
+      - name: Scan our own Python
+        # Everything is listed; high severity fails. Tests are left out: they assert and
+        # use fixed fictional passwords on purpose.
+        run: |
+          python -m bandit -q -r app scripts -f json -o bandit.json || true
+          python - <<'SCRIPT'
+          import json, sys
+          results = json.load(open("bandit.json"))["results"]
+          high = [r for r in results if r["issue_severity"] == "HIGH"]
+          for r in results:
+              if r["issue_severity"] in ("HIGH", "MEDIUM"):
+                  level = "error" if r in high else "warning"
+                  print(f"::{level} file=backend/{r['filename']},line={r['line_number']},title=Bandit {r['test_id']}::{r['issue_text']}")
+          print(f"Bandit: {len(results)} findings, {len(high)} high severity")
+          sys.exit(1 if high else 0)
           SCRIPT
 
   newest-packages:

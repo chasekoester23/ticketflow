@@ -32,7 +32,7 @@ What stands between this code and a safe hosted deployment on Railway with Cloud
 - No request crosses origins, so the browser never sends a preflight or asks for `Access-Control-*`. `CORSMiddleware` stays, and simply never matters.
 - `CORS_ORIGINS` still lists the site's own `https://` address, because the CSRF gate checks `Origin` against it on every state change.
 - The session cookie is first-party on the app's own domain, so third-party-cookie blocking in browsers can't break sign-in.
-- The API has no public URL at all. That's a smaller attack surface, and it's why `FORWARDED_ALLOW_IPS=*` is safe there.
+- The API has no public URL at all. That's a smaller attack surface, and it's why trusting forwarded headers from the private network's range (`TRUSTED_PROXY_IPS`) is safe there.
 
 Local development is unchanged: unset `NEXT_PUBLIC_API_URL` still means `http://localhost:8000`, with CORS.
 
