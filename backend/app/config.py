@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     backup_s3_access_key_id: str | None = None
     backup_s3_secret_access_key: str | None = None
     backup_s3_prefix: str = "ticketflow"
+    # Where scripts/backup_pg.py reads documents from: the documents bucket, with a READ-ONLY
+    # credential of its own. Unset means STORAGE_DIR (a local or mounted folder).
+    backup_source_s3_endpoint_url: str | None = None
+    backup_source_s3_region: str = "auto"
+    backup_source_s3_bucket: str | None = None
+    backup_source_s3_access_key_id: str | None = None
+    backup_source_s3_secret_access_key: str | None = None
+    backup_source_s3_prefix: str = ""
     backup_keep_daily: int = Field(default=14, ge=1, le=400)
     backup_keep_monthly: int = Field(default=12, ge=0, le=120)
     # Optional. If set, failed backups and failed health checks POST a small JSON
