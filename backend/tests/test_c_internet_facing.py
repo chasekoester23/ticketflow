@@ -12,7 +12,6 @@ import json
 import logging
 
 import pytest
-from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from app import auth as auth_module
@@ -239,21 +238,14 @@ def test_secure_cookies_use_the_host_prefix_and_local_mode_keeps_its_name(client
 
 # ------------------------------------------------------------------ errors
 
-_boom = APIRouter()
-
-
-@_boom.get("/api/c-test-boom")
-def _explode():
+def _explode(*_args, **_kwargs):
     raise ValueError("/Users/someone/secret/path.db: ticket 10482 for EXAMPLE-SECRET-CUSTOMER")
 
 
-def test_an_unexpected_error_shows_no_trace_path_or_message(client, caplog):
-    app.include_router(_boom)
-    try:
-        with caplog.at_level(logging.ERROR, logger="ticketflow.request"):
-            response = client.get("/api/c-test-boom")
-    finally:
-        app.router.routes[:] = [route for route in app.router.routes if getattr(route, "path", "") != "/api/c-test-boom"]
+def test_an_unexpected_error_shows_no_trace_path_or_message(client, caplog, monkeypatch):
+    monkeypatch.setattr(system_health, "build", _explode)  # a real route, failing unexpectedly
+    with caplog.at_level(logging.ERROR, logger="ticketflow.request"):
+        response = client.get("/api/system/status")
     assert response.status_code == 500
     for leaked in ("/Users/", "secret", "10482", "EXAMPLE-SECRET-CUSTOMER", "Traceback", "ValueError", ".py"):
         assert leaked not in response.text
@@ -277,13 +269,11 @@ def test_liveness_answers_without_the_database_and_says_nothing_else(client):
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_metrics_report_errors_reachability_queue_and_backups(client):
+def test_metrics_report_errors_reachability_queue_and_backups(client, monkeypatch):
     before = system_health.request_counts()
-    app.include_router(_boom)
-    try:
-        client.get("/api/c-test-boom")
-    finally:
-        app.router.routes[:] = [route for route in app.router.routes if getattr(route, "path", "") != "/api/c-test-boom"]
+    with monkeypatch.context() as patch:
+        patch.setattr(system_health, "build", _explode)
+        assert client.get("/api/system/status").status_code == 500
     metrics = client.get("/api/system/status").json()["metrics"]
     assert metrics["api"]["server_errors"] >= before["server_errors"] + 1
     assert metrics["api"]["requests"] > before["requests"] and 0 < metrics["api"]["error_rate"] <= 1
