@@ -2,7 +2,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -90,6 +90,25 @@ class Settings(BaseSettings):
     # First-run setup works only from this machine, unless this is set for that one step.
     allow_remote_setup: bool = False
 
+    # ---- Deployment: document storage. See docs/deploy/railway.md.
+    # local keeps documents under STORAGE_DIR. s3 keeps them in one private S3-compatible
+    # bucket (Cloudflare R2 in production) through app/services/object_store.py.
+    storage_backend: Literal["local", "s3"] = "local"
+    # R2: https://<account id>.r2.cloudflarestorage.com. Empty means AWS S3 itself.
+    s3_endpoint_url: str | None = None
+    s3_bucket: str | None = None
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: SecretStr | None = None
+    # R2 accepts "auto". MinIO and AWS want a real region name.
+    s3_region: str = "auto"
+    # Optional folder inside the bucket, such as "staging". Never stored on a row.
+    s3_prefix: str = ""
+    # path suits MinIO and R2; virtual suits AWS S3.
+    s3_addressing_style: Literal["path", "virtual", "auto"] = "path"
+    # Optional app-level AES-256-GCM envelope encryption, on top of the provider's own
+    # encryption at rest: 32 random bytes, base64-encoded. Losing it loses the documents.
+    storage_encryption_key: SecretStr | None = None
+
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver", "0.0.0.0"}
 
@@ -119,6 +138,45 @@ def configuration_problems(config: Settings) -> list[str]:
             problems.append("Production needs TRUSTED_HOSTS to list only the API's real hostnames, with no local addresses.")
         if config.enable_api_docs:
             problems.append("Production needs ENABLE_API_DOCS=false.")
+    problems += _storage_problems(config)
+    return problems
+
+
+def _storage_problems(config: Settings) -> list[str]:
+    """Document storage: an object store that is fully configured, and private over HTTPS in production."""
+    import base64
+    import re
+
+    problems = []
+    production = config.ticketflow_env == "production"
+    if production and config.storage_backend != "s3":
+        problems.append("Production needs STORAGE_BACKEND=s3: documents can't live on an app server's disk.")
+    if config.storage_backend == "s3":
+        missing = [name for name, value in (("S3_BUCKET", config.s3_bucket), ("S3_ACCESS_KEY_ID", config.s3_access_key_id),
+                                            ("S3_SECRET_ACCESS_KEY", config.s3_secret_access_key)) if not value]
+        if production and not config.s3_endpoint_url:
+            missing.insert(0, "S3_ENDPOINT_URL")
+        if missing:
+            problems.append("Object storage needs " + ", ".join(missing) + ".")
+        endpoint = config.s3_endpoint_url or ""
+        if endpoint and not re.match(r"^https?://[^/?#@\s]+/?$", endpoint):
+            problems.append("S3_ENDPOINT_URL must be the bare https:// address of the store, with no path or credentials.")
+        elif production and endpoint and not endpoint.startswith("https://"):
+            problems.append("Production needs S3_ENDPOINT_URL to use https://.")
+        prefix = config.s3_prefix.strip("/")
+        if prefix and (not re.match(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$", prefix) or {".", ".."} & set(prefix.split("/"))):
+            problems.append("S3_PREFIX may hold only letters, digits, '.', '_', '-' and '/' between segments.")
+    if config.storage_encryption_key is not None:
+        try:
+            secret = config.storage_encryption_key
+            valid = len(base64.b64decode(secret.get_secret_value() if hasattr(secret, "get_secret_value") else str(secret),
+                                         validate=True)) == 32
+        except ValueError:
+            valid = False
+        if not valid:
+            problems.append("STORAGE_ENCRYPTION_KEY must be 32 random bytes, base64-encoded.")
+        elif config.storage_backend != "s3":
+            problems.append("STORAGE_ENCRYPTION_KEY applies only to STORAGE_BACKEND=s3.")
     return problems
 
 
