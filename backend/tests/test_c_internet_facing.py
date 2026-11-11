@@ -320,3 +320,41 @@ def test_metrics_need_system_read(client, monkeypatch):
             must_change_password=False)
         response = client.get("/api/system/status")
         assert (response.status_code == 200) == (role in ("owner", "manager")), (role, response.status_code)
+
+
+def test_a_real_uvicorn_access_log_never_holds_a_query(tmp_path):
+    """Run the real server, search for a name, and read what it logged."""
+    import os
+    import socket
+    import subprocess
+    import sys
+    import time
+    import httpx
+    from pathlib import Path
+    backend = Path(__file__).resolve().parents[1]
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    env = {key: value for key, value in os.environ.items() if not key.startswith(("DATABASE_URL", "TICKETFLOW_", "GEMINI", "ANTHROPIC"))}
+    env.update(DATABASE_URL=f"sqlite:///{tmp_path / 'access.db'}", STORAGE_DIR=str(tmp_path / "storage"), BACKUP_DIR=str(tmp_path / "b"),
+               TRUSTED_HOSTS='["127.0.0.1"]', GEMINI_API_KEY="", PYTHONPATH=str(backend))
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=backend, env=env, check=True, capture_output=True)
+    log = tmp_path / "server.log"
+    with log.open("w") as out:
+        server = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port)], cwd=tmp_path, env=env,
+                                  stdout=out, stderr=out)
+        try:
+            for _ in range(100):
+                try:
+                    if httpx.get(f"http://127.0.0.1:{port}/health", timeout=1).status_code == 200:
+                        break
+                except httpx.HTTPError:
+                    time.sleep(0.1)
+            httpx.get(f"http://127.0.0.1:{port}/api/records/search?q=SEARCHED-SUPPLIER-NAME", timeout=5)
+            httpx.get(f"http://127.0.0.1:{port}/health?token=QUERY-SECRET", timeout=5)
+        finally:
+            server.terminate()
+            server.wait(10)
+    text = log.read_text()
+    assert "/api/records/search" in text and "/health" in text, text[-2000:]
+    assert "SEARCHED-SUPPLIER-NAME" not in text and "QUERY-SECRET" not in text

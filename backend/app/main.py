@@ -24,6 +24,19 @@ from .services import system_health
 from .services.job_log import frames
 from .auth import current_user
 
+class _NoQueryInAccessLog(logging.Filter):
+    """uvicorn's access log writes the whole URL, and a query can hold a search for a
+    name or a supplier. Keep the path, drop the query, whatever flags uvicorn runs with."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str):
+            args = list(record.args)
+            args[2] = args[2].split("?", 1)[0]
+            record.args = tuple(args)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_NoQueryInAccessLog())
 request_log = logging.getLogger("ticketflow.request")
 if not request_log.handlers:
     _handler = logging.StreamHandler()
