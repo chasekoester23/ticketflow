@@ -1,0 +1,14 @@
+# CI smoke-test overrides for the root docker-compose.yml:
+#   docker compose -f docker-compose.yml -f deploy/smoke/docker-compose.smoke.yml up -d --wait
+# The worker gets a stand-in reader (no AI provider, no key), and exports get a low rate
+# limit so the smoke test can see Retry-After pass through the proxy.
+services:
+  api:
+    environment:
+      RATE_LIMIT_EXPORTS_PER_MINUTE: "5"
+  worker:
+    environment:
+      RATE_LIMIT_EXPORTS_PER_MINUTE: "5"
+      TICKETFLOW_BACKEND: /app
+    volumes: ["./deploy/smoke:/smoke:ro"]
+    command: ["python", "/smoke/stand_in_worker.py", "--poll-seconds", "0.5"]

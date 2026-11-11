@@ -31,7 +31,10 @@ SECRET = "SECRET-TICKET-VALUE"
 
 def _production(monkeypatch, **overrides):
     values = dict(ticketflow_env="production", database_url="postgresql://tf@db.internal/ticketflow", session_secure_cookie=True,
-                  cors_origins=["https://app.ticketflow.example"], trusted_hosts=["api.ticketflow.example"], enable_api_docs=False)
+                  cors_origins=["https://app.ticketflow.example"], trusted_hosts=["api.ticketflow.example"], enable_api_docs=False,
+                  # Production also refuses local document storage (test_deploy_storage.py covers it).
+                  storage_backend="s3", s3_endpoint_url="https://account.r2.example", s3_bucket="tf-test",
+                  s3_access_key_id="placeholder", s3_secret_access_key="placeholder")
     values.update(overrides)
     for name, value in values.items():
         monkeypatch.setattr(settings, name, value)

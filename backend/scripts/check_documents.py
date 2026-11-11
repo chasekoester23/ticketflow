@@ -23,10 +23,14 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import normalized_url  # noqa: E402
 from app.services import document_audit  # noqa: E402
+from app.services import storage as storage_service  # noqa: E402
 from app.services.storage import LocalStorage  # noqa: E402
 
 
-def check_database(url: str, storage: Path, *, inside_only: bool = False) -> document_audit.Result:
+def check_database(url: str, storage: Path | None, *, inside_only: bool = False) -> document_audit.Result:
+    """``storage`` is a folder to check. None means this installation's own store, which
+    is the bucket when STORAGE_BACKEND=s3."""
+    store = LocalStorage(storage) if storage is not None else storage_service.current()
     engine = create_engine(normalized_url(url), poolclass=NullPool, hide_parameters=True)
     try:
         with engine.connect() as connection:
@@ -38,7 +42,7 @@ def check_database(url: str, storage: Path, *, inside_only: bool = False) -> doc
             def execute(sql: str):
                 return connection.execute(text(sql)).fetchall()
 
-            return document_audit.check(execute, columns_of, LocalStorage(storage), inside_only=inside_only)
+            return document_audit.check(execute, columns_of, store, inside_only=inside_only)
     finally:
         engine.dispose()
 
@@ -46,7 +50,8 @@ def check_database(url: str, storage: Path, *, inside_only: bool = False) -> doc
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--database", default=settings.database_url, help="Defaults to this installation's database")
-    parser.add_argument("--storage", type=Path, default=settings.storage_dir, help="Defaults to this installation's STORAGE_DIR")
+    parser.add_argument("--storage", type=Path, default=None,
+                        help="A storage folder to check. Defaults to this installation's store: STORAGE_DIR, or the bucket when STORAGE_BACKEND=s3")
     parser.add_argument("--inside-only", action="store_true", help="Count a document outside the storage folder as missing")
     parser.add_argument("--json", action="store_true", help="Print the full result as JSON")
     args = parser.parse_args(argv)
