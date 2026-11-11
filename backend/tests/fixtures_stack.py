@@ -30,6 +30,21 @@ VALUES = dict(ticket_number="1", delivery_date="2026-09-15", material_type="Sand
               supplier="Example Aggregates", job_location="Lot")
 
 
+# The newest stack's folder, so a timeout can show what its server and workers said.
+_LATEST_WORK: list[Path] = []
+
+
+def _log_tails(limit: int = 1500) -> str:
+    if not _LATEST_WORK:
+        return ""
+    parts = []
+    for name in ("worker.log", "server.log"):
+        path = _LATEST_WORK[-1] / name
+        if path.exists():
+            parts.append(f"--- {name} (last {limit} characters) ---\n" + path.read_text(errors="replace")[-limit:])
+    return "\n" + "\n".join(parts) if parts else ""
+
+
 def wait_until(condition, *, seconds: float = 60, what: str = "condition"):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -37,12 +52,13 @@ def wait_until(condition, *, seconds: float = 60, what: str = "condition"):
         if value:
             return value
         time.sleep(0.05)
-    raise AssertionError(f"Timed out after {seconds} s waiting for {what}")
+    raise AssertionError(f"Timed out after {seconds} s waiting for {what}" + _log_tails())
 
 
 class Stack:
     def __init__(self, work: Path, url: str, engine):
         self.work, self.url, self.engine = work, url, engine
+        _LATEST_WORK.append(work)
         self.storage = work / "storage"
         self.storage.mkdir(parents=True, exist_ok=True)
         self.Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)

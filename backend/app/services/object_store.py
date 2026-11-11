@@ -216,7 +216,7 @@ class ObjectStorage:
         request = {"Bucket": self.bucket, "Key": name, "Body": body, "Metadata": metadata,
                    "ContentType": "application/octet-stream",
                    # The store refuses bytes that arrive changed on the way.
-                   "ContentMD5": base64.b64encode(hashlib.md5(body).digest()).decode()}  # noqa: S324 - transport check only
+                   "ContentMD5": base64.b64encode(hashlib.md5(body, usedforsecurity=False).digest()).decode()}  # transport check only
         client_error, core_error = self._errors()
         try:
             if replace:
