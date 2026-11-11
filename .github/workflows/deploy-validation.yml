@@ -166,10 +166,16 @@ jobs:
 
       - name: Show the services' logs when something fails
         if: failure()
+        # Annotations, because anyone can read them without admin access to the run's logs.
+        # The stack holds fictional data and placeholder credentials only.
         run: |
-          $COMPOSE ps -a || true
-          for service in storage-init migrate api worker web; do
-            echo "::group::$service"; $COMPOSE logs --no-color --tail 80 "$service" || true; echo "::endgroup::"
+          annotate() {
+            body="$(printf '%s\n' "$2" | tail -n 40 | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); gsub(/\r/, "%0D"); print }')"
+            echo "::error title=$1::${body:0:3800}"
+          }
+          annotate "compose ps" "$($COMPOSE ps -a 2>&1)"
+          for service in storage-init migrate api worker web minio postgres; do
+            annotate "$service log" "$($COMPOSE logs --no-color --tail 40 "$service" 2>&1)"
           done
 
       - name: Stop the stack

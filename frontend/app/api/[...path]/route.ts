@@ -50,7 +50,10 @@ async function proxy(request: Request): Promise<Response> {
       { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "30" } });
   }
   const incoming = new URL(request.url);
-  // Only /api/... reaches this route, so the path can't name anything else on the backend.
+  // Only /api/... reaches this route. Checked anyway, so no path can name anything else on the backend.
+  if (!incoming.pathname.startsWith("/api/") || /%2e|%2f|%5c/i.test(incoming.pathname)) {
+    return Response.json({ detail: "Not Found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
+  }
   const target = `${base}${incoming.pathname}${incoming.search}`;
 
   const headers = new Headers();
