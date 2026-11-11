@@ -1,0 +1,177 @@
+name: Deploy validation
+
+# Builds the production images and runs them as a stack, the way Railway would:
+# PostgreSQL 16, a private S3-compatible store (MinIO for Cloudflare R2), migrations
+# first, then the API, the worker and the frontend, which proxies /api/... so the
+# browser only sees one origin. Then a smoke test signs in through that origin and
+# goes from upload to CSV export. Fictional data, a stand-in reader instead of any
+# AI provider, no keys, no cloud accounts, nothing published beyond the runner.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "deploy/**"
+      - "docs/deploy/**"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy-validation.yml"
+  push:
+    branches: [main, "feature/**"]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "deploy/**"
+      - "docs/deploy/**"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy-validation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      COMPOSE: docker compose -f docker-compose.yml -f deploy/smoke/docker-compose.smoke.yml
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Config-as-code files are well formed
+        run: |
+          python3 - <<'EOF'
+          import json
+          for path, service in (("backend/railway.api.json", "api"), ("backend/railway.worker.json", "worker"),
+                                ("frontend/railway.json", "web")):
+              config = json.load(open(path))
+              deploy = config["deploy"]
+              assert config["build"]["builder"] == "DOCKERFILE", path
+              assert deploy["restartPolicyType"] == "ON_FAILURE", path
+              assert ("preDeployCommand" in deploy) == (service == "api"), f"{path}: only the API runs migrations"
+              if service == "api":
+                  assert deploy["preDeployCommand"] == ["alembic upgrade head"] and deploy["healthcheckPath"] == "/health/ready"
+              if service == "web":
+                  assert deploy["healthcheckPath"]
+              if service == "worker":
+                  assert "healthcheckPath" not in deploy and deploy["startCommand"] == "python scripts/run_worker.py"
+          print("railway config ok")
+          EOF
+          docker compose -f docker-compose.yml -f deploy/smoke/docker-compose.smoke.yml config --quiet
+
+      - name: Build the images
+        run: $COMPOSE build --progress plain
+
+      - name: The images run as non-root and hold no secrets, data or tests
+        run: |
+          set -eu
+          test "$(docker image inspect ticketflow-backend:local --format '{{.Config.User}}')" = "10001:10001"
+          test "$(docker image inspect ticketflow-frontend:local --format '{{.Config.User}}')" = "node"
+          docker run --rm --entrypoint sh ticketflow-backend:local -c '
+            test "$(id -u)" = 10001
+            for p in .env tests storage backups ticketflow.db evaluation_data; do
+              if [ -e "/app/$p" ]; then echo "image contains $p"; exit 1; fi
+            done
+            if find /app -name "*.db" -o -name ".env*" | grep -q .; then echo "image contains a database or env file"; exit 1; fi
+            if python -c "import pytest" 2>/dev/null || python -c "import moto" 2>/dev/null; then echo "test-only packages in the image"; exit 1; fi
+            if touch /app/app/x 2>/dev/null; then echo "the app can write to its own code"; exit 1; fi
+            echo backend image ok'
+          docker run --rm --entrypoint sh ticketflow-frontend:local -c '
+            test "$(id -un)" = node
+            if [ -e /app/.env ] || [ -e /app/tests ]; then echo "image contains .env or tests"; exit 1; fi
+            if grep -rq "localhost:8000" /app/.next/static; then echo "browser code points at localhost:8000"; exit 1; fi
+            echo frontend image ok'
+
+      - name: The documented production variables pass the startup checks
+        run: |
+          set -eu
+          check() {
+            service="$1"; shift
+            docker run --rm --entrypoint python --env-file docs/deploy/shared.env.example --env-file "docs/deploy/$service.env.example" \
+              "$@" ticketflow-backend:local -c '
+          import sys
+          from app.config import configuration_problems, settings
+          problems = configuration_problems(settings)
+          print(settings.ticketflow_env, settings.storage_backend, problems)
+          sys.exit(1 if problems or settings.ticketflow_env != "production" else 0)'
+          }
+          check api
+          check worker
+          # And production refuses local document storage, or plain-HTTP storage.
+          if check api -e STORAGE_BACKEND=local; then echo "production accepted local storage"; exit 1; fi
+          if check api -e S3_ENDPOINT_URL=http://minio:9000; then echo "production accepted plain HTTP storage"; exit 1; fi
+          if check worker -e SESSION_SECURE_COOKIE=false; then echo "production accepted insecure cookies"; exit 1; fi
+
+      - name: Start the stack (migrations run before the API)
+        run: |
+          set -eu
+          $COMPOSE up -d
+          for i in $(seq 1 90); do
+            state="$(docker inspect --format '{{.State.Health.Status}}' "$($COMPOSE ps -q api)" 2>/dev/null || true)"
+            [ "$state" = healthy ] && break
+            sleep 2
+          done
+          $COMPOSE ps -a
+          test "$state" = healthy
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$($COMPOSE ps -aq migrate)")" = 0
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$($COMPOSE ps -aq storage-init)")" = 0
+          $COMPOSE logs migrate | tail -5
+
+      - name: First-run setup, from inside the API container only
+        run: |
+          set -eu
+          password="smoke-$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))')"
+          echo "::add-mask::$password"
+          echo "SMOKE_OWNER_PASSWORD=$password" >> "$GITHUB_ENV"
+          SMOKE_OWNER_PASSWORD="$password" $COMPOSE exec -T -e SMOKE_OWNER_PASSWORD api python - < deploy/smoke/first_owner.py
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements-dev.txt
+            backend/constraints.txt
+
+      - name: Install the smoke-test client and the backend test requirements
+        working-directory: backend
+        run: pip install -r requirements-dev.txt -c constraints.txt
+
+      - name: Smoke test through the frontend's origin
+        env:
+          SMOKE_WEB_URL: http://127.0.0.1:3301
+          SMOKE_S3_ENDPOINT: http://127.0.0.1:9301
+          SMOKE_S3_BUCKET: ticketflow-local
+          SMOKE_S3_ACCESS_KEY_ID: ticketflow-app
+          SMOKE_S3_SECRET_ACCESS_KEY: local-only-app-secret
+          SMOKE_S3_PREFIX: local
+          SMOKE_EXPORT_LIMIT: "5"
+        run: python deploy/smoke/smoke.py
+
+      - name: Every document the database refers to is in the bucket, unchanged
+        run: $COMPOSE exec -T api python scripts/check_documents.py
+
+      - name: Object-store tests against the real MinIO server
+        working-directory: backend
+        env:
+          TF_S3_LIVE_ENDPOINT: http://127.0.0.1:9301
+          TF_S3_LIVE_BUCKET: ticketflow-local
+          TF_S3_LIVE_KEY: ticketflow-app
+          TF_S3_LIVE_SECRET: local-only-app-secret
+        run: python -m pytest -q tests/test_deploy_storage_live.py tests/test_deploy_storage.py -rs
+
+      - name: Show the services' logs when something fails
+        if: failure()
+        run: |
+          $COMPOSE ps -a || true
+          for service in storage-init migrate api worker web; do
+            echo "::group::$service"; $COMPOSE logs --no-color --tail 80 "$service" || true; echo "::endgroup::"
+          done
+
+      - name: Stop the stack
+        if: always()
+        run: $COMPOSE down -v --remove-orphans
