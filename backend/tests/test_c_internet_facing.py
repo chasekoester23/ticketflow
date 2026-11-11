@@ -178,7 +178,10 @@ def test_wildcard_health_check_hosts_refuse_to_start(monkeypatch):
 
 def test_same_origin_production_needs_no_cors_but_must_name_its_origin(monkeypatch):
     values = dict(ticketflow_env="production", database_url="postgresql://tf@db.internal/ticketflow", session_secure_cookie=True,
-                  cors_origins=[], trusted_hosts=["api.ticketflow.example"], enable_api_docs=False)
+                  cors_origins=[], trusted_hosts=["api.ticketflow.example"], enable_api_docs=False,
+                  # Production also needs private object storage (docs/deploy/railway.md).
+                  storage_backend="s3", s3_endpoint_url="https://account.r2.example", s3_bucket="ticketflow-docs",
+                  s3_access_key_id="placeholder-id", s3_secret_access_key="placeholder-secret")
     for name, value in values.items():
         monkeypatch.setattr(settings, name, value)
     assert any("APP_ORIGIN" in problem for problem in configuration_problems(settings))
