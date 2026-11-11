@@ -69,13 +69,29 @@ jobs:
           fi
           pg_dump --version && pg_restore --version
       - name: Start MinIO
+        # MinIO's own images, newest pinned release first; then its server binary. Each
+        # attempt that fails is named in an annotation, and the one used in a notice.
         run: |
-          image=minio/minio:RELEASE.2025-04-22T22-12-26Z
-          docker pull -q "$image" || image=minio/minio:latest
-          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER="$BACKUP_TEST_S3_ACCESS_KEY" \
-            -e MINIO_ROOT_PASSWORD="$BACKUP_TEST_S3_SECRET" "$image" server /data
+          started=""
+          for image in quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z minio/minio:RELEASE.2025-04-22T22-12-26Z \
+                       quay.io/minio/minio:latest minio/minio:latest; do
+            if out=$(docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER="$BACKUP_TEST_S3_ACCESS_KEY" \
+                     -e MINIO_ROOT_PASSWORD="$BACKUP_TEST_S3_SECRET" "$image" server /data 2>&1); then
+              started="$image"; break
+            fi
+            echo "::warning title=MinIO::$image didn't start: $(echo "$out" | tail -1)"
+            docker rm -f minio >/dev/null 2>&1 || true
+          done
+          if [ -z "$started" ]; then
+            curl -sfL -o "$RUNNER_TEMP/minio" https://dl.min.io/server/minio/release/linux-amd64/minio
+            chmod +x "$RUNNER_TEMP/minio" && mkdir -p "$RUNNER_TEMP/minio-data"
+            MINIO_ROOT_USER="$BACKUP_TEST_S3_ACCESS_KEY" MINIO_ROOT_PASSWORD="$BACKUP_TEST_S3_SECRET" \
+              nohup "$RUNNER_TEMP/minio" server "$RUNNER_TEMP/minio-data" --address :9000 > "$RUNNER_TEMP/minio.log" 2>&1 &
+            started="server binary from dl.min.io"
+          fi
+          echo "::notice title=MinIO::$started"
           for i in $(seq 1 60); do curl -sf http://localhost:9000/minio/health/live && exit 0; sleep 1; done
-          docker logs minio; exit 1
+          docker logs minio 2>/dev/null || cat "$RUNNER_TEMP/minio.log"; exit 1
       - name: Create the source and target databases
         run: |
           createdb -h localhost -U ticketflow tf_backup_source_test

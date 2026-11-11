@@ -38,7 +38,7 @@ def send(url: str | None, event: str, summary: str, *, details: dict | None = No
     request = urllib.request.Request(url, data=body, method="POST",  # noqa: S310 - scheme checked above
                                      headers={"Content-Type": "application/json", "User-Agent": "ticketflow-alert"})
     try:
-        with (opener or urllib.request.urlopen)(request, timeout=_TIMEOUT_SECONDS) as response:  # nosec B310 - http(s) only
+        with (opener or urllib.request.urlopen)(request, timeout=_TIMEOUT_SECONDS) as response:  # nosec B310
             return 200 <= response.status < 300
     except Exception as exc:  # noqa: BLE001 - alerting must never raise
         # The URL is a secret of sorts (it lets anyone post): say only that it failed.

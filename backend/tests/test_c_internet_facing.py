@@ -358,3 +358,18 @@ def test_a_real_uvicorn_access_log_never_holds_a_query(tmp_path):
     text = log.read_text()
     assert "/api/records/search" in text and "/health" in text, text[-2000:]
     assert "SEARCHED-SUPPLIER-NAME" not in text and "QUERY-SECRET" not in text
+
+
+def test_on_postgresql_the_backups_check_follows_the_encrypted_backups(client, tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    monkeypatch.setattr(system_health, "uses_pg_backups", lambda _db: True)
+    monkeypatch.setattr(settings, "backup_dir", tmp_path)
+
+    def backups_check():
+        return next(c for c in client.get("/api/system/status").json()["checks"] if c["name"] == "Backups")
+    assert backups_check()["state"] == "attention" and "backup_pg.py" in backups_check()["action"]
+    status = tmp_path / system_health.PG_BACKUP_STATUS_FILE
+    status.write_text(json.dumps({"finished_at": (datetime.now(timezone.utc) - timedelta(hours=40)).isoformat()}))
+    assert backups_check()["state"] == "problem" and "40 hours" in backups_check()["message"]
+    status.write_text(json.dumps({"finished_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()}))
+    assert backups_check()["state"] == "ok"

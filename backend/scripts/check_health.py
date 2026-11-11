@@ -41,7 +41,7 @@ def check_ready(url: str | None, opener=None) -> tuple[bool | None, str]:
         return False, "--url must be http(s)"
     target = url.rstrip("/") + "/health/ready"
     try:
-        with (opener or urllib.request.urlopen)(urllib.request.Request(target), timeout=10) as response:  # nosec B310 - http(s) only
+        with (opener or urllib.request.urlopen)(urllib.request.Request(target), timeout=10) as response:  # nosec B310
             return response.status == 200, f"HTTP {response.status}"
     except Exception as exc:  # noqa: BLE001
         return False, type(exc).__name__
@@ -75,7 +75,7 @@ def database_numbers(database_url: str) -> dict:
                 columns = {column["name"] for column in inspector.get_columns("worker_heartbeats")}
                 chosen = next((name for name in ("last_seen_at", "seen_at", "heartbeat_at", "updated_at") if name in columns), None)
                 if chosen:
-                    heartbeat = _as_utc(connection.execute(text(f"SELECT MAX({chosen}) FROM worker_heartbeats")).scalar())  # noqa: S608
+                    heartbeat = _as_utc(connection.execute(text(f"SELECT MAX({chosen}) FROM worker_heartbeats")).scalar())  # noqa: S608  # nosec B608
             backup = None
             if inspector.has_table("backup_runs"):
                 backup = _as_utc(connection.execute(text(

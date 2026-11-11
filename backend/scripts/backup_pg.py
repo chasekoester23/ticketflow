@@ -202,7 +202,7 @@ def snapshot_stats(connection) -> dict:
     from sqlalchemy import inspect, text
     inspector = inspect(connection)
     tables = set(inspector.get_table_names())
-    counts = {table: connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()  # noqa: S608 - fixed names
+    counts = {table: connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()  # noqa: S608  # nosec B608
               for table in COUNT_TABLES if table in tables}
     totals = {}
     if "tickets" in tables:

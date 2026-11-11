@@ -191,7 +191,7 @@ def latest_pg_backup(db: Session) -> dict | None:
     (the backup runs as its own service), else a status file beside local backups."""
     try:
         if inspect(db.get_bind()).has_table(BACKUP_RUNS_TABLE):
-            row = db.execute(text(f"SELECT finished_at FROM {BACKUP_RUNS_TABLE} WHERE ok = :ok AND kind = 'postgres' "  # noqa: S608
+            row = db.execute(text(f"SELECT finished_at FROM {BACKUP_RUNS_TABLE} WHERE ok = :ok AND kind = 'postgres' "  # noqa: S608  # nosec B608
                                   "ORDER BY finished_at DESC LIMIT 1"), {"ok": True}).first()
             if row is not None:
                 return {"taken_at": as_utc(row[0]) if isinstance(row[0], datetime) else datetime.fromisoformat(str(row[0])),
@@ -246,6 +246,11 @@ def metrics(db: Session, organization_id: int) -> dict:
             "stale_after_hours": BACKUP_STALE_HOURS,
         },
     }
+
+
+def uses_pg_backups(db: Session) -> bool:
+    """PostgreSQL is backed up by scripts/backup_pg.py; backup.py copies SQLite only."""
+    return db.get_bind().dialect.name == "postgresql"
 
 
 def _postgres_backup_check(db: Session) -> dict:
@@ -313,7 +318,7 @@ def build(db: Session, organization_id: int) -> dict:
         checks.append(_check("Duplicate safeguards", "ok", "The database enforces the rules that stop double counting."))
 
     backup = latest_backup()
-    if db.get_bind().dialect.name == "postgresql":
+    if uses_pg_backups(db):
         checks.append(_postgres_backup_check(db))
         backup = False  # backup.py copies SQLite only; its check doesn't apply here
     copy_somewhere = ("Keep one off this computer too: python scripts/backup.py --copy-to /Volumes/YourDrive/ticketflow "
