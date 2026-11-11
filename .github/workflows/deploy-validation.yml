@@ -109,7 +109,11 @@ jobs:
       - name: Start the stack (migrations run before the API)
         run: |
           set -eu
-          $COMPOSE up -d
+          if ! $COMPOSE up -d > up.log 2>&1; then
+            cat up.log
+            echo "::error title=docker compose up failed::$(tail -n 30 up.log | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); gsub(/\r/, "%0D"); print }')"
+            exit 1
+          fi
           for i in $(seq 1 90); do
             state="$(docker inspect --format '{{.State.Health.Status}}' "$($COMPOSE ps -q api)" 2>/dev/null || true)"
             [ "$state" = healthy ] && break
