@@ -62,6 +62,7 @@ class PixelReader:
         self.active = self.peak = self.calls = 0
         self.order: list[str] = []
         self.threads: set[str] = set()
+        self.first_start = self.last_end = None
 
     def extract(self, image):
         number = self.identities[hashlib.sha256(image.tobytes()).hexdigest()]
@@ -70,6 +71,8 @@ class PixelReader:
             self.calls += 1
             self.peak = max(self.peak, self.active)
             self.threads.add(threading.current_thread().name)
+            now = time.perf_counter()
+            self.first_start = now if self.first_start is None else min(self.first_start, now)
         try:
             time.sleep(self.delay(int(number)))
             if number in self.fail:
@@ -80,6 +83,7 @@ class PixelReader:
             with self.lock:
                 self.active -= 1
                 self.order.append(number)
+                self.last_end = time.perf_counter()
 
 
 @pytest.fixture()
@@ -113,16 +117,16 @@ def test_twenty_tickets_are_read_four_at_a_time_and_each_result_lands_on_its_own
     pdf = _pdf(_numbered(20))
     reader = PixelReader(_identities(pdf), delay=lambda n: 0.02 + (n % 5) * 0.03)
     batch_id = _upload(client, monkeypatch, pdf)
-    started = time.perf_counter()
     _run(batch_id, reader)
-    elapsed = time.perf_counter() - started
+    # Only the reading itself: rendering the PDF takes far longer on a slow CI machine.
+    reading = reader.last_end - reader.first_start
     tickets = _tickets(batch_id)
     assert [t.ticket_number for t in tickets] == [str(70001 + i) for i in range(20)]
     assert all(t.status == "needs_review" and t.tonnage_confirmed is False for t in tickets)
     assert reader.calls == 20 and 2 <= reader.peak <= 4
     assert "MainThread" not in reader.threads  # only the reader runs elsewhere; the database stays on this thread
     sequential = sum(0.02 + ((70001 + i) % 5) * 0.03 for i in range(20))
-    assert elapsed < sequential * 0.75
+    assert reading < sequential * 0.75
     with _db() as db:
         assert db.get(Batch, batch_id).status == "ready_for_review"
 
