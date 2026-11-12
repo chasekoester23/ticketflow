@@ -58,7 +58,7 @@ jobs:
           timeout 5m python -m pytest -q -p no:cacheprovider -o junit_logging=all --junitxml=diag.xml \
             "tests/test_cloud_workers.py::test_two_database_workers_can_run_side_by_side" > diag.txt 2>&1 || true
           echo "::error title=DIAG size::$(wc -l < diag.txt) lines"
-          grep -E "Error|DETAIL|violat|denied|passed|failed" diag.txt | grep -v site-packages | tail -9 | cut -c1-900 | while IFS= read -r line; do echo "::error title=DIAG::$line"; done
+          grep -E "SQL:|parameters:|syntax error|File \"/home/runner/work" diag.txt | grep -v site-packages | sort -u | tail -9 | cut -c1-900 | while IFS= read -r line; do echo "::error title=DIAG::$line"; done
       - name: Run the backend suite on PostgreSQL
         # A test stuck for 4 minutes has every thread's stack dumped, and the run stops before
         # the job's own limit, so the next step can name it where logs need no sign-in.
