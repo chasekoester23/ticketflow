@@ -60,9 +60,9 @@ jobs:
           python - <<'SCRIPT'
           esc = lambda t: t.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
           text = open("diag.txt").read()
-          import re
-          keep = [l for l in text.splitlines() if re.search(r"Error|error:|DETAIL|\\[SQL|\\[parameters|^E |passed|failed|Exception", l) and "site-packages" not in l]
-          print("::error title=DIAG errors::" + esc("\\n".join(keep[-40:])[-3800:]))
+          words = ("Error", "error:", "DETAIL", "[SQL", "[parameters", "Exception", "passed", "failed")
+          keep = [l for l in text.splitlines() if any(w in l for w in words) and "site-packages" not in l]
+          print("::error title=DIAG errors::" + esc("\n".join(keep[-40:])[-3800:] or "no error lines; tail: " + text[-1500:]))
           SCRIPT
       - name: Run the backend suite on PostgreSQL
         # A test stuck for 4 minutes has every thread's stack dumped, and the run stops before
