@@ -21,7 +21,7 @@ from ..schemas import TicketOut
 from ..services import aggregates
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
-from ..services import pilot_report, project_report, reconciliation
+from ..services import consistency, pilot_report, project_report, reconciliation
 from ..services.invoice_context import LineContext
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
@@ -99,9 +99,13 @@ def records(
     table = pricing_svc.rate_table(db, organization_id)
     ts = filtered_tickets(db, **filters)
     index = dup_svc.load_index(db, organization_id, ts)
-    names = pricing_svc.catalog_names(db, organization_id)
+    # Shared by every row: one catalog read, and the recent ticket numbers for the job-number check.
+    similar = consistency.similar_names(db, organization_id)
+    names = similar.normalized()
+    numbers = consistency.ticket_numbers(db, organization_id)
     aliases = pricing_svc.alias_suggestions(db, organization_id, names)
-    return [_out(db, t, organization_id, table, duplicate_index=index, catalog=names, aliases=aliases) for t in ts]
+    return [_out(db, t, organization_id, table, duplicate_index=index, catalog=names, aliases=aliases,
+                 similar=similar, numbers=numbers) for t in ts]
 
 
 @router.get("/records/export.xlsx", dependencies=[Depends(limited("exports"))])

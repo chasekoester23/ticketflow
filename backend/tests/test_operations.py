@@ -98,10 +98,10 @@ def test_worker_run_beats_and_clears_its_heartbeat(client, monkeypatch):
     monkeypatch.setattr(run_worker, "get_extractor", FixtureExtractor)
     real_claim = run_worker.claim_next
 
-    def claim(db):
+    def claim(db, *args):
         time.sleep(0.05)
         seen.append(system_health.heartbeat_path().exists())
-        return real_claim(db)
+        return real_claim(db, *args)
 
     monkeypatch.setattr(run_worker, "claim_next", claim)
     assert run_worker.run(once=True, poll_seconds=0.25) == 0
@@ -110,6 +110,7 @@ def test_worker_run_beats_and_clears_its_heartbeat(client, monkeypatch):
 
 
 def test_missing_and_old_backups_are_called_out(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(system_health, "uses_pg_backups", lambda _db: False)  # backup.py's check; PostgreSQL's is in test_c_internet_facing.py
     monkeypatch.setattr(settings, "backup_dir", tmp_path / "none")
     assert _check(client.get("/api/system/status").json(), "Backups")["state"] == "problem"
     old = tmp_path / "b" / "ticketflow-old"
@@ -328,3 +329,19 @@ def test_clerks_cant_import_rates(client):
 
 def test_header_row_is_skipped_only_when_first():
     assert [r.line for r in rate_sheet.parse("Supplier\tMaterial\tRate\nA\tB\t1")] == [2]
+
+
+def test_a_backup_only_on_this_computer_says_so_and_a_verified_copy_elsewhere_is_ok(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(system_health, "uses_pg_backups", lambda _db: False)  # backup.py's check; PostgreSQL's is in test_c_internet_facing.py
+    from datetime import datetime, timezone
+    folder = tmp_path / "b" / "ticketflow-20261110-120000"
+    folder.mkdir(parents=True)
+    (folder / "manifest.json").write_text(json.dumps({"taken_at": datetime.now(timezone.utc).isoformat(), "counts": {}}))
+    monkeypatch.setattr(settings, "backup_dir", tmp_path / "b")
+    check = _check(client.get("/api/system/status").json(), "Backups")
+    assert check["state"] == "attention" and "only on this computer" in check["message"] and "--copy-to" in check["action"]
+    (folder / "copied.json").write_text(json.dumps({"verified_at": "2026-11-10T12:00:00+00:00", "same_disk": True}))
+    assert _check(client.get("/api/system/status").json(), "Backups")["state"] == "attention"  # same disk doesn't count
+    (folder / "copied.json").write_text(json.dumps({"verified_at": "2026-11-10T12:00:00+00:00", "same_disk": False}))
+    check = _check(client.get("/api/system/status").json(), "Backups")
+    assert check["state"] == "ok" and "verified copy off this computer" in check["message"]

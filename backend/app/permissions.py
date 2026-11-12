@@ -56,6 +56,8 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     "team.manage": frozenset({OWNER}),
     # Installation health: worker, backups, database version.
     "system.read": _APPROVERS,
+    # What reading tickets has used and cost this month. Owners only: it's the company's bill.
+    "usage.read": frozenset({OWNER}),
 }
 
 

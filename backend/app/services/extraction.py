@@ -38,7 +38,7 @@ class Extractor(Protocol):
 
 PROMPT = """You are reading ONE scanned construction material delivery ticket (often handwritten).
 Return ONLY a JSON object with exactly these keys:
-ticket_number, delivery_date, material_type, tonnage, supplier, job_location
+ticket_number, delivery_date, material_type, tonnage, supplier, job_location, job_number, hours, loads
 
 Rules:
 - Copy values as written. Normalize field-name variants: "Ticket No./Load No./Delivery No." -> ticket_number;
@@ -50,6 +50,13 @@ Rules:
   return null for tonnage. Never convert units, divide by 2000, or infer tons
   from a gross/tare/net weight value with no explicit tons unit.
 - Do not confuse gross weight, tare weight, truck weight or delivered quantity with net tons.
+- ticket_number is the ticket's own number: usually PRINTED or stamped (often in red) near "Ticket No.", "No.",
+  "Ticket #" or "Scale Ticket", and it often has letters or a prefix. Copy it exactly, keeping letters, dashes
+  and leading zeros (for example "IV-52330"). It is NEVER the job number, project number, PO number, order
+  number, truck number or load count, even when those are handwritten larger.
+- job_number: a job, project or PO number written on the ticket, if any, exactly as written; otherwise null.
+- hours: for an hourly trucking ticket, the total hours billed as a number; otherwise null. Do not compute it from start and end times.
+- loads: the number of loads if the ticket states one; otherwise null.
 - Copy numerical digits and decimal places exactly; if a digit is ambiguous, return null.
 - delivery_date: use YYYY-MM-DD if you can read it fully, otherwise the text as written.
 - If a value is missing, illegible or ambiguous, use null. NEVER guess or invent a value.

@@ -30,6 +30,21 @@ VALUES = dict(ticket_number="1", delivery_date="2026-09-15", material_type="Sand
               supplier="Example Aggregates", job_location="Lot")
 
 
+# The newest stack's folder, so a timeout can show what its server and workers said.
+_LATEST_WORK: list[Path] = []
+
+
+def _log_tails(limit: int = 1500) -> str:
+    if not _LATEST_WORK:
+        return ""
+    parts = []
+    for name in ("worker.log", "server.log"):
+        path = _LATEST_WORK[-1] / name
+        if path.exists():
+            parts.append(f"--- {name} (last {limit} characters) ---\n" + path.read_text(errors="replace")[-limit:])
+    return "\n" + "\n".join(parts) if parts else ""
+
+
 def wait_until(condition, *, seconds: float = 60, what: str = "condition"):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -37,12 +52,13 @@ def wait_until(condition, *, seconds: float = 60, what: str = "condition"):
         if value:
             return value
         time.sleep(0.05)
-    raise AssertionError(f"Timed out after {seconds} s waiting for {what}")
+    raise AssertionError(f"Timed out after {seconds} s waiting for {what}" + _log_tails())
 
 
 class Stack:
     def __init__(self, work: Path, url: str, engine):
         self.work, self.url, self.engine = work, url, engine
+        _LATEST_WORK.append(work)
         self.storage = work / "storage"
         self.storage.mkdir(parents=True, exist_ok=True)
         self.Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -55,7 +71,10 @@ class Stack:
     def environment(self, **extra) -> dict:
         return {**os.environ, "DATABASE_URL": self.url, "STORAGE_DIR": str(self.storage), "BACKUP_DIR": str(self.work / "backups"),
                 "EXTRACTION_PROVIDER": "gemini", "GEMINI_API_KEY": "", "ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": "",
-                "PYTHONPATH": str(BACKEND), "PYTHONWARNINGS": "ignore", **extra}
+                "PYTHONPATH": str(BACKEND), "PYTHONWARNINGS": "ignore",
+                # The single-machine worker these tests kill and restart. Database-coordinated
+                # workers have their own tests in test_cloud_workers.py.
+                "WORKER_COORDINATION": "local", **extra}
 
     def start_server(self, *, largest_file_bytes: int | None = None) -> None:
         """``largest_file_bytes``: the kernel refuses to grow any file past this, for this
@@ -84,14 +103,14 @@ class Stack:
             os.kill(self.server.pid, signal.SIGKILL)
             self.server.wait(10)
 
-    def start_worker(self, *, pause_at: str | None = None, stand_in_reader: bool = False) -> subprocess.Popen:
+    def start_worker(self, *, pause_at: str | None = None, stand_in_reader: bool = False, **env: str) -> subprocess.Popen:
         """The real worker, unmodified. With a pause point or the stand-in reader it's the
         same code run by ``fixtures_worker``, so a kill lands exactly where it's aimed."""
         log = open(self.work / "worker.log", "ab")
         command = [sys.executable, str(Path(__file__).with_name("fixtures_worker.py"))] if pause_at or stand_in_reader \
             else [sys.executable, "scripts/run_worker.py", "--poll-seconds", "0.25"]
         extra = {"TF_PAUSE_AT": pause_at or "", "TF_PAUSE_FILE": str(self.work / "paused"), "TF_READ_LOG": str(self.work / "reads.log")}
-        worker = subprocess.Popen(command, cwd=BACKEND, env=self.environment(**extra), stdout=log, stderr=log)
+        worker = subprocess.Popen(command, cwd=BACKEND, env=self.environment(**extra, **env), stdout=log, stderr=log)
         log.close()
         self.workers.append(worker)
         return worker

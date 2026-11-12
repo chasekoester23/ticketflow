@@ -280,7 +280,8 @@ export default function RecordsPage() {
           <p className="tf-panel-description" data-testid="records-summary">
             {!summary ? "Loading records…" : <>
               {total.toLocaleString()} records · {(summary.by_status.verified ?? 0).toLocaleString()} verified · {Number(summary.verified_tons).toLocaleString(undefined, { maximumFractionDigits: 3 })} verified tons · {money(summary.verified_cost)} material cost
-              {summary.verified_unpriced > 0 && <span className="ml-1 font-semibold text-[#a14c1c]">· {summary.verified_unpriced} verified with no locked price</span>}
+              {summary.verified_unpriced > 0 && <span className="ml-1 font-semibold text-[#a14c1c]">· Cost incomplete: leaves out {summary.verified_unpriced} approved ticket{summary.verified_unpriced === 1 ? "" : "s"} with no rate{" "}
+                <Link prefetch={false} href="/pricing" className="tf-link text-[11px]">Set rates</Link></span>}
             </>}
           </p>
         </div>

@@ -59,7 +59,7 @@ test("the register reads one page at a time, and totals cover every matching rec
   await page.goto("/records");
   await expect(page.getByTestId("records-summary")).toContainText("120 records");
   await expect(page.getByTestId("records-summary")).toContainText("820.125 verified tons");
-  await expect(page.getByTestId("records-summary")).toContainText("2 verified with no locked price");
+  await expect(page.getByTestId("records-summary")).toContainText("leaves out 2 approved tickets with no rate");
   await expect(page.getByRole("row")).toHaveCount(51);
   await expect(page.getByText("Showing 1–50 of 120")).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();

@@ -88,6 +88,19 @@ def _note(rows: list[dict], ref: DocumentRef) -> None:
         rows.append({"table": ref.table, "id": ref.row_id})
 
 
+def _digest(store, located) -> str:
+    """A file on disk is hashed as it's read. An object store hands back the key, and
+    its read checks the hash recorded with the object as well: a mismatch there is damage."""
+    if isinstance(located, Path):
+        return digest_of(located)
+    try:
+        return hashlib.sha256(store.read(located)).hexdigest()
+    except OSError as error:
+        if type(error).__name__ == "DocumentDamaged":
+            return "damaged"
+        raise
+
+
 def check(execute: Callable[[str], Iterable], columns_of: Callable[[str], set[str]], store: LocalStorage, *, inside_only: bool = False) -> Result:
     """Every referenced file exists and, where a hash was recorded, matches it. Each
     distinct file is hashed once, however many rows refer to it."""
@@ -108,7 +121,7 @@ def check(execute: Callable[[str], Iterable], columns_of: Callable[[str], set[st
         if ref.sha256:
             result.hash_checked += 1
             if path not in seen:
-                seen[path] = digest_of(path)
+                seen[path] = _digest(store, path)
             if seen[path] != ref.sha256:
                 result.mismatched_count += 1
                 _note(result.mismatched, ref)

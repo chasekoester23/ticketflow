@@ -1,8 +1,10 @@
 """Application settings. Every secret comes from environment variables (or a local .env file)."""
+import ipaddress
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -90,6 +92,87 @@ class Settings(BaseSettings):
     # First-run setup works only from this machine, unless this is set for that one step.
     allow_remote_setup: bool = False
 
+    # ---- Deployment: document storage. See docs/deploy/railway.md.
+    # local keeps documents under STORAGE_DIR. s3 keeps them in one private S3-compatible
+    # bucket (Cloudflare R2 in production) through app/services/object_store.py.
+    storage_backend: Literal["local", "s3"] = "local"
+    # R2: https://<account id>.r2.cloudflarestorage.com. Empty means AWS S3 itself.
+    s3_endpoint_url: str | None = None
+    s3_bucket: str | None = None
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: SecretStr | None = None
+    # R2 accepts "auto". MinIO and AWS want a real region name.
+    s3_region: str = "auto"
+    # Optional folder inside the bucket, such as "staging". Never stored on a row.
+    s3_prefix: str = ""
+    # path suits MinIO and R2; virtual suits AWS S3.
+    s3_addressing_style: Literal["path", "virtual", "auto"] = "path"
+    # Optional app-level AES-256-GCM envelope encryption, on top of the provider's own
+    # encryption at rest: 32 random bytes, base64-encoded. Losing it loses the documents.
+    storage_encryption_key: SecretStr | None = None
+
+    # ---- Internet-facing security, backups and alerts (docs/security/, docs/operations/) ----
+    # Addresses or networks (CIDR) of the reverse proxies in front of the API, as JSON:
+    # ["100.64.0.0/10", "fd00::/8"]. Only a request arriving from one of these may tell
+    # us the client's address (X-Forwarded-For) or that it came over HTTPS
+    # (X-Forwarded-Proto). Empty trusts no one, so the connecting address is the client.
+    trusted_proxy_ips: list[str] = []
+    # Refuse plain HTTP (GETs are redirected to https). Always on in production.
+    require_https: bool = False
+    # The exact https:// origin people load the app from, when the frontend proxies /api
+    # on its own origin. Mutating requests may come from here as well as CORS_ORIGINS,
+    # which can then be empty: same-origin needs no CORS at all.
+    app_origin: str | None = None
+    # Hosts accepted for /health, /health/live and /health/ready only, such as a
+    # platform's health checker ("healthcheck.railway.app"). Never for anything else.
+    healthcheck_hosts: list[str] = []
+    # "strict" is safe when the app and API are one site; "lax" also suits a link into the app.
+    session_cookie_samesite: Literal["lax", "strict"] = "lax"
+    # scripts/backup_pg.py: AES-256-GCM key, 32 bytes as base64 or hex, and a name for it
+    # that goes in each manifest so the right key can be found years later. Never logged.
+    backup_encryption_key: str | None = None
+    backup_encryption_key_id: str = "primary"
+    # A separate, S3-compatible bucket for backups only: never the documents bucket, and
+    # ideally another provider or account, so one mistake or breach can't lose both.
+    backup_s3_endpoint_url: str | None = None
+    backup_s3_region: str = "auto"
+    backup_s3_bucket: str | None = None
+    backup_s3_access_key_id: str | None = None
+    backup_s3_secret_access_key: str | None = None
+    backup_s3_prefix: str = "ticketflow"
+    # Where scripts/backup_pg.py reads documents from: the documents bucket, with a READ-ONLY
+    # credential of its own. Unset means STORAGE_DIR (a local or mounted folder).
+    backup_source_s3_endpoint_url: str | None = None
+    backup_source_s3_region: str = "auto"
+    backup_source_s3_bucket: str | None = None
+    backup_source_s3_access_key_id: str | None = None
+    backup_source_s3_secret_access_key: str | None = None
+    backup_source_s3_prefix: str = ""
+    backup_keep_daily: int = Field(default=14, ge=1, le=400)
+    backup_keep_monthly: int = Field(default=12, ge=0, le=120)
+    # Optional. If set, failed backups and failed health checks POST a small JSON
+    # message here (a chat webhook, an uptime service's heartbeat). Nothing else is sent.
+    alert_webhook_url: str | None = None
+
+    # ---- Workers, per-company limits, usage and PostgreSQL reliability (workstream B).
+    # See docs/engineering/workers.md and docs/engineering/postgres.md.
+    # auto: database leases on PostgreSQL, the single-machine file lock on SQLite.
+    worker_coordination: Literal["auto", "local", "database"] = "auto"
+    # A claimed job belongs to its worker until this long after its last heartbeat.
+    worker_lease_seconds: int = Field(default=90, ge=15, le=3600)
+    worker_heartbeat_seconds: float = Field(default=10.0, ge=0.2, le=300)
+    # 0 means no limit. Per company: jobs running at once, and ticket reads a calendar month (UTC).
+    max_concurrent_jobs_per_organization: int = Field(default=0, ge=0, le=100)
+    monthly_ticket_reads_per_organization: int = Field(default=0, ge=0)
+    # US dollars per million tokens, per model, e.g. {"gemini-3.1-pro-preview": {"input": 0, "output": 0}}.
+    # Unset by default, so cost shows as unknown. Never guessed. Thinking tokens bill as output.
+    model_prices: dict[str, dict[str, Decimal]] = {}
+    database_pool_recycle_seconds: int = Field(default=1800, ge=-1)
+    database_pool_timeout_seconds: int = Field(default=30, ge=1, le=600)
+    database_pool_pre_ping: bool = True
+    # Row-level security on PostgreSQL, as defence in depth. Off until scripts/postgres_rls.py enable has run.
+    postgres_rls: bool = False
+
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver", "0.0.0.0"}
 
@@ -111,14 +194,78 @@ def configuration_problems(config: Settings) -> list[str]:
             problems.append("Production needs PostgreSQL: set DATABASE_URL to a postgresql:// URL.")
         if not config.session_secure_cookie:
             problems.append("Production needs SESSION_SECURE_COOKIE=true, so sessions only travel over HTTPS.")
-        if not config.cors_origins or any(not origin.startswith("https://") or "*" in origin
-                                          or origin.split("//", 1)[1].split(":")[0].strip("[]") in _LOCAL_HOSTS
-                                          for origin in config.cors_origins):
+        # Empty is allowed with APP_ORIGIN: a same-origin deployment needs no CORS (checked below).
+        if any(not _exact_https_origin(origin) for origin in config.cors_origins):
             problems.append("Production needs CORS_ORIGINS to list the exact https:// address of the frontend, with no wildcards or local addresses.")
         if not config.trusted_hosts or any(host.split(":")[0].strip("[]") in _LOCAL_HOSTS for host in config.trusted_hosts):
             problems.append("Production needs TRUSTED_HOSTS to list only the API's real hostnames, with no local addresses.")
         if config.enable_api_docs:
             problems.append("Production needs ENABLE_API_DOCS=false.")
+        if config.app_origin is not None and not _exact_https_origin(config.app_origin):
+            problems.append("Production needs APP_ORIGIN to be the exact https:// address people open, or unset.")
+    problems += _proxy_problems(config)
+    problems += _storage_problems(config)
+    return problems
+
+
+def _exact_https_origin(origin: str) -> bool:
+    host = origin.split("//", 1)[-1]
+    return (origin.startswith("https://") and "*" not in origin and "/" not in host and host != ""
+            and host.split(":")[0].strip("[]") not in _LOCAL_HOSTS)
+
+
+def _proxy_problems(config: Settings) -> list[str]:
+    problems = []
+    for entry in config.trusted_proxy_ips:
+        try:
+            network = ipaddress.ip_network(entry.strip(), strict=False)
+        except ValueError:
+            problems.append(f"TRUSTED_PROXY_IPS has {entry!r}, which isn't an address or network.")
+            continue
+        if network.prefixlen == 0:
+            problems.append("TRUSTED_PROXY_IPS must name your proxies, never every address: anyone could then pick their own address.")
+    if any("*" in host or not host.strip() for host in config.healthcheck_hosts):
+        problems.append("HEALTHCHECK_HOSTS must list exact hostnames, never wildcards.")
+    if config.ticketflow_env == "production" and not config.cors_origins and config.app_origin is None:
+        problems.append("Production needs APP_ORIGIN (same-origin) or CORS_ORIGINS (a separate frontend), so requests can be checked against it.")
+    return problems
+
+
+def _storage_problems(config: Settings) -> list[str]:
+    """Document storage: an object store that is fully configured, and private over HTTPS in production."""
+    import base64
+    import re
+
+    problems = []
+    production = config.ticketflow_env == "production"
+    if production and config.storage_backend != "s3":
+        problems.append("Production needs STORAGE_BACKEND=s3: documents can't live on an app server's disk.")
+    if config.storage_backend == "s3":
+        missing = [name for name, value in (("S3_BUCKET", config.s3_bucket), ("S3_ACCESS_KEY_ID", config.s3_access_key_id),
+                                            ("S3_SECRET_ACCESS_KEY", config.s3_secret_access_key)) if not value]
+        if production and not config.s3_endpoint_url:
+            missing.insert(0, "S3_ENDPOINT_URL")
+        if missing:
+            problems.append("Object storage needs " + ", ".join(missing) + ".")
+        endpoint = config.s3_endpoint_url or ""
+        if endpoint and not re.match(r"^https?://[^/?#@\s]+/?$", endpoint):
+            problems.append("S3_ENDPOINT_URL must be the bare https:// address of the store, with no path or credentials.")
+        elif production and endpoint and not endpoint.startswith("https://"):
+            problems.append("Production needs S3_ENDPOINT_URL to use https://.")
+        prefix = config.s3_prefix.strip("/")
+        if prefix and (not re.match(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$", prefix) or {".", ".."} & set(prefix.split("/"))):
+            problems.append("S3_PREFIX may hold only letters, digits, '.', '_', '-' and '/' between segments.")
+    if config.storage_encryption_key is not None:
+        try:
+            secret = config.storage_encryption_key
+            valid = len(base64.b64decode(secret.get_secret_value() if hasattr(secret, "get_secret_value") else str(secret),
+                                         validate=True)) == 32
+        except ValueError:
+            valid = False
+        if not valid:
+            problems.append("STORAGE_ENCRYPTION_KEY must be 32 random bytes, base64-encoded.")
+        elif config.storage_backend != "s3":
+            problems.append("STORAGE_ENCRYPTION_KEY applies only to STORAGE_BACKEND=s3.")
     return problems
 
 

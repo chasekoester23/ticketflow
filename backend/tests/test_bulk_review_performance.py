@@ -98,5 +98,7 @@ def test_batched_duplicate_and_catalog_queries_do_not_grow_per_record(client):
 
     # Both lists should have a small fixed number of SQL queries, not 160+
     # repeated per-ticket scans or supplier/material catalog lookups.
-    assert batch_queries <= 10, f"Batch list executed {batch_queries} SELECTs"
+    # 11: one more than before, for the recent ticket numbers the job-number check compares against.
+    # Still a fixed number, however many tickets the list holds.
+    assert batch_queries <= 11, f"Batch list executed {batch_queries} SELECTs"
     assert records_queries <= 10, f"Records list executed {records_queries} SELECTs"

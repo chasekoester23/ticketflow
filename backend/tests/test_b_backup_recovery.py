@@ -328,6 +328,9 @@ def test_the_command_copies_and_warns_about_the_same_disk(live, tmp_path, monkey
     captured = capsys.readouterr()
     assert "Copied and verified" in captured.out and "same disk" in captured.err
     assert len(list(drive.iterdir())) == 1
+    # Recorded beside the backup, so System Health knows it wouldn't survive losing this disk.
+    newest = backup_script.newest_backup(output)
+    assert json.loads((newest / "copied.json").read_text())["same_disk"] is True
 
 
 def test_retention_applies_at_the_destination_too(live, tmp_path, monkeypatch):

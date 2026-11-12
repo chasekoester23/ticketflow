@@ -70,6 +70,10 @@ class TicketOut(BaseModel):
     verified_at: datetime | None = None
     # A known catalog name for a spelling on this ticket; a person applies it.
     suggestions: dict[str, str] = {}
+    # A catalog name this one probably means, apart from words like Inc, Trucking or No. Suggestion only.
+    similar: dict[str, str] = {}
+    # Why the ticket number may be the job, PO or truck number instead. Never blocks approval.
+    number_warning: str | None = None
     # What the reader returned, kept separate from the current values.
     as_read: dict[str, str] = {}
     flag_note: str | None = None

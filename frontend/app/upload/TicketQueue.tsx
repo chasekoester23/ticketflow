@@ -62,6 +62,8 @@ export const TicketQueue = memo(function TicketQueue({ tickets, selected, filter
     else if (row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = row.offsetTop + row.offsetHeight - box.clientHeight;
   }, [selected, rows]);
 
+  const pendingCount = useMemo(() => tickets.filter(pendingStatus).length, [tickets]);
+  const flaggedCount = useMemo(() => tickets.filter((ticket) => ticket.status === "flagged").length, [tickets]);
   return <section className="tf-panel tf-review-pane" aria-label="Ticket queue">
     <div className="border-b border-[#e7eaee] p-2.5">
       <div className="flex items-center justify-between gap-2">
@@ -69,11 +71,15 @@ export const TicketQueue = memo(function TicketQueue({ tickets, selected, filter
         <button type="button" className="tf-link text-[11px]" onClick={onHide}>Hide</button>
       </div>
       <div className="tf-segmented mt-2 flex" role="group" aria-label="Filter ticket queue">
-        {(["pending", "flagged", "all"] as const).map((name) => (
-          <button type="button" key={name} className="flex-1" aria-pressed={filter === name} onClick={() => onFilter(name)}>
+        {(["pending", "flagged", "all"] as const).map((name) => {
+          // "All" has no count: the total is just below, and the queue is narrow.
+          const count = name === "pending" ? pendingCount : name === "flagged" ? flaggedCount : null;
+          return <button type="button" key={name} className="flex-1" aria-pressed={filter === name} onClick={() => onFilter(name)}>
             {name === "pending" ? "To review" : name === "flagged" ? "Flagged" : "All"}
-          </button>
-        ))}
+            {/* The batch summary says these counts in words; here they're for the eye. */}
+            {count !== null && <span aria-hidden="true" className={`ml-1 tabular-nums ${name === "flagged" && count ? "rounded-[2px] bg-[#fff1dc] px-1 font-semibold text-[#8f4a12]" : "text-[#5f6c7b]"}`}>{count}</span>}
+          </button>;
+        })}
       </div>
       <label htmlFor="queue-search" className="sr-only">Search tickets in queue</label>
       <input id="queue-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)}

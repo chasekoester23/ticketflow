@@ -1,0 +1,14 @@
+# Secrets and local build output never go into an image.
+.env
+.env.*
+node_modules/
+.next/
+out/
+# Test output and test-only material.
+test-results/
+playwright-report/
+tests/
+*.tsbuildinfo
+Dockerfile
+.dockerignore
+railway.json

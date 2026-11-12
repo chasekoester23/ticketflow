@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import Batch, Ticket, UploadedFile
-from . import scan_manifest, splitter, storage
+from . import scan_manifest, splitter, storage, usage
 from .extraction import ExtractionError, Extractor
 from .validation import compute_flags, parse_date, parse_tonnage
 
@@ -83,6 +83,10 @@ def apply_extraction(ticket: Ticket, extracted, raw: dict) -> None:
         job_location=ticket.job_location, raw_date=extracted.delivery_date,
         raw_tonnage=extracted.tonnage,
     )
+    hours = raw.get("hours") if isinstance(raw, dict) else None
+    if hours not in (None, "") and ticket.tonnage is None:
+        # Hourly trucking isn't priced yet (docs/engineering/billing-units.md). Say so, rather than "tonnage missing".
+        ticket.flags = [*ticket.flags, f"Hourly ticket ({hours} h): TicketFlow prices by the ton for now, so there are no tons to approve. Flag it or skip it."]
     ticket.status = "needs_review"  # tonnage must be human-confirmed
     ticket.tonnage_confirmed = False
     ticket.error = None
@@ -114,9 +118,13 @@ class _Job:
 class _Reader:
     """Reads crops on a few threads and hands each result back here, in scan order."""
 
-    def __init__(self, db: Session, extractor: Extractor | None, workers: int):
+    def __init__(self, db: Session, extractor: Extractor | None, workers: int,
+                 organization_id: int | None = None, allowance: int | None = None):
         self.db = db
         self.extractor = extractor
+        self.organization_id = organization_id
+        # Reads this company may still make this month. None: no limit.
+        self.allowance = allowance
         self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ticketflow-read") if extractor and workers > 1 else None
         # Crops waiting or in flight. Bounded, so a long PDF doesn't hold every crop in memory.
         # Wide enough that one slow ticket at the front doesn't leave the other threads idle.
@@ -126,7 +134,11 @@ class _Reader:
     def submit(self, state: _FileState, key, ticket: Ticket, is_new: bool, image) -> None:
         if self.extractor is None:
             raise RuntimeError("AI extraction requires a configured extractor")
-        if self.pool is not None:
+        if self.allowance is not None and self.allowance <= 0:
+            # Over the company's monthly limit: no call is made, and the ticket says why.
+            future = Future()
+            future.set_exception(usage.limit_reached())
+        elif self.pool is not None:
             future = self.pool.submit(self.extractor.extract, image)
         else:
             future = Future()
@@ -134,6 +146,8 @@ class _Reader:
                 future.set_result(self.extractor.extract(image))
             except BaseException as exc:  # handed over exactly as a thread would
                 future.set_exception(exc)
+        if self.allowance is not None:
+            self.allowance -= 1
         self.queue.append(_Job(state, key, ticket, is_new, None if is_new else _values(ticket), future))
         state.pending += 1
         while len(self.queue) >= self.window:
@@ -177,18 +191,29 @@ class _Reader:
             job.state.pending -= 1
             finish_file(self.db, job.state)
 
+    def _record_usage(self, job: _Job, result, ticket_id: int | None) -> None:
+        """What the read cost, saved with its ticket. A read nobody kept still cost money."""
+        row = usage.row_for(result, organization_id=self.organization_id, batch_id=job.state.batch_id,
+                            ticket_id=ticket_id, model=getattr(self.extractor, "model", None))
+        if row is not None:
+            self.db.add(row)
+
     def _apply(self, job: _Job, result) -> None:
         ticket = job.ticket
         if job.is_new:
             taken = self.db.scalar(select(Ticket.id).where(
                 Ticket.file_id == job.state.file_id, Ticket.source_page == job.key[0], Ticket.position == job.key[1]))
             if taken is not None:
+                self._record_usage(job, result, taken)
+                self.db.commit()
                 return  # someone already recorded this slot; never a second ticket for one crop
         else:
             self.db.refresh(ticket)
             if ticket.status != "failed" or _values(ticket) != job.snapshot:
                 # A person entered or changed this ticket while it was being read. Their work wins.
                 logger.info("kept_person_edit", extra={"ticket_id": ticket.id})
+                self._record_usage(job, result, ticket.id)
+                self.db.commit()
                 return
         if isinstance(result, ExtractionError):
             ticket.status = "failed"
@@ -199,6 +224,8 @@ class _Reader:
             extracted, raw = result
             apply_extraction(ticket, extracted, raw)
         self.db.add(ticket)
+        self.db.flush()
+        self._record_usage(job, result, ticket.id)
         self.db.commit()
 
 
@@ -299,7 +326,9 @@ def prepare_file(db: Session, reader: _Reader, file: UploadedFile, layout: str, 
 
 
 def process_file(db: Session, file: UploadedFile, layout: str, extractor: Extractor | None, *, manual: bool = False) -> None:
-    reader = _Reader(db, None if manual else extractor, 1 if manual else settings.extraction_concurrency)
+    company = file.batch.organization_id
+    reader = _Reader(db, None if manual else extractor, 1 if manual else settings.extraction_concurrency,
+                     organization_id=company, allowance=None if manual else usage.reads_left_this_month(db, company))
     try:
         prepare_file(db, reader, file, layout, manual=manual)
         reader.drain()
@@ -314,8 +343,10 @@ def process_batch(db: Session, batch_id: int, extractor: Extractor | None, only_
     batch.status = "processing"
     db.commit()
     manual = batch.intake_mode == "manual"
+    allowance = None if manual else usage.reads_left_this_month(db, batch.organization_id)
     # One pool for the whole batch, so twenty single-ticket photos are read as fast as one four-up PDF.
-    reader = _Reader(db, None if manual else extractor, 1 if manual else settings.extraction_concurrency)
+    reader = _Reader(db, None if manual else extractor, 1 if manual else settings.extraction_concurrency,
+                     organization_id=batch.organization_id, allowance=allowance)
     states: list[_FileState] = []
     try:
         for file in batch.files:
