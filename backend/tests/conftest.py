@@ -63,6 +63,8 @@ DECLARE
   name text := pg_get_serial_sequence(TG_TABLE_NAME, 'id');
   seen bigint;
 BEGIN
+  -- A table whose id isn't a serial (worker_heartbeats has a text id) has no sequence to advance.
+  IF name IS NULL THEN RETURN NEW; END IF;
   EXECUTE format('SELECT last_value FROM %s', name) INTO seen;
   IF NEW.id >= seen THEN PERFORM setval(name, NEW.id); END IF;
   RETURN NEW;
