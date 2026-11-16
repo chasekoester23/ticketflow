@@ -86,6 +86,8 @@ def test_the_cap_is_configurable(client, monkeypatch):
 
 
 def test_one_poison_upload_doesnt_stop_the_uploads_behind_it(client, monkeypatch):
+    # This tests the single-machine worker; on PostgreSQL the default would be database mode.
+    monkeypatch.setattr(settings, "worker_coordination", "local")
     from scripts import run_worker
 
     poison = _upload(client, monkeypatch, "poison.pdf")

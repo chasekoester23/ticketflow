@@ -168,6 +168,8 @@ def test_local_worker_cli_drains_queued_batch_and_exit(client, monkeypatch):
 
 
 def test_worker_reacquires_orphaned_running_job_after_restart(client, monkeypatch):
+    # This tests the single-machine worker; on PostgreSQL the default would be database mode.
+    monkeypatch.setattr(settings, "worker_coordination", "local")
     from scripts import run_worker
 
     bid = _pending_upload(client, monkeypatch)
@@ -184,6 +186,8 @@ def test_worker_reacquires_orphaned_running_job_after_restart(client, monkeypatc
 
 
 def test_local_lock_rejects_a_second_worker_without_reclaiming_jobs(client, monkeypatch):
+    # This tests the single-machine worker; on PostgreSQL the default would be database mode.
+    monkeypatch.setattr(settings, "worker_coordination", "local")
     import fcntl
     from scripts import run_worker
 
