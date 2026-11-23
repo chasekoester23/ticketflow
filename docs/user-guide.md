@@ -31,6 +31,11 @@ tickets are entered:
 - **AI extraction**: fills the fields from the scan if your server has a provider key. Every
   value still needs checking.
 
+Phone photos work as well as scans: JPG, PNG, or a photo saved as a PDF. Large photos are
+reduced to fit, and a photo taken sideways is turned upright. Lay the tickets flat, fill the
+frame, and for four tickets keep one in each quarter of the photo. iPhone HEIC photos aren't
+read yet: export them as JPEG, or set the iPhone's Camera > Formats to Most Compatible.
+
 Enter how many paper tickets you scanned if you can. The **scan check** compares that count
 with the tickets found, and shows every slot on every page. Faint slots ask a person whether
 they hold a ticket. A separate processing worker prepares uploads. If an upload waits at

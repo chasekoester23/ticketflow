@@ -130,3 +130,10 @@ def test_a_sideways_phone_photo_of_one_ticket_is_stored_upright(client):
     (record,) = client.get(f"/api/batches/{result.json()['id']}/tickets").json()
     crop = Image.open(io.BytesIO(client.get(f"/api/tickets/{record['id']}/image").content))
     assert crop.height > crop.width  # portrait, as the person held it
+
+
+def test_an_iphone_heic_photo_is_refused_with_how_to_fix_it(client):
+    result = client.post("/api/batches", data={"layout": "single"},
+                         files=[("files", ("IMG_0414.HEIC", b"\x00\x00\x00\x18ftypheic", "image/heic"))])
+    assert result.status_code == 400 or result.status_code == 422, result.text
+    assert "Export it as JPEG" in result.text and "Most Compatible" in result.text

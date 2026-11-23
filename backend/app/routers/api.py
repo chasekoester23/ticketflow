@@ -111,6 +111,9 @@ def create_batch(
         total_bytes += len(data)
         if len(original_name) > 255:
             rejected.append("A file name exceeds 255 characters; rename the scan before uploading")
+        elif ext in (".heic", ".heif"):
+            rejected.append(f"{original_name}: iPhone HEIC photos can't be read yet. Export it as JPEG (on a Mac: open it "
+                            "in Preview, File > Export, JPEG), or set the iPhone's Camera > Formats to Most Compatible")
         elif ext not in ALLOWED_EXT:
             rejected.append(f"{original_name}: unsupported file type (PDF, JPG, PNG only)")
         elif not data:

@@ -46,7 +46,7 @@ export function UploadPanel({ projects, onUploaded, onError }: {
     <div className="tf-panel-heading">
       <div>
         <h2 className="tf-panel-title">Upload delivery tickets</h2>
-        <p className="tf-panel-description">PDF, JPG, or PNG · All selected files must be valid; none are processed if any is rejected</p>
+        <p className="tf-panel-description">Scans or phone photos: PDF, JPG, or PNG · All selected files must be valid; none are processed if any is rejected</p>
       </div>
       <a className="tf-link" href="/projects">Manage projects</a>
     </div>
