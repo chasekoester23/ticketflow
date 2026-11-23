@@ -21,7 +21,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from ..models import InvoiceComparison, Project
+from ..models import InvoiceComparison, Project, normal_name
 from . import billing_exceptions, reconciliation
 
 CATEGORIES = {
@@ -72,6 +72,13 @@ class Detected:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+    def basis(self) -> str:
+        """The figures a person decided on. If they change after the exception is closed,
+        it needs a person again."""
+        facts = (self.amount, self.billed_tons, self.approved_tons, self.unbilled_tickets, self.line_billed, self.line_approved,
+                 tuple(self.ticket_ids))
+        return "|".join("" if v is None else str(v) for v in facts)
 
 
 def _severity(category: str, amount: Decimal | None) -> str:
@@ -147,15 +154,25 @@ def detect(db: Session, organization_id: int, items: list[InvoiceComparison], li
             invoice_numbers=sorted({g.invoice_number for g in group}), line_ids=pattern["line_ids"]))
     gaps = reconciliation.unbilled_gaps_by_project(db, organization_id)
     for project in db.query(Project).filter(Project.organization_id == organization_id, Project.id.in_(list(gaps))):
+        # One exception per supplier and material in a project, keyed by their names, not by
+        # dates: an earlier delivery joining a run mustn't turn it into a new exception and
+        # leave a person's handling of the old one behind.
+        groups: dict[tuple[str, str], list[dict]] = {}
         for gap in gaps[project.id]:
+            groups.setdefault((normal_name(gap["supplier"]), normal_name(gap["material"])), []).append(gap)
+        for (supplier_key, material_key), runs in groups.items():
+            tickets = sum(run["tickets"] for run in runs)
+            tons = sum((Decimal(run["tons"]) for run in runs), Decimal(0))
+            first, last = runs[0], runs[-1]
+            dates = ", ".join(f"{run['date_from']} to {run['date_to']}" if run["date_from"] != run["date_to"] else run["date_from"]
+                              for run in runs[:6]) + (f", and {len(runs) - 6} more" if len(runs) > 6 else "")
             found.append(Detected(
-                key=f"U:{project.id}:{gap['supplier']}:{gap['material']}:{gap['date_from']}", category="not_invoiced",
-                severity="low",
-                title=f"Not billed yet: {gap['supplier']}, {gap['material']}, {gap['date_from']} to {gap['date_to']}",
-                explanation=(f"{gap['tickets']} approved deliver{'y' if gap['tickets'] == 1 else 'ies'} ({gap['tons']} t) in "
-                             f"{project.code} that no invoice line lists or covers. Expect a bill, or ask whether one was missed."),
-                project_id=project.id, supplier=gap["supplier"], material=gap["material"],
-                approved_tons=Decimal(gap["tons"]), unbilled_tickets=gap["tickets"]))
+                key=f"U:{project.id}:{supplier_key}:{material_key}", category="not_invoiced", severity="low",
+                title=f"Not billed yet: {first['supplier']}, {first['material']}, {first['date_from']} to {last['date_to']}",
+                explanation=(f"{tickets} approved deliver{'y' if tickets == 1 else 'ies'} ({tons} t) in {project.code} that no "
+                             f"invoice line lists or covers, on {dates}. Expect a bill, or ask whether one was missed."),
+                project_id=project.id, supplier=first["supplier"], material=first["material"],
+                approved_tons=tons, unbilled_tickets=tickets))
     return found
 
 
@@ -191,4 +208,5 @@ def summarize(open_items: list[dict], all_reviews: list[dict]) -> dict:
         "recovered": str(sum((Decimal(r["recovered_amount"]) for r in all_reviews
                               if r["status"] == "recovered" and r["recovered_amount"] is not None), Decimal(0))),
         "unassigned": sum(1 for i in open_items if i["assignee_user_id"] is None),
+        "changed_since_closed": sum(1 for i in open_items if i.get("changed_since_closed")),
     }

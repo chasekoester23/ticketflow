@@ -74,6 +74,9 @@ function Detail({ item, page, onSaved }: { item: BillingException; page: Excepti
       <span className={`tf-status ${SEVERITY_CLASS[item.severity]}`}>{item.severity}</span>
     </div>
     <div className="space-y-4 p-5">
+      {item.changed_since_closed && <p className="tf-alert tf-alert-warn" data-testid="changed-since-closed">
+        Marked “{STATUS_LABEL[item.status]}”{item.updated_by ? ` by ${item.updated_by}` : ""}, but its figures have changed since. Check it again: saving records your decision on the new figures.
+      </p>}
       <p className="text-[13px] leading-5 text-[#263646]">{item.explanation}</p>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px] sm:grid-cols-3">
         {item.amount !== null && <div><dt className="tf-stat-label">This cause</dt><dd className="font-bold tabular-nums">{money(item.amount, true)}</dd></div>}
@@ -183,7 +186,8 @@ export default function ExceptionsCenter() {
 
     {s && <section className="tf-panel overflow-hidden" aria-label="Exception totals">
       <div className="grid grid-cols-2 lg:grid-cols-5">
-        <Metric label="Open" value={s.open} note={`${s.by_severity.high} high · ${s.unassigned} without an owner`} attention={s.by_severity.high > 0} />
+        <Metric label="Open" value={s.open} attention={s.by_severity.high > 0 || s.changed_since_closed > 0}
+          note={`${s.by_severity.high} high · ${s.unassigned} without an owner` + (s.changed_since_closed ? ` · ${s.changed_since_closed} changed after closing` : "")} />
         <Metric label="Potential overcharge" value={money(s.potential_overcharge)} attention={Number(s.potential_overcharge) > 0}
           note={s.money_unknown ? `Billed above approved, open. ${s.money_unknown} more can't be priced yet` : "Billed above approved, open, each cause once"} />
         <Metric label="Disputed with supplier" value={money(s.disputed_amount)} note="Part of the potential overcharge" />
@@ -248,7 +252,8 @@ export default function ExceptionsCenter() {
                 <span className="block text-[11px] text-[#5f6c7b]">{[i.category_label, i.supplier, i.project].filter(Boolean).join(" · ")}</span></td>
               <td className="text-right tabular-nums">{i.amount === null ? <span className="text-[#5f6c7b]">—</span> : money(i.amount, true)}</td>
               <td>{i.assignee ?? <span className="text-[#5f6c7b]">—</span>}</td>
-              <td><span className={`tf-status ${i.status === "disputed" ? "tf-status-attention" : i.status === "recovered" || i.status === "resolved" ? "tf-status-open" : ""}`}>{STATUS_LABEL[i.status]}</span></td>
+              <td><span className={`tf-status ${i.status === "disputed" ? "tf-status-attention" : i.status === "recovered" || i.status === "resolved" ? "tf-status-open" : ""}`}>{STATUS_LABEL[i.status]}</span>
+                {i.changed_since_closed && <span className="tf-status tf-status-attention ml-1">Figures changed</span>}</td>
             </tr>)}</tbody>
           </table></div>}
       </section>

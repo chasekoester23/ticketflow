@@ -618,6 +618,8 @@ class ExceptionReview(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # What the exception said when a person last acted on it, kept for the record.
     title: Mapped[str] = mapped_column(String(300), nullable=False)
+    # Its figures at that moment. If they change after it was closed, it needs a person again.
+    basis: Mapped[str | None] = mapped_column(Text, nullable=True)
     lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

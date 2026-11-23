@@ -179,3 +179,51 @@ def test_the_one_pass_unbilled_gaps_match_the_per_project_report(client, scenari
         together = reconciliation.unbilled_gaps_by_project(db, 1)
         one_by_one = {p.id: reconciliation.unbilled(db, 1, p)["gaps"] for p in db.query(Project).filter(Project.organization_id == 1)}
     assert together == {k: v for k, v in one_by_one.items() if v} and together  # the scenario has one unbilled run
+
+
+def _approve_another_no8(client, scenario, *, number, delivered):
+    from .sample_data import TICKETS
+    papers = [{**TICKETS[0], "ticket_number": number + "A"}, {**TICKETS[1], "ticket_number": number}, *TICKETS[2:]]
+    batch = client.post("/api/batches", data={"layout": "grid_2x2", "project_id": str(scenario["p1"])},
+                        files=[("files", ("more.pdf", make_scan_pdf(papers), "application/pdf"))]).json()
+    tickets = client.get(f"/api/batches/{batch['id']}/tickets").json()
+    no8 = client.patch(f"/api/tickets/{tickets[1]['id']}", json={"ticket_number": number, "delivery_date": delivered}).json()
+    assert client.post(f"/api/tickets/{no8['id']}/verify", headers={"If-Match": no8["revision"]}).status_code == 200
+    for other in (tickets[0], *tickets[2:]):
+        client.post(f"/api/tickets/{other['id']}/skip")
+
+
+def test_an_unbilled_exception_keeps_its_identity_when_an_earlier_delivery_joins(client, scenario):
+    unbilled = _by_category(_list(client))["not_invoiced"][0]
+    assert unbilled["key"] == f"U:{scenario['p1']}:example aggregates:no 8 stone"
+    resolved = _act(client, unbilled, status="resolved", note="Bill expected with the November statement.")
+    assert resolved.status_code == 200, resolved.text
+
+    _approve_another_no8(client, scenario, number="20483", delivered="2026-10-02")  # earlier than the first
+    after = _list(client)
+    same = next(i for i in after["items"] if i["key"] == unbilled["key"])
+    assert all(c["key"] != unbilled["key"] for c in after["cleared"])  # not orphaned under a new key
+    assert same["unbilled_tickets"] == 2 and "2026-10-02" in same["title"]
+    # Closed by a person, then its figures changed: shown again, their decision left as it was.
+    assert same["status"] == "resolved" and same["changed_since_closed"] is True and same["needs_attention"] is True
+    assert after["summary"]["changed_since_closed"] == 1
+    history = client.get("/api/exceptions/history", params={"key": unbilled["key"]}).json()
+    assert [(e["field"], e["new"]) for e in history] == [("status", "resolved"), ("note", "Bill expected with the November statement.")]
+
+
+def test_a_closed_exception_whose_figures_change_needs_a_person_again_until_they_look(client, scenario):
+    rate = _by_category(_list(client))["rate"][0]
+    closed = _act(client, rate, status="dismissed", note="Agreed by phone.").json()
+    assert all(i["key"] != rate["key"] for i in _list(client)["items"])  # closed and unchanged: off the open list
+    line = scenario["inv1"]
+    corrected = client.put(f"/api/invoice-comparisons/{line['id']}", headers={"If-Match": line["revision"]}, json={
+        "project_id": scenario["p1"], "invoice_number": "INV-1", "supplier_name": "Example Aggregates",
+        "material_name": "No. 53 Crushed Stone", "date_from": "2026-10-01", "date_to": "2026-10-31", "billed_tons": "29.500",
+        "billed_unit_price": "19.00", "billed_subtotal": "560.50", "ticket_list": "10482\\t24.50\\n10499\\t5.00"})
+    assert corrected.status_code == 200, corrected.text
+    back = next(i for i in _list(client)["items"] if i["key"] == rate["key"])
+    assert back["status"] == "dismissed" and back["changed_since_closed"] is True and back["amount"] == "55.13"
+    # The person looks again and decides: it's closed on the new figures.
+    again = _act(client, back, revision=closed["revision"], note="Rate rise confirmed in writing.")
+    assert again.status_code == 200, again.text
+    assert all(i["key"] != rate["key"] for i in _list(client)["items"])

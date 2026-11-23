@@ -90,3 +90,13 @@ test("with nothing to question, the page says so plainly", async ({ page }) => {
   await page.goto("/invoices/exceptions");
   await expect(page.getByTestId("exceptions-empty")).toContainText("Nothing to question");
 });
+
+test("a closed exception whose figures changed is listed again, with the person's decision shown as it was", async ({ page }) => {
+  const changed = { ...ITEMS[1], status: "dismissed", changed_since_closed: true, needs_attention: true, updated_by: "Pat Manager", revision: "3" };
+  await mock(page, "manager", { items: [changed] });
+  await page.goto("/invoices/exceptions?key=L1%3Anot_found%3A10499");
+  const row = page.getByRole("table", { name: "Exception list" }).getByRole("row").nth(1);
+  await expect(row).toContainText("Not an issue");
+  await expect(row).toContainText("Figures changed");
+  await expect(page.getByTestId("changed-since-closed")).toContainText("Marked “Not an issue” by Pat Manager, but its figures have changed since");
+});

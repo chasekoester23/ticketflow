@@ -803,11 +803,13 @@ export type BillingException = {
   unbilled_tickets: number | null; detected: boolean;
   status: ExceptionStatus; assignee_user_id: number | null; assignee: string | null;
   recovered_amount: string | null; note: string | null; revision: string; updated_at: string | null; updated_by: string | null;
+  // Closed by a person, then its figures changed: it needs a person again. Their status is kept.
+  changed_since_closed: boolean; needs_attention: boolean;
 };
 export type ExceptionsSummary = {
   open: number; by_category: Record<ExceptionCategory, number>; by_severity: Record<ExceptionSeverity, number>;
   potential_overcharge: string; billed_below_approved: string; disputed_amount: string; recovered: string;
-  money_unknown: number; unassigned: number;
+  money_unknown: number; unassigned: number; changed_since_closed: number;
 };
 export type ClearedException = { key: string; title: string; status: ExceptionStatus; recovered_amount: string | null; note: string | null; assignee: string | null; updated_at: string };
 export type ExceptionsPage = {

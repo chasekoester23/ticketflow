@@ -30,6 +30,7 @@ from ..services.pricing import norm
 router = APIRouter(prefix="/api")
 
 OPEN = ("open", "investigating", "disputed")
+CLOSED = ("recovered", "resolved", "dismissed")
 STATUSES = ("open", "investigating", "disputed", "recovered", "resolved", "dismissed")
 # Closing an exception says why, so the next person doesn't reopen the same question.
 NEEDS_NOTE = ("recovered", "resolved", "dismissed")
@@ -55,13 +56,20 @@ def _compute(db: Session, organization_id: int) -> tuple[list[dict], dict[str, E
     out = []
     for found in svc.detect(db, organization_id, items, lines):
         review = reviews.get(found.key)
-        out.append(_item(found.as_dict(), review, projects, people, detected=True))
+        out.append(_item({**found.as_dict(), "basis": found.basis()}, review, projects, people, detected=True))
     return out, reviews, people
 
 
 def _item(data: dict, review: ExceptionReview | None, projects: dict[int, str], people: dict[int, str], *, detected: bool) -> dict:
+    # Closed by a person, then its figures changed: it needs a person again. Their status and
+    # history stay exactly as they left them; only how it's counted and listed changes.
+    changed = bool(review and review.status in CLOSED and review.basis is not None
+                   and data.get("basis") is not None and review.basis != data["basis"])
+    status = review.status if review else "open"
     return {
         **data,
+        "changed_since_closed": changed,
+        "needs_attention": status in OPEN or changed,
         "category_label": svc.CATEGORIES.get(data.get("category"), data.get("category")),
         "project": projects.get(data.get("project_id")),
         "detected": detected,
@@ -77,7 +85,7 @@ def _item(data: dict, review: ExceptionReview | None, projects: dict[int, str], 
 
 
 def _wire(item: dict) -> dict:
-    out = dict(item)
+    out = {k: v for k, v in item.items() if k != "basis"}
     for key in ("amount", "line_billed", "line_approved", "unbilled_cost", "recovered_amount"):
         out[key] = _money(out.get(key))
     for key in ("billed_tons", "approved_tons"):
@@ -95,7 +103,7 @@ def _filtered(items: list[dict], *, project_id, supplier, category, severity, st
             return False
         if severity and i["severity"] != severity:
             return False
-        if status == "open" and i["status"] not in OPEN:
+        if status == "open" and not i["needs_attention"]:
             return False
         if status and status != "open" and status != "all" and i["status"] != status:
             return False
@@ -129,7 +137,7 @@ def list_exceptions(project_id: int | None = None, supplier: str | None = None, 
     detected_keys = {i["key"] for i in items}
     chosen = _filtered(items, project_id=project_id, supplier=supplier, category=category, severity=severity,
                        status=status, assignee=assignee)
-    chosen.sort(key=lambda i: (i["status"] not in OPEN, _ORDER[i["severity"]], -(i["amount"] or Decimal(0)), i["key"]))
+    chosen.sort(key=lambda i: (not i["needs_attention"], _ORDER[i["severity"]], -(i["amount"] or Decimal(0)), i["key"]))
     projects = dict(db.execute(select(Project.id, Project.code).where(Project.organization_id == organization_id)).all())
     # Handled once, then no longer found because the data changed: kept, with what it said.
     cleared = [{"key": r.key, "title": r.title, "status": r.status, "recovered_amount": _money(r.recovered_amount),
@@ -215,6 +223,7 @@ def review_exception(body: ReviewIn, db: Session = Depends(get_db), user: User =
         raise HTTPException(422, "Nothing to change.")
     if current is not None:
         review.title = current["title"][:300]
+        review.basis = current["basis"]  # what this person decided on
     review.lock_version += 1
     review.updated_by_user_id, review.updated_at = user.id, utcnow()
     for name, old, new in changes:
