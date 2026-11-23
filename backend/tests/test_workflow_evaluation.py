@@ -151,3 +151,25 @@ def test_the_script_opens_the_database_read_only_and_leaves_it_unchanged(world, 
         connection.exec_driver_sql("DELETE FROM tickets")
     read_only.dispose()
     assert sqlite3.connect(path).execute("SELECT COUNT(*) FROM tickets").fetchone() == (3,)
+
+
+def test_reading_calls_seconds_and_tokens_come_from_what_the_reader_recorded(world):
+    _, engine, truth_path = world
+    with Session(engine) as db:
+        tickets = db.query(Ticket).order_by(Ticket.position).all()
+        meta = {"model": "gemini-x", "image_format": "png", "image_bytes": 1000}
+        tickets[0].raw_extraction = {**tickets[0].raw_extraction, "_ticketflow": {
+            **meta, "attempts": 1, "seconds": 4.0, "prompt_tokens": 1200, "output_tokens": 80, "thinking_tokens": None}}
+        tickets[1].raw_extraction = {**tickets[1].raw_extraction, "_ticketflow": {
+            **meta, "attempts": 3, "seconds": 21.5, "prompt_tokens": 1300, "output_tokens": 90, "thinking_tokens": 40}}
+        db.commit()  # ticket 2 keeps a read with no measurements, as older reads have
+        report = evaluate_workflow(db, 1, [1], load_truth(truth_path))
+    reading = report["reading"]
+    assert reading["tickets_read_and_measured"] == 2 and reading["tickets_read_without_measurements"] == 1
+    assert reading["models"] == {"gemini-x": 2}
+    assert reading["model_calls"] == 4 and reading["tickets_needing_a_retry"] == 1
+    assert reading["model_calls_per_approved_ticket"] == round(4 / 3, 3)
+    assert reading["seconds_per_ticket"] == {"median": 21.5, "p90": 21.5, "max": 21.5}
+    assert reading["tokens"] == {"prompt": 2500, "output": 170, "thinking": 40, "median_per_ticket": 1430}
+    # Measurement never changes accuracy: the metadata isn't a field.
+    assert report["extraction"]["tickets_scored"] == 3 and report["extraction"]["all_six_correct"] == 1

@@ -237,6 +237,7 @@ def evaluate_workflow(db: Session, organization_id: int, batch_ids: list[int], t
                        "jobs_failed": sum(1 for j in jobs if j.status == "failed"),
                        "files_failed": sum(1 for f in files if f.status == "failed"),
                        "tickets_failed_extraction": sum(1 for t in tickets.values() if t.status == "failed")},
+        "reading": _reading(list(tickets.values()), approved),
         "cost": {"api_cost_total_entered": str(cost) if cost is not None else None,
                  "approved_tickets": len(approved),
                  "per_approved_ticket": str((cost / len(approved)).quantize(Decimal("0.0001"))) if cost is not None and approved else None},
@@ -244,6 +245,52 @@ def evaluate_workflow(db: Session, organization_id: int, batch_ids: list[int], t
         "limitations": _limitations(truth, detection, timings, cost),
     }
     return report
+
+
+def _quantile(values: list[float], q: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
+
+
+def _reading(tickets: list[Ticket], approved: list[Ticket]) -> dict[str, Any]:
+    """What the reader recorded for each ticket it read (raw_extraction["_ticketflow"]):
+    model, calls, seconds and tokens. Measured, not estimated. Dollars still come from
+    the provider's bill, since token prices change and differ by account."""
+    measured, unmeasured = [], 0
+    for t in tickets:
+        raw = t.raw_extraction
+        if not isinstance(raw, dict):
+            continue
+        meta = raw.get("_ticketflow")
+        if isinstance(meta, dict):
+            measured.append(meta)
+        else:
+            unmeasured += 1  # read before measurement existed, or by a reader that doesn't record it
+
+    def total(key: str) -> int | None:
+        found = [m[key] for m in measured if isinstance(m.get(key), int)]
+        return sum(found) if found else None
+
+    seconds = [float(m["seconds"]) for m in measured if isinstance(m.get("seconds"), (int, float))]
+    calls = total("attempts")
+    tokens = [sum(v for v in (m.get("prompt_tokens"), m.get("output_tokens"), m.get("thinking_tokens")) if isinstance(v, int))
+              for m in measured]
+    return {
+        "tickets_read_and_measured": len(measured),
+        "tickets_read_without_measurements": unmeasured,
+        "models": dict(sorted(Counter(str(m.get("model")) for m in measured).items())),
+        "model_calls": calls,
+        "tickets_needing_a_retry": sum(1 for m in measured if isinstance(m.get("attempts"), int) and m["attempts"] > 1),
+        "seconds_per_ticket": {"median": _quantile(seconds, 0.5), "p90": _quantile(seconds, 0.9),
+                               "max": max(seconds) if seconds else None},
+        "tokens": {"prompt": total("prompt_tokens"), "output": total("output_tokens"), "thinking": total("thinking_tokens"),
+                   "median_per_ticket": _quantile(tokens, 0.5) if any(tokens) else None},
+        "model_calls_per_approved_ticket": round(calls / len(approved), 3) if calls is not None and approved else None,
+        "note": "Successful reads only: calls spent on a ticket whose read finally failed aren't recorded. "
+                "Seconds include retries and waits; they are per ticket, not the batch's wall-clock time.",
+    }
 
 
 def _invoice_checks(db: Session, organization_id: int, batch_ids: list[int], checks: list[dict]) -> dict[str, Any]:
