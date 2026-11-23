@@ -75,3 +75,23 @@ test("a project agreement from a date is saved with its scope, and a quote sheet
   await expect(page.getByTestId("sheet-summary")).toContainText("for Project P2 (Bridge Deck), from 2026-12-01");
   expect(posts[1]).toMatchObject({ apply: false, project_id: 8, effective_from: "2026-12-01" });
 });
+
+test("previewing a rate shows which waiting tickets it would reprice before anything is saved", async ({ page }) => {
+  const posts = [];
+  await mock(page, posts);
+  await page.route("**/api/rates/preview", (route) => json(route, { scope: "Project P1 (North Garage)", tickets: 1, newly_priced: 0, cost_change: "-30.63",
+    truncated: false, note: "Tickets not yet approved only.", rows: [{ ticket_id: 5, batch_id: 2, ticket_number: "10482", delivery_date: "2026-10-15",
+      project: "P1", tons: "24.500", price_now: "18.0000", price_after: "16.7500", cost_change: "-30.63" }] }));
+  await page.goto("/pricing");
+  const form = page.locator("form").filter({ has: page.getByRole("button", { name: "Save unit price" }) });
+  await form.getByRole("combobox", { name: "Supplier" }).selectOption("1");
+  await form.getByRole("combobox", { name: "Material" }).selectOption("2");
+  await form.getByRole("combobox", { name: "Applies to" }).selectOption("7");
+  await page.getByLabel("Unit price ($/ton)").fill("16.75");
+  await page.getByRole("button", { name: "Preview effect" }).click();
+  const preview = page.getByTestId("rate-preview");
+  await expect(preview).toContainText("1 ticket waiting for approval would change price");
+  await expect(preview).toContainText("−$30.63");
+  await expect(preview.getByRole("row").nth(1)).toContainText("$18.00");
+  expect(posts).toEqual([]); // previewing saves nothing
+});

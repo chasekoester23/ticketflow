@@ -226,3 +226,30 @@ def test_the_export_can_say_which_rate_each_approved_price_came_from(client, cat
     assert basis == {"10482": ("P1", 16.75, "Project agreement"), "10490": (None, 18.0, "Company rate"),
                      "10491": (None, 18.0, None)}
     assert waiting["status"] != "verified"  # an unapproved row has no basis yet: nothing is locked
+
+
+def test_previewing_a_rate_lists_the_unapproved_tickets_it_would_reprice_and_saves_nothing(client, catalog):
+    rate, projects = catalog
+    rate("18.00")
+    waiting_p1 = _first_ticket(client, projects["P1"])                      # 24.50 t, 2026-10-15
+    approved = _first_ticket(client, projects["P1"], number="10490")
+    assert client.post(f"/api/tickets/{approved['id']}/verify", headers={"If-Match": approved["revision"]}).status_code == 200
+    other_project = _first_ticket(client, projects["P2"], number="10491")
+    supplier, material = client.get("/api/suppliers").json()[0]["id"], client.get("/api/materials").json()[0]["id"]
+
+    def preview(**body):
+        response = client.post("/api/rates/preview", json={"supplier_id": supplier, "material_id": material, **body})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    agreement = preview(unit_price="16.75", project_id=projects["P1"])
+    assert agreement["tickets"] == 1 and agreement["scope"] == "Project P1 (Fictional P1)"
+    (row,) = agreement["rows"]
+    assert (row["ticket_id"], row["price_now"], row["price_after"], row["cost_change"]) == (waiting_p1["id"], "18.0000", "16.7500", "-30.63")
+    assert agreement["cost_change"] == "-30.63"  # the approved P1 ticket keeps its locked price, so it isn't listed
+
+    later = preview(unit_price="19.00", effective_from="2026-11-01")
+    assert later["tickets"] == 0  # every waiting delivery is before the new price starts
+    company = preview(unit_price="20.00")
+    assert {r["ticket_id"] for r in company["rows"]} == {waiting_p1["id"], other_project["id"]}
+    assert [Decimal(r["unit_price"]) for r in client.get("/api/rates").json()] == [Decimal("18.0000")]  # nothing saved

@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
-  Material, NameAliasRow, PricingEventRow, Project, Rate, RateScope, RateSheetPlan, Supplier, addAlias, createMaterial, createSupplier,
-  deleteItem, getPricingHistory, importRateSheet, listAliases, listMaterials, listProjects, listRates, listSuppliers, removeAlias,
-  saveRate,
+  Material, NameAliasRow, PricingEventRow, Project, Rate, RatePreview, RateScope, RateSheetPlan, Supplier, addAlias, createMaterial,
+  createSupplier, deleteItem, getPricingHistory, importRateSheet, listAliases, listMaterials, listProjects, listRates, listSuppliers,
+  previewRate, removeAlias, saveRate,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
 
@@ -21,9 +21,10 @@ const ACTION_LABEL: Record<PricingEventRow["action"], string> = {
 // Display only: keep the server's decimal string, trimmed to cents where exact.
 const money = (value: string | null) => {
   if (value === null) return "—";
-  const [whole, frac = ""] = value.split(".");
+  const negative = value.startsWith("-");
+  const [whole, frac = ""] = (negative ? value.slice(1) : value).split(".");
   const trimmed = frac.replace(/0+$/, "");
-  return `$${whole}.${trimmed.padEnd(2, "0")}`;
+  return `${negative ? "−" : ""}$${whole}.${trimmed.padEnd(2, "0")}`;
 };
 
 // "" in a form means company-wide / no start date.
@@ -58,6 +59,7 @@ export default function PricingPage() {
   const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "", project: "", from: "" });
   const [projects, setProjects] = useState<Project[]>([]);
   const [sheetScope, setSheetScope] = useState({ project: "", from: "" });
+  const [ratePreview, setRatePreview] = useState<RatePreview | null>(null);
   const [saving, setSaving] = useState(false);
   const [aliases, setAliases] = useState<NameAliasRow[]>([]);
   const [aliasForm, setAliasForm] = useState({ kind: "supplier" as "supplier" | "material", alias: "", target: "" });
@@ -173,6 +175,7 @@ export default function PricingPage() {
         onSubmit={(e) => { e.preventDefault(); void act(async () => {
           await saveRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price, scopeOf(rateForm.project, rateForm.from));
           setRateForm((v) => ({ ...v, price: "" }));
+          setRatePreview(null);
         }); }}>
         <label className="tf-field-label">Supplier
           <select required className="tf-field w-full" value={rateForm.supplier} onChange={(e) => setRateForm({ ...rateForm, supplier: e.target.value })}>
@@ -187,13 +190,34 @@ export default function PricingPage() {
           </select>
         </label>
         <ScopeFields idPrefix="rate" projects={projects} project={rateForm.project} from={rateForm.from}
-          onChange={(project, from) => setRateForm({ ...rateForm, project, from })} />
+          onChange={(project, from) => { setRateForm({ ...rateForm, project, from }); setRatePreview(null); }} />
         <label className="tf-field-label">Unit price ($/ton)
           <input required className="tf-field w-full" inputMode="decimal" placeholder="30.00"
-            value={rateForm.price} onChange={(e) => setRateForm({ ...rateForm, price: e.target.value })} />
+            value={rateForm.price} onChange={(e) => { setRateForm({ ...rateForm, price: e.target.value }); setRatePreview(null); }} />
         </label>
-        <button type="submit" className="tf-primary-button" disabled={saving || !rateForm.supplier || !rateForm.material || !rateForm.price}>Save unit price</button>
+        <div className="flex gap-2">
+          <button type="button" className="tf-secondary-button" disabled={saving || !rateForm.supplier || !rateForm.material || !rateForm.price}
+            onClick={() => void act(async () => setRatePreview(await previewRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price,
+              scopeOf(rateForm.project, rateForm.from))))}>Preview effect</button>
+          <button type="submit" className="tf-primary-button" disabled={saving || !rateForm.supplier || !rateForm.material || !rateForm.price}>Save unit price</button>
+        </div>
       </form>}
+      {canManage && ratePreview && <div className="border-b border-[#e9edf0] px-5 py-4" data-testid="rate-preview" role="status">
+        <p className="text-[12.5px] text-[#263646]">{ratePreview.tickets === 0
+          ? <>No ticket waiting for approval would change price. {ratePreview.note}</>
+          : <><b>{ratePreview.tickets}</b> ticket{ratePreview.tickets === 1 ? "" : "s"} waiting for approval would change price
+            {ratePreview.newly_priced ? <> ({ratePreview.newly_priced} priced for the first time)</> : null}: {money(ratePreview.cost_change)} in total. {ratePreview.note}</>}</p>
+        {ratePreview.rows.length > 0 && <div className="tf-table-wrap mt-2 max-h-64 overflow-auto"><table className="tf-table" aria-label="Tickets this rate would reprice">
+          <thead><tr><th>Ticket</th><th>Delivered</th><th>Project</th><th className="text-right">Tons</th><th className="text-right">Now</th><th className="text-right">After</th><th className="text-right">Cost change</th></tr></thead>
+          <tbody>{ratePreview.rows.map((r) => <tr key={r.ticket_id}>
+            <td><Link prefetch={false} className="tf-link" href={`/upload?batch=${r.batch_id}&ticket=${r.ticket_id}`}>{r.ticket_number ?? `#${r.ticket_id}`}</Link></td>
+            <td className="tabular-nums">{r.delivery_date ?? "—"}</td><td>{r.project ?? "—"}</td><td className="text-right tabular-nums">{r.tons ?? "—"}</td>
+            <td className="text-right tabular-nums">{money(r.price_now)}</td><td className="text-right tabular-nums">{money(r.price_after)}</td>
+            <td className="text-right tabular-nums">{r.cost_change ? money(r.cost_change) : "—"}</td>
+          </tr>)}</tbody>
+        </table></div>}
+        {ratePreview.truncated && <p className="mt-1 text-[11px] text-[#5f6c7b]">Showing the first {ratePreview.rows.length}.</p>}
+      </div>}
       <div className="tf-table-wrap"><table className="tf-table">
         <thead><tr><th>Supplier</th><th>Material</th><th>Applies to</th><th>From</th><th className="text-right">Rate / ton</th><th className="text-right">Action</th></tr></thead>
         <tbody>{schedule.map((r) => <tr key={r.id}>

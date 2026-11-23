@@ -11,10 +11,11 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
-from ..models import Material, NameAlias, PricingEvent, Project, Supplier, SupplierRate, User, as_utc, utcnow
+from ..models import Batch, Material, NameAlias, PricingEvent, Project, Supplier, SupplierRate, Ticket, User, as_utc, utcnow
 from ..services.accounts import names_by_id
 from ..services import rate_sheet
 from ..services.locks import take_turn
+from ..services import pricing as pricing_svc
 from ..services.pricing import norm
 
 router = APIRouter(prefix="/api")
@@ -259,6 +260,56 @@ def remove_alias(alias_id: int, db: Session = Depends(get_db), user: User = Depe
 @router.get("/rates", response_model=list[RateOut])
 def list_rates(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     return db.scalars(select(SupplierRate).where(SupplierRate.organization_id == organization_id)).all()
+
+
+PREVIEW_ROWS = 200
+
+
+@router.post("/rates/preview")
+def preview_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    """What saving this rate would do to tickets not yet approved: which would change
+    price, from what to what. Saves nothing. Approved tickets keep their locked price
+    whatever happens, so they're never in this list."""
+    organization_id = user.organization_id
+    supplier = db.scalar(select(Supplier).where(Supplier.id == body.supplier_id, Supplier.organization_id == organization_id))
+    material = db.scalar(select(Material).where(Material.id == body.material_id, Material.organization_id == organization_id))
+    if supplier is None or material is None:
+        raise HTTPException(404, "Supplier or material not found")
+    _project_or_404(db, organization_id, body.project_id)
+    current = pricing_svc.rate_table(db, organization_id)
+    key = (norm(supplier.name), norm(material.name))
+    proposed_rows = [r for r in current.rows.get(key, [])
+                     if not (r.project_id == body.project_id and r.effective_from == body.effective_from)]
+    proposed_rows.append(pricing_svc.RateRow(body.unit_price, body.project_id, body.effective_from))
+    projects_by_batch = current.projects_by_batch
+    if body.project_id is not None and not projects_by_batch:
+        projects_by_batch = dict(db.execute(select(Batch.id, Batch.project_id).where(Batch.organization_id == organization_id)).all())
+    proposed = pricing_svc.RateBook({**current.rows, key: proposed_rows}, projects_by_batch)
+    current = pricing_svc.RateBook(current.rows, projects_by_batch)
+    tickets = db.scalars(select(Ticket).where(
+        Ticket.organization_id == organization_id, Ticket.status.in_(("needs_review", "flagged")),
+        Ticket.supplier_key == key[0], Ticket.material_key == key[1], Ticket.unit_price_override.is_(None)))
+    codes = dict(db.execute(select(Project.id, Project.code).where(Project.organization_id == organization_id)).all())
+    changed = []
+    for t in tickets:
+        before = current.for_ticket(t).price
+        after = proposed.for_ticket(t).price
+        if before == after:
+            continue
+        changed.append({
+            "ticket_id": t.id, "batch_id": t.batch_id, "ticket_number": t.ticket_number,
+            "delivery_date": t.delivery_date.isoformat() if t.delivery_date else None,
+            "project": codes.get(proposed.project_of(t)), "tons": format(t.tonnage, ".3f") if t.tonnage is not None else None,
+            "price_now": _price(before), "price_after": _price(after),
+            "cost_change": str(pricing_svc.to_cents(t.tonnage * ((after or Decimal(0)) - (before or Decimal(0)))))
+            if t.tonnage is not None and before is not None and after is not None else None,
+        })
+    changed.sort(key=lambda row: (row["delivery_date"] or "", row["ticket_id"]))
+    total = sum((Decimal(row["cost_change"]) for row in changed if row["cost_change"] is not None), Decimal(0))
+    return {"scope": _scope_text(db, body.project_id, body.effective_from), "tickets": len(changed),
+            "newly_priced": sum(1 for row in changed if row["price_now"] is None),
+            "cost_change": str(total), "rows": changed[:PREVIEW_ROWS], "truncated": len(changed) > PREVIEW_ROWS,
+            "note": "Tickets not yet approved only. Approved tickets keep the price they were approved at."}
 
 
 @router.put("/rates", response_model=RateOut)
