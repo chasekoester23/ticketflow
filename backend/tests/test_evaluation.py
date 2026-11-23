@@ -199,6 +199,9 @@ def test_cli_prepare_check_run_and_refuse_overwriting_report(tmp_path, monkeypat
     assert cli.main() == 0
     assert fake.calls == 0
 
+    # The report names the model the app is configured with, whatever a developer's .env says.
+    from app.config import settings
+    monkeypatch.setattr(settings, "gemini_model", "gemini-configured-for-test")
     monkeypatch.setattr("sys.argv", [
         "evaluate_extraction.py", "run", "--manifest", str(manifest),
     ])
@@ -206,7 +209,7 @@ def test_cli_prepare_check_run_and_refuse_overwriting_report(tmp_path, monkeypat
     assert fake.calls == 4
     report = json.loads((tmp_path / "accuracy-report-gemini.json").read_text())
     assert report["provider"] == "gemini"
-    assert report["model"] == "gemini-3.1-pro-preview"
+    assert report["model"] == "gemini-configured-for-test"
     assert len(report["dataset_sha256"]) == 64
     assert report["ticket_exact_accuracy"] == .75
     assert report["fields"]["tonnage"]["non_null_accuracy"] == .75
