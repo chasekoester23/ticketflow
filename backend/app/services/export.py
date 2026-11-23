@@ -64,6 +64,9 @@ def _money(value: Decimal | None) -> float | None:
     return float(value) if value is not None else None
 
 
+PRICE_BASIS = {"project_rate": "Project agreement", "rate": "Company rate", "override": "Manual override"}
+
+
 @dataclass(frozen=True)
 class Column:
     header: str
@@ -89,6 +92,9 @@ COLUMNS: dict[str, Column] = {
     "approved_at": Column("Approved At (UTC)", 18, lambda t, p, c, approvers: _approval(t, approvers)[1], "yyyy-mm-dd hh:mm"),
     "project": Column("Project", 16, lambda t, *_: _safe_excel_text(t.project_code)),
     "batch": Column("Batch", 8, lambda t, *_: t.batch_id),
+    # Which rate an approved ticket's price was locked from: what an accountant checks first.
+    "price_basis": Column("Price Basis", 18, lambda t, *_: PRICE_BASIS.get(t.applied_price_source)
+                          if t.status == "verified" and t.price_snapshot_state == "priced" else None),
 }
 DEFAULT_COLUMNS = ("ticket_number", "delivery_date", "material", "tons", "supplier", "job_location", "unit_price",
                    "cost", "status", "source", "approved_by", "approved_at")

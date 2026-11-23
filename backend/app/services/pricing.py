@@ -1,11 +1,13 @@
 """Rate lookup and cost calculation. Money is always Decimal; we never invent a price."""
+from dataclasses import dataclass
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Material, NameAlias, Supplier, SupplierRate, Ticket, normal_name
+from ..models import Batch, Material, NameAlias, Supplier, SupplierRate, Ticket, normal_name
 
 CENTS = Decimal("0.01")
 
@@ -22,39 +24,99 @@ def norm(name: str | None) -> str:
     return normal_name(name)
 
 
-def rate_table(db: Session, organization_id: int) -> dict[tuple[str, str], Decimal]:
+@dataclass(frozen=True)
+class RateRow:
+    price: Decimal
+    project_id: int | None
+    effective_from: date | None
+
+
+@dataclass(frozen=True)
+class RateMatch:
+    price: Decimal | None
+    source: str | None  # "project_rate" | "rate" | None
+    reason: str | None = None  # why there is no price, when the rates themselves are the reason
+
+
+class RateBook:
+    """Every rate a company has, and the rule for which one prices a ticket.
+
+    1. The ticket's project agreement, if it has one that applies, else the company rate.
+    2. Within one of those, the latest rate starting on or before the delivery date. A
+       rate with no start date covers every date before the first dated one.
+    3. A project agreement that hasn't started by the delivery date gives way to the
+       company rate.
+    4. Never a guess: dated rates and no delivery date, or two prices for one name
+       ("Sand" and "SAND"), leave the ticket unpriced with the reason.
+    """
+
+    def __init__(self, rows: dict[tuple[str, str], list[RateRow]], projects_by_batch: dict[int, int | None]):
+        self.rows = rows
+        self.projects_by_batch = projects_by_batch
+
+    def __bool__(self) -> bool:
+        return bool(self.rows)
+
+    def project_of(self, t: Ticket) -> int | None:
+        return self.projects_by_batch.get(t.batch_id) if t.batch_id is not None else None
+
+    def match(self, supplier: str | None, material: str | None, project_id: int | None, on: date | None) -> RateMatch:
+        rows = self.rows.get((norm(supplier), norm(material)))
+        if not rows:
+            return RateMatch(None, None)
+        for scope in ([project_id] if project_id is not None else []) + [None]:
+            scoped = [r for r in rows if r.project_id == scope]
+            if not scoped:
+                continue
+            if any(r.effective_from is not None for r in scoped) and on is None:
+                return RateMatch(None, None, "This supplier and material's rate changes over time. "
+                                             "Enter the delivery date to price it.")
+            started = [r for r in scoped if r.effective_from is None or on is None or r.effective_from <= on]
+            if not started:
+                continue  # the agreement starts after this delivery: the company rate applies
+            newest = max(started, key=lambda r: r.effective_from or date.min)
+            prices = {r.price for r in started if r.effective_from == newest.effective_from}
+            if len(prices) > 1:
+                return RateMatch(None, None, "Two catalog names that read the same have different rates. "
+                                             "Remove the duplicate on Pricing.")
+            return RateMatch(newest.price, "project_rate" if scope is not None else "rate")
+        return RateMatch(None, None)
+
+    def for_ticket(self, t: Ticket) -> RateMatch:
+        return self.match(t.supplier, t.material_type, self.project_of(t), t.delivery_date)
+
+
+def rate_table(db: Session, organization_id: int) -> RateBook:
     rows = db.execute(
-        select(Supplier.name, Material.name, SupplierRate.unit_price)
+        select(Supplier.name, Material.name, SupplierRate.unit_price, SupplierRate.project_id, SupplierRate.effective_from)
         .join(SupplierRate, SupplierRate.supplier_id == Supplier.id)
         .join(Material, Material.id == SupplierRate.material_id)
         .where(SupplierRate.organization_id == organization_id,
                Supplier.organization_id == organization_id,
                Material.organization_id == organization_id)
     ).all()
-    table: dict[tuple[str, str], Decimal] = {}
-    conflicting: set[tuple[str, str]] = set()
-    for s, m, p in rows:
-        key = (norm(s), norm(m))
-        if key in table and table[key] != p:
-            conflicting.add(key)
-        table.setdefault(key, p)
-    # "Sand" and "SAND" read as one material. With two different prices for it,
-    # picking either would lock an arbitrary rate, so neither is used: those
-    # tickets stay unpriced until a person removes the duplicate.
-    for key in conflicting:
-        del table[key]
-    return table
+    book: dict[tuple[str, str], list[RateRow]] = {}
+    for s, m, p, project_id, effective_from in rows:
+        book.setdefault((norm(s), norm(m)), []).append(RateRow(p, project_id, effective_from))
+    # A ticket's project comes from its batch. Read only when some rate is per project.
+    projects_by_batch: dict[int, int | None] = {}
+    if any(r.project_id is not None for found in book.values() for r in found):
+        projects_by_batch = dict(db.execute(select(Batch.id, Batch.project_id).where(
+            Batch.organization_id == organization_id)).all())
+    return RateBook(book, projects_by_batch)
 
 
-def unit_price_for(t: Ticket, table: dict[tuple[str, str], Decimal]) -> tuple[Decimal | None, str | None]:
-    """Returns (price, source) where source is 'override' | 'rate' | None."""
+def unit_price_for(t: Ticket, table: RateBook) -> tuple[Decimal | None, str | None]:
+    """Returns (price, source) where source is 'override' | 'project_rate' | 'rate' | None."""
     if t.unit_price_override is not None:
         return t.unit_price_override, "override"
-    price = table.get((norm(t.supplier), norm(t.material_type)))
-    return (price, "rate") if price is not None else (None, None)
+    if not isinstance(table, RateBook):
+        return None, None
+    found = table.for_ticket(t)
+    return found.price, found.source
 
 
-def effective_price_for(t: Ticket, table: dict[tuple[str, str], Decimal]) -> tuple[Decimal | None, str | None]:
+def effective_price_for(t: Ticket, table: RateBook) -> tuple[Decimal | None, str | None]:
     """Return the stored rate for verified tickets, a live preview otherwise.
 
     A verified ticket with an unpriced/legacy snapshot must never silently
@@ -65,6 +127,13 @@ def effective_price_for(t: Ticket, table: dict[tuple[str, str], Decimal]) -> tup
             return t.applied_unit_price, t.applied_price_source
         return None, None
     return unit_price_for(t, table)
+
+
+def unpriced_reason(t: Ticket, table: RateBook) -> str | None:
+    """Why the rates themselves leave this ticket without a price, if they do."""
+    if t.unit_price_override is not None or not isinstance(table, RateBook):
+        return None
+    return table.for_ticket(t).reason
 
 
 def cost_for(t: Ticket, price: Decimal | None) -> Decimal | None:

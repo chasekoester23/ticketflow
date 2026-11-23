@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from typing import Literal
 
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
-from ..models import Material, NameAlias, PricingEvent, Supplier, SupplierRate, User, as_utc, utcnow
+from ..models import Material, NameAlias, PricingEvent, Project, Supplier, SupplierRate, User, as_utc, utcnow
 from ..services.accounts import names_by_id
 from ..services import rate_sheet
 from ..services.locks import take_turn
@@ -33,6 +34,10 @@ class RateIn(BaseModel):
     supplier_id: int
     material_id: int
     unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=4)
+    # Blank: company-wide. Set: this project's agreement, preferred for its tickets.
+    project_id: int | None = Field(default=None, gt=0)
+    # Blank: no start date. Set: applies to deliveries on or after this date.
+    effective_from: date | None = None
 
 
 class AliasIn(BaseModel):
@@ -48,6 +53,8 @@ class RateOut(BaseModel):
     supplier_id: int
     material_id: int
     unit_price: Decimal
+    project_id: int | None = None
+    effective_from: date | None = None
 
 
 def _dump(o, *fields):
@@ -62,17 +69,39 @@ def _price(value: Decimal | None) -> str | None:
 
 
 def _event(db: Session, user: User, action: str, *, supplier: str | None = None,
-           material: str | None = None, old: Decimal | None = None, new: Decimal | None = None) -> None:
+           material: str | None = None, old: Decimal | None = None, new: Decimal | None = None,
+           scope: str | None = None) -> None:
     """Record a pricing change in the caller's transaction (rolled back with it)."""
     db.add(PricingEvent(
         organization_id=user.organization_id, actor_user_id=user.id, action=action,
-        supplier_name=supplier, material_name=material, old_value=_price(old), new_value=_price(new),
+        supplier_name=supplier, material_name=material, old_value=_price(old), new_value=_price(new), scope=scope,
     ))
+
+
+def _scope_text(db: Session, project_id: int | None, effective_from: date | None) -> str:
+    """How history names a rate's scope: snapshotted text, readable after a rename."""
+    where = "Company-wide"
+    if project_id is not None:
+        project = db.get(Project, project_id)
+        where = f"Project {project.code} ({project.name})" if project else f"Project #{project_id}"
+    return where + (f", from {effective_from.isoformat()}" if effective_from else "")
+
+
+def _project_or_404(db: Session, organization_id: int, project_id: int | None) -> None:
+    if project_id is not None and db.scalar(select(Project.id).where(
+            Project.id == project_id, Project.organization_id == organization_id)) is None:
+        raise HTTPException(404, "Project not found")
+
+
+def _same_scope(project_id: int | None, effective_from: date | None):
+    return ((SupplierRate.project_id.is_(None) if project_id is None else SupplierRate.project_id == project_id),
+            (SupplierRate.effective_from.is_(None) if effective_from is None else SupplierRate.effective_from == effective_from))
 
 
 def _remove_rates(db: Session, user: User, rates) -> None:
     for r in rates:
-        _event(db, user, "rate_removed", supplier=r.supplier.name, material=r.material.name, old=r.unit_price)
+        _event(db, user, "rate_removed", supplier=r.supplier.name, material=r.material.name, old=r.unit_price,
+               scope=_scope_text(db, r.project_id, r.effective_from))
         db.delete(r)
 
 
@@ -234,6 +263,8 @@ def list_rates(db: Session = Depends(get_db), organization_id: int = Depends(cur
 
 @router.put("/rates", response_model=RateOut)
 def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    """Set the price for one supplier and material in one scope: company-wide or one
+    project, from a date or with no start date. Locked prices are never touched."""
     organization_id = user.organization_id
     supplier = db.scalar(select(Supplier).where(
         Supplier.id == body.supplier_id, Supplier.organization_id == organization_id))
@@ -241,20 +272,23 @@ def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depend
         Material.id == body.material_id, Material.organization_id == organization_id))
     if supplier is None or material is None:
         raise HTTPException(404, "Supplier or material not found")
+    _project_or_404(db, organization_id, body.project_id)
     take_turn(db, "rate", organization_id, body.supplier_id, body.material_id)
     rate = db.scalar(select(SupplierRate).where(
         SupplierRate.supplier_id == body.supplier_id,
         SupplierRate.material_id == body.material_id,
-        SupplierRate.organization_id == organization_id))
+        SupplierRate.organization_id == organization_id,
+        *_same_scope(body.project_id, body.effective_from)))
+    scope = _scope_text(db, body.project_id, body.effective_from)
     if rate:
         if rate.unit_price != body.unit_price:
             _event(db, user, "rate_changed", supplier=supplier.name, material=material.name,
-                   old=rate.unit_price, new=body.unit_price)
+                   old=rate.unit_price, new=body.unit_price, scope=scope)
             rate.unit_price = body.unit_price
     else:
         rate = SupplierRate(organization_id=organization_id, **body.model_dump())
         db.add(rate)
-        _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=body.unit_price)
+        _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=body.unit_price, scope=scope)
     db.commit()
     return rate
 
@@ -264,6 +298,9 @@ class RateSheetIn(BaseModel):
     text: str = Field(min_length=1, max_length=500_000)
     # False previews the plan and saves nothing.
     apply: bool = False
+    # A supplier's quote for one job, from a date: every row of the sheet gets this scope.
+    project_id: int | None = Field(default=None, gt=0)
+    effective_from: date | None = None
 
 
 @router.post("/rates/import")
@@ -279,7 +316,10 @@ def import_rate_sheet(body: RateSheetIn, db: Session = Depends(get_db), user: Us
         raise HTTPException(422, str(exc)) from None
     suppliers = {norm(s.name): s for s in db.scalars(select(Supplier).where(Supplier.organization_id == organization_id))}
     materials = {norm(m.name): m for m in db.scalars(select(Material).where(Material.organization_id == organization_id))}
-    existing = {(r.supplier_id, r.material_id): r for r in db.scalars(select(SupplierRate).where(SupplierRate.organization_id == organization_id))}
+    _project_or_404(db, organization_id, body.project_id)
+    existing = {(r.supplier_id, r.material_id): r for r in db.scalars(select(SupplierRate).where(
+        SupplierRate.organization_id == organization_id, *_same_scope(body.project_id, body.effective_from)))}
+    scope = _scope_text(db, body.project_id, body.effective_from)
     problems = []
     seen_pairs: dict[tuple[str, str], int] = {}
     for row in rows:
@@ -310,7 +350,7 @@ def import_rate_sheet(body: RateSheetIn, db: Session = Depends(get_db), user: Us
                      "new_supplier": supplier is None, "new_material": material is None})
     summary = {"plan": plan, "new_suppliers": sorted(new_suppliers.values()), "new_materials": sorted(new_materials.values()),
                "adds": sum(p["action"] == "add" for p in plan), "changes": sum(p["action"] == "change" for p in plan),
-               "unchanged": sum(p["action"] == "unchanged" for p in plan), "applied": False}
+               "unchanged": sum(p["action"] == "unchanged" for p in plan), "applied": False, "scope": scope}
     if not body.apply:
         return summary
 
@@ -327,10 +367,11 @@ def import_rate_sheet(body: RateSheetIn, db: Session = Depends(get_db), user: Us
         supplier, material = suppliers[norm(row.supplier)], materials[norm(row.material)]
         rate = existing.get((supplier.id, material.id))
         if rate is None:
-            db.add(SupplierRate(organization_id=organization_id, supplier_id=supplier.id, material_id=material.id, unit_price=row.price))
-            _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=row.price)
+            db.add(SupplierRate(organization_id=organization_id, supplier_id=supplier.id, material_id=material.id, unit_price=row.price,
+                                project_id=body.project_id, effective_from=body.effective_from))
+            _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=row.price, scope=scope)
         elif rate.unit_price != row.price:
-            _event(db, user, "rate_changed", supplier=supplier.name, material=material.name, old=rate.unit_price, new=row.price)
+            _event(db, user, "rate_changed", supplier=supplier.name, material=material.name, old=rate.unit_price, new=row.price, scope=scope)
             rate.unit_price = row.price
     db.commit()
     return {**summary, "applied": True}
@@ -362,7 +403,7 @@ def pricing_history(db: Session = Depends(get_db), organization_id: int = Depend
     ).all()
     return [
         {"id": e.id, "action": e.action, "supplier": e.supplier_name, "material": e.material_name,
-         "old": e.old_value, "new": e.new_value, "at": as_utc(e.created_at),
+         "old": e.old_value, "new": e.new_value, "scope": e.scope, "at": as_utc(e.created_at),
          "actor": people.get(e.actor_user_id) if e.actor_user_id else None}
         for e in events
     ]

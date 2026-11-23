@@ -95,7 +95,7 @@ export type Ticket = {
   unit_price_override: string | null;
   price_snapshot_state: "pending" | "priced" | "unpriced" | null;
   unit_price: string | null;
-  price_source: "rate" | "override" | null;
+  price_source: "project_rate" | "rate" | "override" | null;
   cost: string | null;
   duplicates: string[];
   pricing_notes: string[];
@@ -123,7 +123,9 @@ export async function getTicketHistory(id: number): Promise<HistoryEntry[]> {
 }
 export type Supplier = { id: number; name: string; contact: string | null };
 export type Material = { id: number; name: string; unit: string };
-export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string };
+// project_id null: company-wide. effective_from null: no start date (YYYY-MM-DD otherwise).
+export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string; project_id: number | null; effective_from: string | null };
+export type RateScope = { project_id: number | null; effective_from: string | null };
 
 /** An API refusal. `code` is set when the UI should react, not just show text. */
 export class ApiError extends Error {
@@ -344,11 +346,11 @@ export async function getOnboarding(): Promise<Onboarding> {
   return (await check(await apiFetch(`${API}/api/onboarding`))).json();
 }
 export type RateSheetPlan = {
-  applied: boolean; adds: number; changes: number; unchanged: number; new_suppliers: string[]; new_materials: string[];
+  applied: boolean; adds: number; changes: number; unchanged: number; new_suppliers: string[]; new_materials: string[]; scope: string;
   plan: { line: number; supplier: string; material: string; price: string; old_price: string | null; action: "add" | "change" | "unchanged"; new_supplier: boolean; new_material: boolean }[];
 };
-export async function importRateSheet(text: string, apply: boolean): Promise<RateSheetPlan> {
-  return (await check(await apiFetch(`${API}/api/rates/import`, json("POST", { text, apply })))).json();
+export async function importRateSheet(text: string, apply: boolean, scope: RateScope = { project_id: null, effective_from: null }): Promise<RateSheetPlan> {
+  return (await check(await apiFetch(`${API}/api/rates/import`, json("POST", { text, apply, ...scope })))).json();
 }
 export async function getStatus(): Promise<{ extraction_configured: boolean; model: string; review_timing_enabled?: boolean; worker_running?: boolean }> {
   return (await check(await apiFetch(`${API}/api/status`))).json();
@@ -368,14 +370,15 @@ export async function createSupplier(name: string) {
 export async function createMaterial(name: string) {
   await check(await apiFetch(`${API}/api/materials`, json("POST", { name })));
 }
-export async function saveRate(supplier_id: number, material_id: number, unit_price: string) {
-  await check(await apiFetch(`${API}/api/rates`, json("PUT", { supplier_id, material_id, unit_price })));
+export async function saveRate(supplier_id: number, material_id: number, unit_price: string, scope: RateScope = { project_id: null, effective_from: null }) {
+  await check(await apiFetch(`${API}/api/rates`, json("PUT", { supplier_id, material_id, unit_price, ...scope })));
 }
 export type PricingEventRow = {
   id: number;
   action: "supplier_added" | "supplier_removed" | "material_added" | "material_removed" | "rate_set" | "rate_changed" | "rate_removed";
   supplier: string | null; material: string | null;
   old: string | null; new: string | null; // decimal strings, never parsed for money math
+  scope: string | null; // which rate: "Company-wide", or a project and start date
   at: string; actor: string | null;
 };
 export type NameAliasRow = {

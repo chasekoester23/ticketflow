@@ -371,7 +371,8 @@ def _out(
     elif t.status == "verified" and t.price_snapshot_state == "unpriced":
         notes = ["No rate was available at verification. Enter the documented rate as an override and re-verify this ticket."]
     elif price is None:
-        notes = pricing_svc.unresolved_names(db, t, organization_id, catalog) or ["No rate configured for this supplier and material"]
+        notes = (pricing_svc.unresolved_names(db, t, organization_id, catalog)
+                 or [pricing_svc.unpriced_reason(t, table) or "No rate configured for this supplier and material"])
     else:
         notes = []
     out = TicketOut.model_validate(t)

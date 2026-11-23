@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
-  Material, NameAliasRow, PricingEventRow, Rate, RateSheetPlan, Supplier, addAlias, createMaterial, createSupplier, deleteItem,
-  getPricingHistory, importRateSheet, listAliases, listMaterials, listRates, listSuppliers, removeAlias, saveRate,
+  Material, NameAliasRow, PricingEventRow, Project, Rate, RateScope, RateSheetPlan, Supplier, addAlias, createMaterial, createSupplier,
+  deleteItem, getPricingHistory, importRateSheet, listAliases, listMaterials, listProjects, listRates, listSuppliers, removeAlias,
+  saveRate,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
 
@@ -25,6 +26,26 @@ const money = (value: string | null) => {
   return `$${whole}.${trimmed.padEnd(2, "0")}`;
 };
 
+// "" in a form means company-wide / no start date.
+const scopeOf = (project: string, from: string): RateScope => ({ project_id: project ? Number(project) : null, effective_from: from || null });
+const longDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { dateStyle: "medium" });
+
+function ScopeFields({ idPrefix, projects, project, from, onChange }: {
+  idPrefix: string; projects: Project[]; project: string; from: string; onChange: (project: string, from: string) => void;
+}) {
+  return <>
+    <label className="tf-field-label" htmlFor={`${idPrefix}-project`}>Applies to
+      <select id={`${idPrefix}-project`} className="tf-field w-full" value={project} onChange={(e) => onChange(e.target.value, from)}>
+        <option value="">All projects (company rate)</option>
+        {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+      </select>
+    </label>
+    <label className="tf-field-label" htmlFor={`${idPrefix}-from`}>From (optional)
+      <input id={`${idPrefix}-from`} type="date" className="tf-field w-full" value={from} onChange={(e) => onChange(project, e.target.value)} />
+    </label>
+  </>;
+}
+
 export default function PricingPage() {
   const canManage = useAccount().can("pricing.manage");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -34,7 +55,9 @@ export default function PricingPage() {
   const [error, setError] = useState<string | null>(null);
   const [newSupplier, setNewSupplier] = useState("");
   const [newMaterial, setNewMaterial] = useState("");
-  const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "" });
+  const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "", project: "", from: "" });
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [sheetScope, setSheetScope] = useState({ project: "", from: "" });
   const [saving, setSaving] = useState(false);
   const [aliases, setAliases] = useState<NameAliasRow[]>([]);
   const [aliasForm, setAliasForm] = useState({ kind: "supplier" as "supplier" | "material", alias: "", target: "" });
@@ -47,6 +70,7 @@ export default function PricingPage() {
       const [s, m, r, h] = await Promise.all([listSuppliers(), listMaterials(), listRates(), getPricingHistory()]);
       setSuppliers(s); setMaterials(m); setRates(r); setHistory(h);
       listAliases().then(setAliases).catch(() => setAliases([]));
+      listProjects().then(setProjects).catch(() => setProjects([]));
       setError(null);
     } catch (e) { setError((e as Error).message); }
   }, []);
@@ -62,6 +86,20 @@ export default function PricingPage() {
   }
   const supplierName = (id: number) => suppliers.find((s) => s.id === id)?.name ?? `#${id}`;
   const materialName = (id: number) => materials.find((m) => m.id === id)?.name ?? `#${id}`;
+  const projectLabel = (id: number | null | undefined) => {
+    if (id == null) return "All projects";
+    const p = projects.find((x) => x.id === id);
+    return p ? `${p.code} · ${p.name}` : `Project #${id}`;
+  };
+  // Grouped by supplier and material, company rate first, then each project, each in date order:
+  // read top to bottom, that is the order a ticket's price is looked for in.
+  const schedule = [...rates].sort((a, b) =>
+    supplierName(a.supplier_id).localeCompare(supplierName(b.supplier_id))
+    || materialName(a.material_id).localeCompare(materialName(b.material_id))
+    || (a.project_id == null ? -1 : 0) - (b.project_id == null ? -1 : 0)
+    || projectLabel(a.project_id).localeCompare(projectLabel(b.project_id))
+    || (a.effective_from ?? "").localeCompare(b.effective_from ?? ""));
+  const scoped = rates.some((r) => r.project_id != null || r.effective_from != null);
 
   async function remove(kind: "suppliers" | "materials" | "rates", id: number, label: string) {
     if (!window.confirm(`Remove ${label}? Existing verified ticket prices remain locked at their original values.`)) return;
@@ -128,12 +166,12 @@ export default function PricingPage() {
     <section className="tf-panel">
       <div className="tf-panel-heading">
         <div><h2 className="tf-panel-title">Unit price schedule</h2>
-          <p className="tf-panel-description">Prices applied to new approvals; accepted records retain their historical rate</p></div>
+          <p className="tf-panel-description">A ticket takes its project&apos;s agreement if there is one, otherwise the company rate, and within either the latest rate starting on or before its delivery date. Approved tickets keep the rate they were approved at.</p></div>
         <span className="tf-status">{rates.length} rates</span>
       </div>
-      {canManage && <form className="grid items-end gap-3 border-b border-[#e9edf0] p-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_160px_auto]"
+      {canManage && <form className="grid items-end gap-3 border-b border-[#e9edf0] p-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_150px_130px_auto]"
         onSubmit={(e) => { e.preventDefault(); void act(async () => {
-          await saveRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price);
+          await saveRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price, scopeOf(rateForm.project, rateForm.from));
           setRateForm((v) => ({ ...v, price: "" }));
         }); }}>
         <label className="tf-field-label">Supplier
@@ -148,6 +186,8 @@ export default function PricingPage() {
             {materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </label>
+        <ScopeFields idPrefix="rate" projects={projects} project={rateForm.project} from={rateForm.from}
+          onChange={(project, from) => setRateForm({ ...rateForm, project, from })} />
         <label className="tf-field-label">Unit price ($/ton)
           <input required className="tf-field w-full" inputMode="decimal" placeholder="30.00"
             value={rateForm.price} onChange={(e) => setRateForm({ ...rateForm, price: e.target.value })} />
@@ -155,10 +195,13 @@ export default function PricingPage() {
         <button type="submit" className="tf-primary-button" disabled={saving || !rateForm.supplier || !rateForm.material || !rateForm.price}>Save unit price</button>
       </form>}
       <div className="tf-table-wrap"><table className="tf-table">
-        <thead><tr><th>Supplier</th><th>Material</th><th className="text-right">Rate / ton</th><th className="text-right">Action</th></tr></thead>
-        <tbody>{rates.map((r) => <tr key={r.id}>
+        <thead><tr><th>Supplier</th><th>Material</th><th>Applies to</th><th>From</th><th className="text-right">Rate / ton</th><th className="text-right">Action</th></tr></thead>
+        <tbody>{schedule.map((r) => <tr key={r.id}>
           <td className="font-semibold">{supplierName(r.supplier_id)}</td>
           <td>{materialName(r.material_id)}</td>
+          <td>{r.project_id == null ? <span className="text-[#5d6b7b]">All projects</span>
+            : <span className="tf-status tf-status-open">{projectLabel(r.project_id)}</span>}</td>
+          <td className="whitespace-nowrap tabular-nums">{r.effective_from ? longDate(r.effective_from) : <span className="text-[#5d6b7b]">Any date</span>}</td>
           <td className="text-right font-bold tabular-nums">{`$${Number(r.unit_price).toFixed(2)}`}</td>
           <td className="text-right">{canManage && <button disabled={saving} onClick={() => void remove("rates", r.id, "this rate")}
             className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}</td>
@@ -172,18 +215,22 @@ export default function PricingPage() {
     {canManage && <section className="tf-panel" aria-label="Paste a rate sheet">
       <div className="tf-panel-heading">
         <div><h2 className="tf-panel-title">Paste a rate sheet</h2>
-          <p className="tf-panel-description">Copy three columns from Excel: supplier, material, price per ton. You&apos;ll see what changes before anything is saved.</p></div>
+          <p className="tf-panel-description">Copy three columns from Excel: supplier, material, price per ton. For a supplier&apos;s quote on one job, choose the project and the date it starts. You&apos;ll see what changes before anything is saved.</p></div>
       </div>
       <div className="space-y-3 p-5">
+        <div className="grid gap-3 sm:grid-cols-[1fr_160px] sm:max-w-xl">
+          <ScopeFields idPrefix="sheet" projects={projects} project={sheetScope.project} from={sheetScope.from}
+            onChange={(project, from) => { setSheetScope({ project, from }); setSheetPlan(null); setSheetDone(null); }} />
+        </div>
         <label className="tf-field-label" htmlFor="rate-sheet">Rate sheet</label>
         <textarea id="rate-sheet" className="tf-field h-28 w-full font-mono" spellCheck={false} value={sheet}
           placeholder={"Example Aggregates\tNo. 57 Stone\t28.50"} onChange={(e) => { setSheet(e.target.value); setSheetPlan(null); setSheetDone(null); }} />
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" className="tf-secondary-button" disabled={!sheet.trim() || saving}
-            onClick={() => void act(async () => { setSheetDone(null); setSheetPlan(await importRateSheet(sheet, false)); })}>Check this sheet</button>
+            onClick={() => void act(async () => { setSheetDone(null); setSheetPlan(await importRateSheet(sheet, false, scopeOf(sheetScope.project, sheetScope.from))); })}>Check this sheet</button>
           {sheetPlan && (sheetPlan.adds + sheetPlan.changes > 0) && <button type="button" className="tf-primary-button" disabled={saving}
             onClick={() => void act(async () => {
-              const done = await importRateSheet(sheet, true);
+              const done = await importRateSheet(sheet, true, scopeOf(sheetScope.project, sheetScope.from));
               setSheetDone(`Saved ${done.adds} new and ${done.changes} changed rate(s). Tickets already approved keep their locked prices.`);
               setSheetPlan(null);
               setSheet("");
@@ -193,6 +240,7 @@ export default function PricingPage() {
         {sheetPlan && <div>
           <p className="mb-2 text-[12px] text-[#526273]" data-testid="sheet-summary">
             {sheetPlan.adds} new · {sheetPlan.changes} changed · {sheetPlan.unchanged} unchanged
+            {sheetPlan.scope && sheetPlan.scope !== "Company-wide" && <> · for {sheetPlan.scope}</>}
             {sheetPlan.new_suppliers.length > 0 && <> · adds supplier{sheetPlan.new_suppliers.length === 1 ? "" : "s"}: {sheetPlan.new_suppliers.join(", ")}</>}
             {sheetPlan.new_materials.length > 0 && <> · adds material{sheetPlan.new_materials.length === 1 ? "" : "s"}: {sheetPlan.new_materials.join(", ")}</>}
           </p>
@@ -256,13 +304,15 @@ export default function PricingPage() {
         <tbody>{history.slice(0, 50).map((e) => <tr key={e.id}>
           <td className="whitespace-nowrap text-[#5d6b7b]">{new Date(e.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</td>
           <td><span className="font-semibold text-[#263646]">{ACTION_LABEL[e.action] ?? e.action}</span>
-            <span className="ml-2 text-[#5d6b7b]">{[e.supplier, e.material].filter(Boolean).join(" · ")}</span></td>
+            <span className="ml-2 text-[#5d6b7b]">{[e.supplier, e.material].filter(Boolean).join(" · ")}</span>
+            {e.scope && e.scope !== "Company-wide" && <span className="ml-2 text-[11px] text-[#5d6b7b]">({e.scope})</span>}</td>
           <td className="text-right tabular-nums">{money(e.old)}</td>
           <td className="text-right font-semibold tabular-nums">{money(e.new)}</td>
           <td>{e.actor ?? "—"}</td>
         </tr>)}</tbody>
       </table></div>}
     </section>
+    {scoped && <p className="text-[11px] leading-5 text-[#5f6c7b]">A project agreement that starts after a delivery gives way to the company rate for that delivery. A ticket with no delivery date can&apos;t be priced from a rate that changes over time; the review screen says so.</p>}
     <p className="text-[11px] leading-5 text-[#5f6c7b]">Supplier/material matching ignores case and punctuation. Calculated material costs are verified tons multiplied by the rate locked at acceptance; taxes and delivery charges are excluded.</p>
   </div>;
 }

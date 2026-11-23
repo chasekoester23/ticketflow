@@ -19,8 +19,13 @@ costs and invoice comparisons.
    - **Viewer**: reads everything and changes nothing.
 4. Create a **Project** for each job, using the job number your team already uses.
 5. Under **Suppliers & rates**, add each supplier and material, spelled the way your tickets
-   spell them, and the price per ton. An approved ticket locks the rate in force when it's
-   approved, so later rate changes don't alter it.
+   spell them, and the price per ton. A rate can apply to all projects or to one project
+   (a supplier's quote for that job), and can start on a date (a price change). Each ticket
+   is priced by its project's quote if there is one, otherwise the company rate, using the
+   latest rate that started on or before its delivery date. To load a quote, paste the sheet
+   and choose the project and start date. An approved ticket locks its price, and the review
+   screen and export say whether it came from a project agreement, the company rate or a
+   manual override. Later rate changes never alter an approved ticket.
 
 ## 2. Upload scanned tickets
 

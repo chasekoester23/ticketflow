@@ -118,16 +118,40 @@ class Material(Base):
     unit: Mapped[str] = mapped_column(String(20), default="ton")
 
 
+_COMPANY, _PROJECT = "project_id IS NULL", "project_id IS NOT NULL"
+_UNDATED, _DATED = "effective_from IS NULL", "effective_from IS NOT NULL"
+
+
+def _rate_scope_index(name: str, columns: tuple[str, ...], where: str) -> Index:
+    return Index(name, "organization_id", "supplier_id", "material_id", *columns, unique=True,
+                 sqlite_where=text(where), postgresql_where=text(where))
+
+
 class SupplierRate(Base):
-    """Tenant-scoped price per supplier+material. Historical snapshots stay immutable."""
+    """A price for one supplier and material, company-wide or for one project
+    (``project_id``), from a date or with no start date (``effective_from``).
+
+    A ticket takes its project's agreement over the company rate, and within
+    one scope the latest rate starting on or before its delivery date. Prices
+    locked into approved tickets never change with these rows.
+    """
     __tablename__ = "supplier_rates"
-    # Two rows for one pair would make the price locked at approval arbitrary.
-    __table_args__ = (Index("uq_supplier_rate", "organization_id", "supplier_id", "material_id", unique=True),)
+    # One row per scope and start date, or the price locked at approval would be
+    # arbitrary. Blank scopes and dates need their own partial indexes, since a
+    # plain unique index treats every blank as different.
+    __table_args__ = (
+        _rate_scope_index("uq_supplier_rate", (), f"{_COMPANY} AND {_UNDATED}"),
+        _rate_scope_index("uq_supplier_rate_dated", ("effective_from",), f"{_COMPANY} AND {_DATED}"),
+        _rate_scope_index("uq_supplier_rate_project", ("project_id",), f"{_PROJECT} AND {_UNDATED}"),
+        _rate_scope_index("uq_supplier_rate_project_dated", ("project_id", "effective_from"), f"{_PROJECT} AND {_DATED}"),
+    )
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     id: Mapped[int] = mapped_column(primary_key=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id", ondelete="CASCADE"))
     material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 4))
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     supplier: Mapped[Supplier] = relationship()
     material: Mapped[Material] = relationship()
 
@@ -176,6 +200,8 @@ class PricingEvent(Base):
     supplier_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     material_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     old_value: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Which rate a rate_* event is about: "Company-wide", or a project and start date.
+    scope: Mapped[str | None] = mapped_column(String(240), nullable=True)
     new_value: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
