@@ -17,6 +17,15 @@ const RATES = [
   { id: 2, supplier_id: 1, material_id: 2, unit_price: "18.0000", project_id: null, effective_from: null },
 ];
 
+const TIMELINE = { today: "2026-11-24", pairs: [{ supplier: "Example Aggregates", material: "No. 53 Crushed Stone", waiting_unpriced: 2, warnings: 2, scopes: [
+  { project_id: null, project: null, label: "Company rate", segments: [
+    { rate_id: 2, price: "18.0000", from: "2026-01-01", to: "2026-09-30", declared_to: "2026-09-30", state: "past" },
+    { rate_id: 3, price: "19.5000", from: "2026-12-01", to: null, declared_to: null, state: "future" }],
+    warnings: [{ kind: "gap", text: "Company rate: no price from 2026-10-01 to 2026-11-30. Tickets delivered then stay unpriced." }] },
+  { project_id: 7, project: "P1", label: "P1 agreement", segments: [{ rate_id: 4, price: "16.7500", from: null, to: "2026-10-31", declared_to: "2026-10-31", state: "past" }],
+    warnings: [{ kind: "expired", text: "P1 agreement: expired 2026-10-31. Tickets delivered after that stay unpriced until a new rate is set. The company rate is not used instead." }] },
+] }] };
+
 async function mock(page, posts) {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -36,6 +45,7 @@ async function mock(page, posts) {
     if (path === "/api/pricing/history") return json(route, [{ id: 1, action: "rate_set", supplier: "Example Aggregates", material: "No. 53 Crushed Stone",
       old: null, new: "16.7500", scope: "Project P1 (North Garage)", at: "2026-11-20T15:00:00Z", actor: "Pat Manager" }]);
     if (path === "/api/name-aliases") return json(route, []);
+    if (path === "/api/rates/timeline") return json(route, TIMELINE);
     return json(route, { detail: "Unmocked " + path }, 404);
   });
 }
@@ -66,7 +76,7 @@ test("a project agreement from a date is saved with its scope, and a quote sheet
   await page.getByLabel("Unit price ($/ton)").fill("16.40");
   await page.getByRole("button", { name: "Save unit price" }).click();
   await expect.poll(() => posts.length).toBe(1);
-  expect(posts[0]).toEqual({ supplier_id: 1, material_id: 2, unit_price: "16.40", project_id: 8, effective_from: "2026-12-01" });
+  expect(posts[0]).toEqual({ supplier_id: 1, material_id: 2, unit_price: "16.40", project_id: 8, effective_from: "2026-12-01", effective_to: null });
 
   await page.locator("#sheet-project").selectOption("8");
   await page.locator("#sheet-from").fill("2026-12-01");
@@ -94,4 +104,17 @@ test("previewing a rate shows which waiting tickets it would reprice before anyt
   await expect(preview).toContainText("−$30.63");
   await expect(preview.getByRole("row").nth(1)).toContainText("$18.00");
   expect(posts).toEqual([]); // previewing saves nothing
+});
+
+test("the pricing timeline shows each scope's dated prices, its gaps and expiries, and what they block", async ({ page }) => {
+  await mock(page, []);
+  await page.goto("/pricing");
+  const timeline = page.getByRole("region", { name: "Pricing timeline" });
+  const pair = timeline.getByTestId("timeline-pair");
+  await expect(pair).toContainText("2 waiting tickets can't be priced");
+  await expect(pair).toContainText("$18.00 Jan 1, 2026 – Sep 30, 2026");
+  await expect(pair).toContainText("no price from 2026-10-01 to 2026-11-30");
+  await expect(pair).toContainText("The company rate is not used instead.");
+  await page.locator("#rate-until").fill("2026-12-31");
+  await expect(page.locator("#rate-until")).toHaveValue("2026-12-31");
 });

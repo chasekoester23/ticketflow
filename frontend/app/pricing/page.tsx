@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
-  Material, NameAliasRow, PricingEventRow, Project, Rate, RatePreview, RateScope, RateSheetPlan, Supplier, addAlias, createMaterial,
-  createSupplier, deleteItem, getPricingHistory, importRateSheet, listAliases, listMaterials, listProjects, listRates, listSuppliers,
+  Material, NameAliasRow, PricingEventRow, Project, Rate, RatePreview, RateScope, RateSheetPlan, RateTimeline, Supplier, addAlias,
+  createMaterial, createSupplier, deleteItem, getPricingHistory, getRateTimeline, importRateSheet, listAliases, listMaterials, listProjects, listRates, listSuppliers,
   previewRate, removeAlias, saveRate,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
@@ -16,6 +16,7 @@ const ACTION_LABEL: Record<PricingEventRow["action"], string> = {
   material_removed: "Material removed",
   rate_set: "Rate set",
   rate_changed: "Rate changed",
+  rate_validity_changed: "Validity changed",
   rate_removed: "Rate removed",
 };
 // Display only: keep the server's decimal string, trimmed to cents where exact.
@@ -28,21 +29,27 @@ const money = (value: string | null) => {
 };
 
 // "" in a form means company-wide / no start date.
-const scopeOf = (project: string, from: string): RateScope => ({ project_id: project ? Number(project) : null, effective_from: from || null });
+const scopeOf = (project: string, from: string, until = ""): RateScope =>
+  ({ project_id: project ? Number(project) : null, effective_from: from || null, effective_to: until || null });
 const longDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { dateStyle: "medium" });
 
-function ScopeFields({ idPrefix, projects, project, from, onChange }: {
-  idPrefix: string; projects: Project[]; project: string; from: string; onChange: (project: string, from: string) => void;
+function ScopeFields({ idPrefix, projects, project, from, until, onChange }: {
+  idPrefix: string; projects: Project[]; project: string; from: string; until: string;
+  onChange: (project: string, from: string, until: string) => void;
 }) {
   return <>
     <label className="tf-field-label" htmlFor={`${idPrefix}-project`}>Applies to
-      <select id={`${idPrefix}-project`} className="tf-field w-full" value={project} onChange={(e) => onChange(e.target.value, from)}>
+      <select id={`${idPrefix}-project`} className="tf-field w-full" value={project} onChange={(e) => onChange(e.target.value, from, until)}>
         <option value="">All projects (company rate)</option>
         {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
       </select>
     </label>
     <label className="tf-field-label" htmlFor={`${idPrefix}-from`}>From (optional)
-      <input id={`${idPrefix}-from`} type="date" className="tf-field w-full" value={from} onChange={(e) => onChange(project, e.target.value)} />
+      <input id={`${idPrefix}-from`} type="date" className="tf-field w-full" value={from} onChange={(e) => onChange(project, e.target.value, until)} />
+    </label>
+    <label className="tf-field-label" htmlFor={`${idPrefix}-until`}>Until (optional)
+      <input id={`${idPrefix}-until`} type="date" className="tf-field w-full" value={until} min={from || undefined}
+        onChange={(e) => onChange(project, from, e.target.value)} />
     </label>
   </>;
 }
@@ -56,9 +63,10 @@ export default function PricingPage() {
   const [error, setError] = useState<string | null>(null);
   const [newSupplier, setNewSupplier] = useState("");
   const [newMaterial, setNewMaterial] = useState("");
-  const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "", project: "", from: "" });
+  const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "", project: "", from: "", until: "" });
+  const [timeline, setTimeline] = useState<RateTimeline | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [sheetScope, setSheetScope] = useState({ project: "", from: "" });
+  const [sheetScope, setSheetScope] = useState({ project: "", from: "", until: "" });
   const [ratePreview, setRatePreview] = useState<RatePreview | null>(null);
   const [saving, setSaving] = useState(false);
   const [aliases, setAliases] = useState<NameAliasRow[]>([]);
@@ -73,6 +81,7 @@ export default function PricingPage() {
       setSuppliers(s); setMaterials(m); setRates(r); setHistory(h);
       listAliases().then(setAliases).catch(() => setAliases([]));
       listProjects().then(setProjects).catch(() => setProjects([]));
+      getRateTimeline().then(setTimeline).catch(() => setTimeline(null));
       setError(null);
     } catch (e) { setError((e as Error).message); }
   }, []);
@@ -171,9 +180,9 @@ export default function PricingPage() {
           <p className="tf-panel-description">A ticket takes its project&apos;s agreement if there is one, otherwise the company rate, and within either the latest rate starting on or before its delivery date. Approved tickets keep the rate they were approved at.</p></div>
         <span className="tf-status">{rates.length} rates</span>
       </div>
-      {canManage && <form className="grid items-end gap-3 border-b border-[#e9edf0] p-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_150px_130px_auto]"
+      {canManage && <form className="grid items-end gap-3 border-b border-[#e9edf0] p-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_140px_140px_120px_auto]"
         onSubmit={(e) => { e.preventDefault(); void act(async () => {
-          await saveRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price, scopeOf(rateForm.project, rateForm.from));
+          await saveRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price, scopeOf(rateForm.project, rateForm.from, rateForm.until));
           setRateForm((v) => ({ ...v, price: "" }));
           setRatePreview(null);
         }); }}>
@@ -189,8 +198,8 @@ export default function PricingPage() {
             {materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </label>
-        <ScopeFields idPrefix="rate" projects={projects} project={rateForm.project} from={rateForm.from}
-          onChange={(project, from) => { setRateForm({ ...rateForm, project, from }); setRatePreview(null); }} />
+        <ScopeFields idPrefix="rate" projects={projects} project={rateForm.project} from={rateForm.from} until={rateForm.until}
+          onChange={(project, from, until) => { setRateForm({ ...rateForm, project, from, until }); setRatePreview(null); }} />
         <label className="tf-field-label">Unit price ($/ton)
           <input required className="tf-field w-full" inputMode="decimal" placeholder="30.00"
             value={rateForm.price} onChange={(e) => { setRateForm({ ...rateForm, price: e.target.value }); setRatePreview(null); }} />
@@ -198,7 +207,7 @@ export default function PricingPage() {
         <div className="flex gap-2">
           <button type="button" className="tf-secondary-button" disabled={saving || !rateForm.supplier || !rateForm.material || !rateForm.price}
             onClick={() => void act(async () => setRatePreview(await previewRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price,
-              scopeOf(rateForm.project, rateForm.from))))}>Preview effect</button>
+              scopeOf(rateForm.project, rateForm.from, rateForm.until))))}>Preview effect</button>
           <button type="submit" className="tf-primary-button" disabled={saving || !rateForm.supplier || !rateForm.material || !rateForm.price}>Save unit price</button>
         </div>
       </form>}
@@ -219,13 +228,14 @@ export default function PricingPage() {
         {ratePreview.truncated && <p className="mt-1 text-[11px] text-[#5f6c7b]">Showing the first {ratePreview.rows.length}.</p>}
       </div>}
       <div className="tf-table-wrap"><table className="tf-table">
-        <thead><tr><th>Supplier</th><th>Material</th><th>Applies to</th><th>From</th><th className="text-right">Rate / ton</th><th className="text-right">Action</th></tr></thead>
+        <thead><tr><th>Supplier</th><th>Material</th><th>Applies to</th><th>From</th><th>Until</th><th className="text-right">Rate / ton</th><th className="text-right">Action</th></tr></thead>
         <tbody>{schedule.map((r) => <tr key={r.id}>
           <td className="font-semibold">{supplierName(r.supplier_id)}</td>
           <td>{materialName(r.material_id)}</td>
           <td>{r.project_id == null ? <span className="text-[#5d6b7b]">All projects</span>
             : <span className="tf-status tf-status-open">{projectLabel(r.project_id)}</span>}</td>
           <td className="whitespace-nowrap tabular-nums">{r.effective_from ? longDate(r.effective_from) : <span className="text-[#5d6b7b]">Any date</span>}</td>
+          <td className="whitespace-nowrap tabular-nums">{r.effective_to ? longDate(r.effective_to) : <span className="text-[#5d6b7b]">Open-ended</span>}</td>
           <td className="text-right font-bold tabular-nums">{`$${Number(r.unit_price).toFixed(2)}`}</td>
           <td className="text-right">{canManage && <button disabled={saving} onClick={() => void remove("rates", r.id, "this rate")}
             className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}</td>
@@ -242,19 +252,19 @@ export default function PricingPage() {
           <p className="tf-panel-description">Copy three columns from Excel: supplier, material, price per ton. For a supplier&apos;s quote on one job, choose the project and the date it starts. You&apos;ll see what changes before anything is saved.</p></div>
       </div>
       <div className="space-y-3 p-5">
-        <div className="grid gap-3 sm:grid-cols-[1fr_160px] sm:max-w-xl">
-          <ScopeFields idPrefix="sheet" projects={projects} project={sheetScope.project} from={sheetScope.from}
-            onChange={(project, from) => { setSheetScope({ project, from }); setSheetPlan(null); setSheetDone(null); }} />
+        <div className="grid gap-3 sm:max-w-2xl sm:grid-cols-[1fr_150px_150px]">
+          <ScopeFields idPrefix="sheet" projects={projects} project={sheetScope.project} from={sheetScope.from} until={sheetScope.until}
+            onChange={(project, from, until) => { setSheetScope({ project, from, until }); setSheetPlan(null); setSheetDone(null); }} />
         </div>
         <label className="tf-field-label" htmlFor="rate-sheet">Rate sheet</label>
         <textarea id="rate-sheet" className="tf-field h-28 w-full font-mono" spellCheck={false} value={sheet}
           placeholder={"Example Aggregates\tNo. 57 Stone\t28.50"} onChange={(e) => { setSheet(e.target.value); setSheetPlan(null); setSheetDone(null); }} />
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" className="tf-secondary-button" disabled={!sheet.trim() || saving}
-            onClick={() => void act(async () => { setSheetDone(null); setSheetPlan(await importRateSheet(sheet, false, scopeOf(sheetScope.project, sheetScope.from))); })}>Check this sheet</button>
+            onClick={() => void act(async () => { setSheetDone(null); setSheetPlan(await importRateSheet(sheet, false, scopeOf(sheetScope.project, sheetScope.from, sheetScope.until))); })}>Check this sheet</button>
           {sheetPlan && (sheetPlan.adds + sheetPlan.changes > 0) && <button type="button" className="tf-primary-button" disabled={saving}
             onClick={() => void act(async () => {
-              const done = await importRateSheet(sheet, true, scopeOf(sheetScope.project, sheetScope.from));
+              const done = await importRateSheet(sheet, true, scopeOf(sheetScope.project, sheetScope.from, sheetScope.until));
               setSheetDone(`Saved ${done.adds} new and ${done.changes} changed rate(s). Tickets already approved keep their locked prices.`);
               setSheetPlan(null);
               setSheet("");
@@ -278,6 +288,33 @@ export default function PricingPage() {
           </table></div>
         </div>}
       </div>
+    </section>}
+
+    {timeline && timeline.pairs.length > 0 && <section className="tf-panel" aria-label="Pricing timeline">
+      <div className="tf-panel-heading">
+        <div><h2 className="tf-panel-title">Pricing timeline</h2>
+          <p className="tf-panel-description">Which price applies when, for each supplier and material. A later rate takes over from its start; after a rate&apos;s last day there is no price until the next one. An expired project agreement never falls back to the company rate.</p></div>
+        <span className={`tf-status ${timeline.pairs.some((p) => p.warnings) ? "tf-status-attention" : ""}`}>
+          {timeline.pairs.reduce((n, p) => n + p.warnings, 0)} to check</span>
+      </div>
+      <ul className="divide-y divide-[#edf0f2]">{[...timeline.pairs].sort((a, b) => b.warnings - a.warnings || b.waiting_unpriced - a.waiting_unpriced).map((pair) =>
+        <li key={pair.supplier + pair.material} className="space-y-2 px-5 py-3" data-testid="timeline-pair">
+          <div className="flex flex-wrap items-baseline gap-x-3">
+            <span className="text-[13px] font-semibold text-[#192632]">{pair.supplier} · {pair.material}</span>
+            {pair.waiting_unpriced > 0 && <span className="tf-status tf-status-error">{pair.waiting_unpriced} waiting ticket{pair.waiting_unpriced === 1 ? "" : "s"} can&apos;t be priced</span>}
+          </div>
+          {pair.scopes.map((scope) => <div key={scope.label} className="grid gap-1 sm:grid-cols-[150px_minmax(0,1fr)]">
+            <span className="text-[12px] text-[#5d6b7b]">{scope.label}</span>
+            <div className="min-w-0 space-y-1">
+              <ol className="flex flex-wrap gap-1.5">{scope.segments.map((seg) =>
+                <li key={seg.rate_id} className={`rounded-[2px] border px-2 py-1 text-[11.5px] tabular-nums ${seg.state === "current" ? "border-[#cce4d2] bg-[#edf5ef] text-[#1d5e3b]" : seg.state === "future" ? "border-[#cdd4db] bg-white text-[#455467]" : "border-[#e1e5e9] bg-[#f5f6f7] text-[#7a8794]"}`}>
+                  <b>{money(seg.price)}</b> {seg.from ? longDate(seg.from) : "start"} – {seg.to ? longDate(seg.to) : "open-ended"}
+                  {seg.state === "current" && <span className="sr-only"> (in force today)</span>}
+                </li>)}</ol>
+              {scope.warnings.map((w, n) => <p key={n} className={`text-[11.5px] ${w.kind === "expired" || w.kind === "gap" ? "text-[#a73631]" : "text-[#995a18]"}`}>{w.text}</p>)}
+            </div>
+          </div>)}
+        </li>)}</ul>
     </section>}
 
     <section className="tf-panel">

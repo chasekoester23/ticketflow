@@ -152,6 +152,8 @@ class SupplierRate(Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 4))
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
     effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Last day the price is valid (a quote's expiry). Blank: open-ended.
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     supplier: Mapped[Supplier] = relationship()
     material: Mapped[Material] = relationship()
 
@@ -195,7 +197,7 @@ class PricingEvent(Base):
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     # supplier_added | supplier_removed | material_added | material_removed |
-    # rate_set | rate_changed | rate_removed
+    # rate_set | rate_changed | rate_validity_changed | rate_removed
     action: Mapped[str] = mapped_column(String(40), nullable=False)
     supplier_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     material_name: Mapped[str | None] = mapped_column(String(200), nullable=True)

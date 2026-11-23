@@ -29,6 +29,7 @@ class RateRow:
     price: Decimal
     project_id: int | None
     effective_from: date | None
+    effective_to: date | None = None  # last day it's valid; None is open-ended
 
 
 @dataclass(frozen=True)
@@ -43,10 +44,15 @@ class RateBook:
 
     1. The ticket's project agreement, if it has one that applies, else the company rate.
     2. Within one of those, the latest rate starting on or before the delivery date. A
-       rate with no start date covers every date before the first dated one.
+       rate with no start date covers every date before the first dated one. A later
+       rate supersedes an earlier one; an earlier one is never revived.
     3. A project agreement that hasn't started by the delivery date gives way to the
        company rate.
-    4. Never a guess: dated rates and no delivery date, or two prices for one name
+    4. If that latest rate ended (effective_to) before the delivery date, there is no
+       valid price in that scope: an expired quote, or a gap before the next one. The
+       ticket is unpriced with the reason. An expired project agreement does NOT fall
+       back to the company rate: that would quietly put list price on contracted work.
+    5. Never a guess: dated rates and no delivery date, or two prices for one name
        ("Sand" and "SAND"), leave the ticket unpriced with the reason.
     """
 
@@ -68,7 +74,7 @@ class RateBook:
             scoped = [r for r in rows if r.project_id == scope]
             if not scoped:
                 continue
-            if any(r.effective_from is not None for r in scoped) and on is None:
+            if any(r.effective_from is not None or r.effective_to is not None for r in scoped) and on is None:
                 return RateMatch(None, None, "This supplier and material's rate changes over time. "
                                              "Enter the delivery date to price it.")
             started = [r for r in scoped if r.effective_from is None or on is None or r.effective_from <= on]
@@ -79,6 +85,12 @@ class RateBook:
             if len(prices) > 1:
                 return RateMatch(None, None, "Two catalog names that read the same have different rates. "
                                              "Remove the duplicate on Pricing.")
+            if newest.effective_to is not None and on is not None and newest.effective_to < on:
+                later = sorted(r.effective_from for r in scoped if r.effective_from is not None and r.effective_from > on)
+                which = "The project agreement" if scope is not None else "The company rate"
+                return RateMatch(None, None, f"{which} for this supplier and material ended on {newest.effective_to.isoformat()}"
+                                 + (f", and the next one starts {later[0].isoformat()}" if later else "")
+                                 + ". Set the price for this date on Pricing, or extend the rate.")
             return RateMatch(newest.price, "project_rate" if scope is not None else "rate")
         return RateMatch(None, None)
 
@@ -88,7 +100,8 @@ class RateBook:
 
 def rate_table(db: Session, organization_id: int) -> RateBook:
     rows = db.execute(
-        select(Supplier.name, Material.name, SupplierRate.unit_price, SupplierRate.project_id, SupplierRate.effective_from)
+        select(Supplier.name, Material.name, SupplierRate.unit_price, SupplierRate.project_id, SupplierRate.effective_from,
+               SupplierRate.effective_to)
         .join(SupplierRate, SupplierRate.supplier_id == Supplier.id)
         .join(Material, Material.id == SupplierRate.material_id)
         .where(SupplierRate.organization_id == organization_id,
@@ -96,8 +109,8 @@ def rate_table(db: Session, organization_id: int) -> RateBook:
                Material.organization_id == organization_id)
     ).all()
     book: dict[tuple[str, str], list[RateRow]] = {}
-    for s, m, p, project_id, effective_from in rows:
-        book.setdefault((norm(s), norm(m)), []).append(RateRow(p, project_id, effective_from))
+    for s, m, p, project_id, effective_from, effective_to in rows:
+        book.setdefault((norm(s), norm(m)), []).append(RateRow(p, project_id, effective_from, effective_to))
     # A ticket's project comes from its batch. Read only when some rate is per project.
     projects_by_batch: dict[int, int | None] = {}
     if any(r.project_id is not None for found in book.values() for r in found):

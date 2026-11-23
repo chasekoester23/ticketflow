@@ -22,8 +22,12 @@ costs and invoice comparisons.
    spell them, and the price per ton. A rate can apply to all projects or to one project
    (a supplier's quote for that job), and can start on a date (a price change). Each ticket
    is priced by its project's quote if there is one, otherwise the company rate, using the
-   latest rate that started on or before its delivery date. To load a quote, paste the sheet
-   and choose the project and start date. An approved ticket locks its price, and the review
+   latest rate that started on or before its delivery date. A rate can also have a last day
+   (a quote's expiry): after it, and until the next rate starts, tickets stay unpriced with
+   the reason shown, and an expired project agreement never falls back to the company rate.
+   The **Pricing timeline** shows each price's dates and warns about gaps, overlaps and
+   expiring quotes; **Preview effect** shows which waiting tickets a new rate would reprice.
+   To load a quote, paste the sheet and choose the project, start date and expiry. An approved ticket locks its price, and the review
    screen and export say whether it came from a project agreement, the company rate or a
    manual override. Later rate changes never alter an approved ticket.
 

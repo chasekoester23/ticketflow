@@ -253,3 +253,90 @@ def test_previewing_a_rate_lists_the_unapproved_tickets_it_would_reprice_and_sav
     company = preview(unit_price="20.00")
     assert {r["ticket_id"] for r in company["rows"]} == {waiting_p1["id"], other_project["id"]}
     assert [Decimal(r["unit_price"]) for r in client.get("/api/rates").json()] == [Decimal("18.0000")]  # nothing saved
+
+
+# ---------------------------------------------------------------- quote expiry: the rules, then the API
+
+def _dated(*rows):
+    return RateBook({("s", "m"): [RateRow(Decimal(p), project, start, end) for p, project, start, end in rows]}, {})
+
+
+@pytest.mark.parametrize("project, on, price, reason", [
+    (None, date(2026, 3, 15), "18.00", None),            # inside the first quote
+    (None, date(2026, 4, 15), None, "ended on 2026-03-31, and the next one starts 2026-05-01"),  # the gap
+    (None, date(2026, 5, 2), "19.50", None),             # the next quote
+    (None, date(2026, 9, 1), None, "ended on 2026-08-31"),  # expired, nothing after it
+    (7, date(2026, 6, 1), "17.00", None),                # the project's agreement
+    (7, date(2026, 7, 15), None, "project agreement"),   # expired agreement: NO fall back to the company rate
+    (8, date(2026, 6, 1), "19.50", None),                # another project uses the company rate
+])
+def test_expiry_gaps_and_no_silent_fallback(project, on, price, reason):
+    book = _dated(("18.00", None, date(2026, 1, 1), date(2026, 3, 31)), ("19.50", None, date(2026, 5, 1), date(2026, 8, 31)),
+                  ("17.00", 7, date(2026, 5, 1), date(2026, 6, 30)))
+    found = book.match("S", "M", project, on)
+    assert (str(found.price) if found.price is not None else None) == price
+    assert (reason is None and found.reason is None) or (reason and reason in found.reason)
+
+
+def test_a_superseded_rate_is_never_revived_and_an_unstarted_agreement_still_gives_way():
+    book = _dated(("18.00", None, None, None), ("19.50", None, date(2026, 5, 1), date(2026, 5, 31)), ("15.00", 7, date(2026, 9, 1), None))
+    assert book.match("S", "M", None, date(2026, 6, 15)).price is None  # the May quote ended; the old open rate doesn't return
+    assert book.match("S", "M", 7, date(2026, 4, 1)).price == Decimal("18.00")  # agreement not started: company rate
+    assert "delivery date" in _dated(("18.00", None, None, date(2026, 5, 31))).match("S", "M", None, None).reason
+
+
+def test_an_expired_quote_leaves_a_waiting_ticket_unpriced_and_never_touches_an_approved_one(client, catalog):
+    rate, projects = catalog
+    rate("16.75", project="P1", start="2026-10-01")
+    approved = _first_ticket(client, projects["P1"], number="10490")      # delivered 2026-10-15
+    assert client.post(f"/api/tickets/{approved['id']}/verify", headers={"If-Match": approved["revision"]}).status_code == 200
+    supplier, material = client.get("/api/suppliers").json()[0]["id"], client.get("/api/materials").json()[0]["id"]
+    expire = client.put("/api/rates", json={"supplier_id": supplier, "material_id": material, "unit_price": "16.75",
+                                            "project_id": projects["P1"], "effective_from": "2026-10-01", "effective_to": "2026-10-10"})
+    assert expire.status_code == 200, expire.text
+    waiting = _first_ticket(client, projects["P1"])                          # delivered 2026-10-15, after expiry
+    assert waiting["unit_price"] is None and any("ended on 2026-10-10" in note for note in waiting["pricing_notes"])
+    locked = next(t for t in client.get(f"/api/batches/{approved['batch_id']}/tickets").json() if t["id"] == approved["id"])
+    assert _price(locked) == (Decimal("16.7500"), "project_rate")             # approved before: locked, unchanged
+    history = client.get("/api/pricing/history").json()
+    assert (history[0]["action"], history[0]["old"], history[0]["new"]) == ("rate_validity_changed", "open-ended", "2026-10-10")
+    backwards = client.put("/api/rates", json={"supplier_id": supplier, "material_id": material, "unit_price": "16.75",
+                                               "effective_from": "2026-10-10", "effective_to": "2026-10-01"})
+    assert backwards.status_code == 422
+
+
+def test_a_sheet_that_drops_an_expiry_shows_it_as_a_change(client, catalog):
+    rate, _ = catalog
+    rate("18.00")
+    sheet = "Supplier,Material,Price\nExample Aggregates,No. 53 Crushed Stone,18.00\n"
+    with_expiry = client.post("/api/rates/import", json={"text": sheet, "effective_to": "2026-12-31", "apply": True}).json()
+    assert with_expiry["changes"] == 1  # same price, new expiry: still a change
+    again = client.post("/api/rates/import", json={"text": sheet}).json()
+    assert again["changes"] == 1 and again["unchanged"] == 0  # pasting without one would end the expiry
+
+
+def test_the_timeline_shows_overlaps_gaps_and_expiry_and_counts_waiting_tickets_it_blocks(client, catalog):
+    rate, projects = catalog
+    supplier, material = client.get("/api/suppliers").json()[0]["id"], client.get("/api/materials").json()[0]["id"]
+
+    def put(price, start=None, end=None, project=None):
+        response = client.put("/api/rates", json={"supplier_id": supplier, "material_id": material, "unit_price": price,
+                                                  "effective_from": start, "effective_to": end, "project_id": project})
+        assert response.status_code == 200, response.text
+
+    put("18.00", "2026-01-01", "2026-06-15")        # overlaps the next by half a month
+    put("19.00", "2026-06-01", "2026-09-30")        # then a gap until December
+    put("20.00", "2026-12-01", "2026-12-31")
+    put("16.00", "2026-01-01", "2026-03-31", projects["P1"])   # an expired agreement
+    _first_ticket(client, projects["P2"])            # delivered 2026-10-15: in the company gap
+    timeline = client.get("/api/rates/timeline").json()
+    (pair,) = timeline["pairs"]
+    company, agreement = pair["scopes"]
+    assert [s["price"] for s in company["segments"]] == ["18.0000", "19.0000", "20.0000"]
+    assert company["segments"][0]["to"] == "2026-05-31" and company["segments"][0]["declared_to"] == "2026-06-15"
+    kinds = [w["kind"] for w in company["warnings"]]
+    assert "overlap" in kinds and "gap" in kinds
+    assert any("no price from 2026-10-01 to 2026-11-30" in w["text"] for w in company["warnings"])
+    assert agreement["label"] == "P1 agreement" and agreement["warnings"][0]["kind"] == "expired"
+    assert "company rate is not used" in agreement["warnings"][0]["text"]
+    assert pair["waiting_unpriced"] == 1

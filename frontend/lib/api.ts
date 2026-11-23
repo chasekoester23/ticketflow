@@ -124,8 +124,19 @@ export async function getTicketHistory(id: number): Promise<HistoryEntry[]> {
 export type Supplier = { id: number; name: string; contact: string | null };
 export type Material = { id: number; name: string; unit: string };
 // project_id null: company-wide. effective_from null: no start date (YYYY-MM-DD otherwise).
-export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string; project_id: number | null; effective_from: string | null };
-export type RateScope = { project_id: number | null; effective_from: string | null };
+export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string; project_id: number | null; effective_from: string | null; effective_to?: string | null };
+// effective_to: the last day the price is valid (a quote's expiry). Left out or null: open-ended.
+export type RateScope = { project_id: number | null; effective_from: string | null; effective_to?: string | null };
+export type TimelineSegment = { rate_id: number; price: string; from: string | null; to: string | null; declared_to: string | null; state: "past" | "current" | "future" };
+export type RateTimeline = {
+  today: string;
+  pairs: { supplier: string; material: string; waiting_unpriced: number; warnings: number;
+    scopes: { project_id: number | null; project: string | null; label: string; segments: TimelineSegment[];
+      warnings: { kind: "overlap" | "gap" | "expired" | "expiring"; text: string }[] }[] }[];
+};
+export async function getRateTimeline(): Promise<RateTimeline> {
+  return (await check(await apiFetch(`${API}/api/rates/timeline`))).json();
+}
 
 /** An API refusal. `code` is set when the UI should react, not just show text. */
 export class ApiError extends Error {
@@ -375,7 +386,7 @@ export async function saveRate(supplier_id: number, material_id: number, unit_pr
 }
 export type PricingEventRow = {
   id: number;
-  action: "supplier_added" | "supplier_removed" | "material_added" | "material_removed" | "rate_set" | "rate_changed" | "rate_removed";
+  action: "supplier_added" | "supplier_removed" | "material_added" | "material_removed" | "rate_set" | "rate_changed" | "rate_validity_changed" | "rate_removed";
   supplier: string | null; material: string | null;
   old: string | null; new: string | null; // decimal strings, never parsed for money math
   scope: string | null; // which rate: "Company-wide", or a project and start date
