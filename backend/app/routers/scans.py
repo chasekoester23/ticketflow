@@ -133,7 +133,8 @@ def page_image(file_id: int, page_no: int, db: Session = Depends(get_db),
         if file.original_name.lower().endswith(".pdf"):
             image = splitter.render_pdf_page(data, page_no, max_page_pixels=settings.max_rendered_page_pixels)
         elif page_no == 1:
-            image = splitter.load_image(data, max_pixels=settings.max_image_pixels)
+            image = splitter.load_image(data, max_pixels=settings.max_image_pixels,
+                                       max_source_pixels=settings.max_source_image_pixels)
         else:
             raise splitter.PdfError("That page is not available.")
     except (splitter.PdfError, OSError):

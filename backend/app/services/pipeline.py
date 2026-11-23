@@ -44,7 +44,8 @@ def pages_for(file: UploadedFile, data: bytes):
             max_page_pixels=settings.max_rendered_page_pixels,
             max_total_pixels=settings.max_total_pdf_pixels,
         )
-    return [splitter.load_image(data, max_pixels=settings.max_image_pixels)]
+    return [splitter.load_image(data, max_pixels=settings.max_image_pixels,
+                                max_source_pixels=settings.max_source_image_pixels)]
 
 
 def set_blank_fields(ticket: Ticket) -> None:

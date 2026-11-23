@@ -8,7 +8,7 @@ import math
 from dataclasses import dataclass
 
 import pymupdf as fitz  # PyMuPDF
-from PIL import Image
+from PIL import Image, ImageOps
 
 Box = tuple[int, int, int, int]
 
@@ -22,6 +22,34 @@ class Crop:
     position: int
     box: Box
     image: Image.Image
+
+
+def fit_scale(width: float, height: float, max_pixels: int) -> float:
+    """The factor (at most 1) that brings width x height within max_pixels."""
+    area = width * height
+    return 1.0 if area <= max_pixels else math.sqrt(max_pixels / area) * 0.999
+
+
+def page_zoom(page, dpi: int, max_pixels: int) -> float:
+    width, height = page.rect.width * dpi / 72, page.rect.height * dpi / 72
+    if not (width >= 1 and height >= 1):
+        raise PdfError("PDF page has no size. Check the scan and try again.")
+    return dpi / 72 * fit_scale(width, height, max_pixels)
+
+
+def render_page(page, dpi: int, max_pixels: int) -> Image.Image:
+    """Render one page at ``dpi``, or at a lower resolution if that would exceed
+    ``max_pixels``. The size is decided before anything is allocated.
+
+    A phone photo saved as a PDF is usually a page of one point per pixel: a 12 MP
+    photo becomes a 42 x 56 inch page, which at 200 dpi would be 94 MP. Rendering
+    it to fit the limit keeps all the detail the photo has, instead of refusing it.
+    """
+    zoom = page_zoom(page, dpi, max_pixels)
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+    if pix.width * pix.height > max_pixels:
+        raise PdfError("PDF renders above the safe image limit. Rescan at a lower resolution.")
+    return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
 def render_pdf_pages(
@@ -53,21 +81,14 @@ def render_pdf_pages(
         pages: list[Image.Image] = []
         total_pixels = 0
         for page in doc:
-            # FitZ page.rect describes the page at 72dpi. Reject huge page
-            # dimensions before get_pixmap allocates the bitmap.
-            width = math.ceil(page.rect.width * dpi / 72)
-            height = math.ceil(page.rect.height * dpi / 72)
-            estimate = width * height
-            if width <= 0 or height <= 0 or estimate > max_page_pixels:
-                raise PdfError("PDF page is too large to render safely. Rescan at a lower resolution.")
-            if total_pixels + estimate > max_total_pixels:
+            zoom = page_zoom(page, dpi, max_page_pixels)
+            if total_pixels + math.ceil(page.rect.width * zoom) * math.ceil(page.rect.height * zoom) > max_total_pixels:
                 raise PdfError("PDF is too large to process safely. Split it into smaller files.")
-            pix = page.get_pixmap(dpi=dpi, alpha=False)
-            actual = pix.width * pix.height
-            if actual > max_page_pixels or total_pixels + actual > max_total_pixels:
-                raise PdfError("PDF renders above the safe image limit. Rescan at a lower resolution.")
-            pages.append(Image.frombytes("RGB", (pix.width, pix.height), pix.samples))
-            total_pixels += actual
+            image = render_page(page, dpi, max_page_pixels)
+            if total_pixels + image.width * image.height > max_total_pixels:
+                raise PdfError("PDF is too large to process safely. Split it into smaller files.")
+            pages.append(image)
+            total_pixels += image.width * image.height
         return pages
     except PdfError:
         raise
@@ -109,11 +130,7 @@ def render_pdf_page(data: bytes, page_no: int, dpi: int = 100, *, max_page_pixel
     try:
         if doc.needs_pass or not 1 <= page_no <= doc.page_count:
             raise PdfError("That page is not available.")
-        page = doc[page_no - 1]
-        if math.ceil(page.rect.width * dpi / 72) * math.ceil(page.rect.height * dpi / 72) > max_page_pixels:
-            raise PdfError("PDF page is too large to preview.")
-        pix = page.get_pixmap(dpi=dpi, alpha=False)
-        return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        return render_page(doc[page_no - 1], dpi, max_page_pixels)
     except PdfError:
         raise
     except Exception as exc:
@@ -122,19 +139,35 @@ def render_pdf_page(data: bytes, page_no: int, dpi: int = 100, *, max_page_pixel
         doc.close()
 
 
-def load_image(data: bytes, *, max_pixels: int = 14_000_000) -> Image.Image:
-    """Reject decompression bombs using dimensions before decoding image data."""
+def load_image(data: bytes, *, max_pixels: int = 14_000_000, max_source_pixels: int = 50_000_000) -> Image.Image:
+    """Decode an uploaded photo or scan, upright and within ``max_pixels``.
+
+    Phones save photos sideways with an EXIF note saying which way is up; that note
+    is applied, so a portrait ticket isn't read, split or shown on its side. A photo
+    larger than ``max_pixels`` (a 24 or 48 MP phone camera) is reduced to fit rather
+    than refused. Anything above ``max_source_pixels`` is refused from its header,
+    before decoding, as a possible decompression bomb.
+    """
     try:
         with Image.open(io.BytesIO(data)) as img:
             width, height = img.size
-            if width <= 0 or height <= 0 or width * height > max_pixels:
+            if width <= 0 or height <= 0 or width * height > max_source_pixels:
                 raise PdfError("Image dimensions are too large. Resize the scan before uploading.")
+            scale = fit_scale(width, height, max_pixels)
+            if scale < 1 and img.format == "JPEG":
+                # Decode a JPEG at a reduced scale directly, never at full size.
+                img.draft("RGB", (math.ceil(width * scale), math.ceil(height * scale)))
             img.load()
-            return img.convert("RGB")
+            image = ImageOps.exif_transpose(img).convert("RGB")
     except PdfError:
         raise
     except Exception as exc:
         raise PdfError("Could not read image. Check the file and try again.") from exc
+    scale = fit_scale(image.width, image.height, max_pixels)
+    if scale < 1:
+        image = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))),
+                             Image.Resampling.LANCZOS, reducing_gap=3.0)
+    return image
 
 
 def grid_boxes(width: int, height: int, rows: int, cols: int, margin: float = 0.01) -> list[Box]:
