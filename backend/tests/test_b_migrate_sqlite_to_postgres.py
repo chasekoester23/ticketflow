@@ -666,6 +666,10 @@ def build_fictional_business(url: str, storage: Path, monkeypatch) -> dict:
         assert client.post("/api/name-aliases", json={"kind": "supplier", "alias": "EA Inc", "target_id": supplier_id}).status_code == 201
         assert client.post("/api/saved-views", json={"name": "Our sheet", "filters": {"status": "verified"}, "columns": ["ticket_number", "tons"]}).status_code == 201
         assert client.post("/api/team/members", json={"username": "first-clerk", "display_name": "First Clerk", "role": "clerk"}).status_code == 201
+        exception = client.get("/api/exceptions").json()["items"][0]
+        owned = client.post("/api/exceptions/review", headers={"If-Match": exception["revision"]}, json={
+            "key": exception["key"], "status": "disputed", "assignee_user_id": ids["first_owner"], "note": "Sent to the supplier."})
+        assert owned.status_code == 200, owned.text
         with Session() as db:
             db.add(ReviewTiming(organization_id=ids["first"], batch_id=1, intake_mode="manual", seconds=Decimal("41.5"), fields_corrected=2))
             db.commit()
@@ -698,6 +702,7 @@ def company_answers(client, ids: dict) -> dict:
             "invoice_lines": lines,
             "invoice_line_details": {line["id"]: client.get(f"/api/invoice-comparisons/{line['id']}").json() for line in lines},
             "invoice_overview": client.get("/api/invoice-comparisons/overview").json(),
+            "exceptions": client.get("/api/exceptions", params={"status": "all"}).json(),
             "records": records,
             "audit": {row["id"]: client.get(f"/api/tickets/{row['id']}/audit").json() for row in records["rows"]},
             "pricing_history": client.get("/api/pricing/history").json(),

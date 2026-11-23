@@ -787,3 +787,64 @@ export async function resetTeamMemberPassword(id: number): Promise<IssuedPasswor
 export async function listAccountEvents(): Promise<AccountEventRow[]> {
   return (await check(await apiFetch(`${API}/api/team/events`))).json();
 }
+
+// ---------------------------------------------------------------- invoice exceptions center
+export type ExceptionCategory = "rate" | "quantity" | "duplicate" | "missing_ticket" | "not_invoiced" | "unmatched_line"
+  | "needs_review" | "invoice_arithmetic";
+export type ExceptionStatus = "open" | "investigating" | "disputed" | "recovered" | "resolved" | "dismissed";
+export type ExceptionSeverity = "high" | "medium" | "low";
+// Money and tons are decimal strings from the server: shown, never added up here.
+export type BillingException = {
+  key: string; category: ExceptionCategory; category_label: string; severity: ExceptionSeverity;
+  title: string; explanation: string; project_id: number | null; project: string | null;
+  supplier: string; material: string | null; invoice_numbers: string[]; line_ids: number[];
+  ticket_number: string | null; ticket_ids: number[]; billed_tons: string | null; approved_tons: string | null;
+  amount: string | null; line_billed: string | null; line_approved: string | null;
+  unbilled_tickets: number | null; detected: boolean;
+  status: ExceptionStatus; assignee_user_id: number | null; assignee: string | null;
+  recovered_amount: string | null; note: string | null; revision: string; updated_at: string | null; updated_by: string | null;
+};
+export type ExceptionsSummary = {
+  open: number; by_category: Record<ExceptionCategory, number>; by_severity: Record<ExceptionSeverity, number>;
+  potential_overcharge: string; billed_below_approved: string; disputed_amount: string; recovered: string;
+  money_unknown: number; unassigned: number;
+};
+export type ClearedException = { key: string; title: string; status: ExceptionStatus; recovered_amount: string | null; note: string | null; assignee: string | null; updated_at: string };
+export type ExceptionsPage = {
+  summary: ExceptionsSummary; items: BillingException[]; cleared: ClearedException[];
+  categories: Record<ExceptionCategory, string>; people: { id: number; name: string }[];
+  projects: { id: number; code: string }[]; can_manage: boolean; note: string;
+};
+export type ExceptionFilters = { project_id?: string; category?: string; severity?: string; status?: string; assignee?: string; supplier?: string };
+export type ExceptionEventRow = { field: string; old: string | null; new: string | null; at: string; actor: string | null };
+
+const query = (filters: Record<string, string | undefined>) => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+  const text = params.toString();
+  return text ? `?${text}` : "";
+};
+
+export async function listExceptions(filters: ExceptionFilters = {}): Promise<ExceptionsPage> {
+  return (await check(await apiFetch(`${API}/api/exceptions${query(filters)}`))).json();
+}
+export async function reviewException(key: string, revision: string, changes: {
+  status?: ExceptionStatus; assignee_user_id?: number | null; recovered_amount?: string; note?: string;
+}): Promise<BillingException> {
+  const init = json("POST", { key, ...changes });
+  (init.headers as Record<string, string>)["If-Match"] = revision;
+  return (await check(await apiFetch(`${API}/api/exceptions/review`, init))).json();
+}
+export async function exceptionHistory(key: string): Promise<ExceptionEventRow[]> {
+  return (await check(await apiFetch(`${API}/api/exceptions/history${query({ key })}`))).json();
+}
+export const exceptionsCsvUrl = (filters: ExceptionFilters = {}) => `${API}/api/exceptions.csv${query({ project_id: filters.project_id, status: filters.status })}`;
+
+export type RatePreview = {
+  scope: string; tickets: number; newly_priced: number; cost_change: string; truncated: boolean; note: string;
+  rows: { ticket_id: number; batch_id: number; ticket_number: string | null; delivery_date: string | null; project: string | null;
+    tons: string | null; price_now: string | null; price_after: string | null; cost_change: string | null }[];
+};
+export async function previewRate(supplier_id: number, material_id: number, unit_price: string, scope: RateScope): Promise<RatePreview> {
+  return (await check(await apiFetch(`${API}/api/rates/preview`, json("POST", { supplier_id, material_id, unit_price, ...scope })))).json();
+}

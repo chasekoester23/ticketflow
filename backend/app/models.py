@@ -597,3 +597,41 @@ class InvoiceComparisonEvent(Base):
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ExceptionReview(Base):
+    """A person's handling of one billing exception: who owns it, where it stands, and
+    any credit the supplier has confirmed. The exception itself is never stored: it is
+    recomputed from invoices, tickets and rates, and found again by its key. Nothing
+    here changes an invoice line, a ticket or a locked price.
+    """
+    __tablename__ = "exception_reviews"
+    __table_args__ = (Index("uq_exception_review_key", "organization_id", "key", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(200), nullable=False)
+    # open | investigating | disputed | recovered | resolved | dismissed
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
+    assignee_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # Credit the supplier confirmed, as a person recorded it. Never computed.
+    recovered_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # What the exception said when a person last acted on it, kept for the record.
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class ExceptionEvent(Base):
+    """Append-only history of every action on a billing exception."""
+    __tablename__ = "exception_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # status | assignee | recovered_amount | note
+    field: Mapped[str] = mapped_column(String(40), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

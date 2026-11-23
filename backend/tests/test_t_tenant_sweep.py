@@ -40,7 +40,7 @@ PATH_PARAMS = {"batch_id": "batch", "ticket_id": "ticket", "link_id": "link", "d
                "pid": "project", "alias_id": "alias", "project_id": "project"}
 # Query, body and form fields that name a record. Anything else ending in _id or _ids must be added.
 FIELDS = {"project_id": "project", "ticket_id": "ticket", "ticket_ids": "ticket", "supplier_id": "supplier",
-          "material_id": "material", "target_id": "supplier", "view_id": "view"}
+          "material_id": "material", "target_id": "supplier", "view_id": "view", "assignee_user_id": "member"}
 
 
 def _record(param: str, path: str) -> str:
@@ -162,6 +162,8 @@ def _body(method: str, path: str, ids: dict):
         ("POST", "/api/name-aliases"): {"kind": "supplier", "alias": "Sweep Alias", "target_id": ids["supplier"]},
         ("PUT", "/api/rates"): {"supplier_id": ids["supplier"], "material_id": ids["material"], "unit_price": "12"},
         ("POST", "/api/rates/import"): {"text": "Example Aggregates,Sand,12", "apply": False},
+        ("POST", "/api/rates/preview"): {"supplier_id": ids["supplier"], "material_id": ids["material"], "unit_price": "12"},
+        ("POST", "/api/exceptions/review"): {"key": "sweep", "status": "investigating", "assignee_user_id": ids["member"]},
         ("POST", "/api/invoice-comparisons"): line,
         ("PUT", "/api/invoice-comparisons/{line_id}"): {**line, "invoice_number": f"INV-{MARK[1]}", "date_from": "2026-09-01", "date_to": "2026-09-30"},
         ("POST", "/api/invoice-comparisons/{line_id}/ticket-links"): {"ticket_ids": [ids["ticket"]]},
@@ -188,11 +190,13 @@ def _body(method: str, path: str, ids: dict):
     params = {"project_id": ids["project"]} if method == "GET" and path in QUERY_PROJECT else None
     if path == "/api/records/name-variants":
         params = {"field": "supplier", "project_id": ids["project"]}
+    if path == "/api/exceptions/history":
+        params = {"key": "sweep"}
     return found, None, None, params
 
 
 QUERY_PROJECT = {"/api/batches/queue", "/api/records", "/api/records/export.xlsx", "/api/dashboard", "/api/reports/pilot",
-                 "/api/reports/pilot.csv", "/api/records/search", "/api/records/export.csv"}
+                 "/api/reports/pilot.csv", "/api/records/search", "/api/records/export.csv", "/api/exceptions", "/api/exceptions.csv"}
 
 
 def route_has_body(method: str, path: str) -> bool:
@@ -339,7 +343,7 @@ NOT_SHOWING_MARKS = {"/api/batches", "/api/batches/queue", "/api/batches/{batch_
                      "/api/tickets/{ticket_id}/audit", "/api/invoice-comparisons/{line_id}/audit", "/api/invoice-documents",
                      "/api/invoice-documents/{document_id}", "/api/invoice-documents/{document_id}/history",
                      "/api/invoice-comparisons/overview", "/api/reports/pilot", "/api/reports/pilot.csv", "/api/records/name-variants",
-                     "/api/dashboard", "/api/setup/status",
+                     "/api/dashboard", "/api/setup/status", "/api/exceptions/history",
                      "/api/invoice-comparisons/discrepancies.csv",
                      # Only a header when every line matches and every delivery is billed.
                      "/api/reports/project/{project_id}/unbilled.csv"}

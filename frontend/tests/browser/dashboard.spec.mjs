@@ -52,3 +52,29 @@ test("an older server without the new sections still shows a working dashboard",
   await expect(page.getByRole("region", { name: "Active projects" })).toContainText("No active projects");
   await expect(page.getByRole("region", { name: "Recent activity" })).toContainText("will appear here");
 });
+
+test("the invoice check shows exceptions money as potential, apart from credits a person recorded", async ({ page }) => {
+  const requested = [];
+  const summary = { open: 7, by_category: {}, by_severity: { high: 2, medium: 3, low: 2 }, potential_overcharge: "1240.50",
+    billed_below_approved: "0", disputed_amount: "310.00", recovered: "95.25", money_unknown: 0, unassigned: 4 };
+  await mockWorkspace(page, { extra: (request, path) => {
+    if (path === "/api/exceptions") { requested.push(new URL(request.url()).search); return (route) => json(route, { summary, items: [] }); }
+    return {
+      "/api/dashboard": (route) => json(route, DASHBOARD),
+      "/api/onboarding": (route) => json(route, { complete: true, steps: [] }),
+      "/api/invoice-comparisons/overview": (route) => json(route, { lines: 9, by_status: {}, billed: "48210.00", verified: "0", lines_unresolved: 0, by_supplier: [], exceptions: [] }),
+    }[path];
+  } });
+  await page.goto("/");
+  const check = page.getByRole("region", { name: "Invoice check" });
+  await expect(check).toContainText("$48,210.00");
+  await expect(check).toContainText("$1,240.50");
+  await expect(check).toContainText("not yet confirmed");
+  await expect(check).toContainText("$95.25");
+  const row = page.getByRole("region", { name: "Needs attention" }).getByRole("link", { name: /Invoice exceptions/ });
+  await expect(row).toContainText("7");
+  await expect(row).toHaveAttribute("href", "/invoices/exceptions");
+  await page.locator("#dashboard-project").selectOption("1");
+  await expect.poll(() => requested.at(-1)).toBe("?project_id=1");
+  await expect(check).not.toContainText("$48,210.00"); // company-wide invoicing isn't shown as one project's
+});

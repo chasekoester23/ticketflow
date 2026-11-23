@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Dashboard, Group, InvoiceOverview, Onboarding, Project, getDashboard, getInvoiceOverview, getOnboarding, listProjects } from "../lib/api";
+import { Dashboard, ExceptionsSummary, Group, InvoiceOverview, Onboarding, Project, getDashboard, getInvoiceOverview, getOnboarding, listExceptions, listProjects } from "../lib/api";
 import { useAccount } from "./account-context";
 
 const money = (v: string | number) => `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -111,6 +111,7 @@ export default function DashboardPage() {
   const [onboarding, setOnboarding] = useState<Onboarding | null>(null);
   const [setupHidden, setSetupHidden] = useState(false);
   const [invoices, setInvoices] = useState<InvoiceOverview | null>(null);
+  const [exceptions, setExceptions] = useState<ExceptionsSummary | null>(null);
 
   useEffect(() => {
     listProjects().then(setProjects).catch(() => {});
@@ -128,6 +129,10 @@ export default function DashboardPage() {
     getDashboard(projectId || undefined)
       .then((result) => { if (active) setData(result); })
       .catch((e) => { if (active) setError(e.message); });
+    // The same figures as the exceptions center, for the chosen project. Optional: left out if unavailable.
+    listExceptions({ project_id: projectId || undefined })
+      .then((result) => { if (active) setExceptions(result.summary); })
+      .catch(() => { if (active) setExceptions(null); });
     return () => { active = false; };
   }, [projectId]);
 
@@ -145,7 +150,8 @@ export default function DashboardPage() {
     { label: "Flagged for follow-up", hint: "Set aside with a question", count: data.flagged, href: "/records?status=flagged" },
     { label: "Couldn't be read", hint: "Enter by hand, or retry the batch", count: failed, href: "/records?status=failed", tone: "bad" },
     { label: "Approved without a rate", hint: "No cost until a rate is set", count: data.unpriced_tickets, href: "/pricing" },
-    ...(invoices ? [{ label: "Invoice lines with differences", hint: "Billed differently from approved tickets", count: invoices.by_status.discrepancy ?? 0, href: "/invoices", tone: "bad" as const }] : []),
+    ...(exceptions ? [{ label: "Invoice exceptions", hint: `${exceptions.by_severity.high} high · ${exceptions.unassigned} without an owner`, count: exceptions.open, href: "/invoices/exceptions", tone: "bad" as const }]
+      : invoices ? [{ label: "Invoice lines with differences", hint: "Billed differently from approved tickets", count: invoices.by_status.discrepancy ?? 0, href: "/invoices", tone: "bad" as const }] : []),
   ] : [];
 
   return <div className="space-y-4">
@@ -178,6 +184,21 @@ export default function DashboardPage() {
             note={data.unpriced_tickets ? `Incomplete: leaves out ${data.unpriced_tickets} approved ticket${data.unpriced_tickets === 1 ? "" : "s"} with no rate` : "Verified, priced deliveries only"} />
         </div>
       </section>
+
+      {exceptions && (exceptions.open > 0 || Number(exceptions.recovered) > 0 || (invoices?.lines ?? 0) > 0) &&
+        <section className="tf-panel" aria-label="Invoice check">
+          <div className="tf-panel-heading">
+            <h2 className="tf-panel-title">Invoice check</h2>
+            <Link prefetch={false} href={`/invoices/exceptions${projectId ? `?project_id=${projectId}` : ""}`} className="tf-link">Open exceptions →</Link>
+          </div>
+          <div className="grid grid-cols-2 border-t border-[#e1e5e9] lg:grid-cols-4">
+            {!projectId && invoices && <Metric label="Invoiced" value={money(invoices.billed)} note={`${invoices.lines} invoice line${invoices.lines === 1 ? "" : "s"} entered`} />}
+            <Metric label="Potential overcharge" value={money(exceptions.potential_overcharge)} attention={Number(exceptions.potential_overcharge) > 0}
+              note="Billed above approved, open, not yet confirmed" />
+            <Metric label="Disputed with supplier" value={money(exceptions.disputed_amount)} note="Part of the potential overcharge" />
+            <Metric label="Credits received" value={money(exceptions.recovered)} note="Recorded by a person" />
+          </div>
+        </section>}
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
         <AttentionList items={attention} />
