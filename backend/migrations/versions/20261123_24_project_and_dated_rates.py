@@ -52,7 +52,9 @@ def upgrade() -> None:
     existing = {index["name"]: index for index in sa.inspect(bind).get_indexes("supplier_rates")}
     for name, (extra, where) in INDEXES.items():
         current = existing.get(name)
-        if current is not None and name == "uq_supplier_rate" and not current.get("dialect_options"):
+        options = (current or {}).get("dialect_options") or {}
+        partial = options.get("sqlite_where") is not None or options.get("postgresql_where") is not None
+        if current is not None and name == "uq_supplier_rate" and not partial:
             # The old unconditional one-rate-per-pair index: replace it with the scoped one.
             op.drop_index(name, table_name="supplier_rates")
             current = None
