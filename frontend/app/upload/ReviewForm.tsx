@@ -493,7 +493,7 @@ export const ReviewForm = memo(function ReviewForm({
           )}
           {ticket.unit_price !== null ? (
             <div className="tf-rv-cost-line">
-              <span><strong>${ticket.unit_price}</strong>/ton <span className="tf-rv-muted">{ticket.price_source === "override" ? "manual override" : "supplier rate"}</span></span>
+              <span><strong>${ticket.unit_price}</strong>/ton <span className="tf-rv-muted">{ticket.price_source === "override" ? "manual override" : ticket.price_source === "project_rate" ? "project agreement" : "company rate"}</span></span>
               {ticket.cost ? <strong className="tf-rv-total">${ticket.cost}</strong> : <span className="tf-rv-muted">cost appears after you verify the tonnage</span>}
             </div>
           ) : (

@@ -61,7 +61,7 @@ class TicketOut(BaseModel):
     price_snapshot_state: str | None = None  # pending | priced | unpriced | None (legacy)
     # Computed at read time (not stored), so they always reflect current rates and tickets.
     unit_price: Decimal | None = None
-    price_source: str | None = None  # "rate" | "override" | None
+    price_source: str | None = None  # "project_rate" | "rate" | "override" | None
     cost: Decimal | None = None
     duplicates: list[str] = []
     pricing_notes: list[str] = []

@@ -1,8 +1,9 @@
+from datetime import date
 from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,10 +11,11 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
-from ..models import Material, NameAlias, PricingEvent, Supplier, SupplierRate, User, as_utc, utcnow
+from ..models import Batch, Material, NameAlias, PricingEvent, Project, Supplier, SupplierRate, Ticket, User, as_utc, utcnow
 from ..services.accounts import names_by_id
 from ..services import rate_sheet
 from ..services.locks import take_turn
+from ..services import pricing as pricing_svc
 from ..services.pricing import norm
 
 router = APIRouter(prefix="/api")
@@ -33,6 +35,18 @@ class RateIn(BaseModel):
     supplier_id: int
     material_id: int
     unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=4)
+    # Blank: company-wide. Set: this project's agreement, preferred for its tickets.
+    project_id: int | None = Field(default=None, gt=0)
+    # Blank: no start date. Set: applies to deliveries on or after this date.
+    effective_from: date | None = None
+    # Blank: open-ended. Set: the last day the price is valid (a quote's expiry).
+    effective_to: date | None = None
+
+    @model_validator(mode="after")
+    def _ends_after_it_starts(self):
+        if self.effective_from and self.effective_to and self.effective_to < self.effective_from:
+            raise ValueError("The rate's last day is before its first day.")
+        return self
 
 
 class AliasIn(BaseModel):
@@ -48,6 +62,9 @@ class RateOut(BaseModel):
     supplier_id: int
     material_id: int
     unit_price: Decimal
+    project_id: int | None = None
+    effective_from: date | None = None
+    effective_to: date | None = None
 
 
 def _dump(o, *fields):
@@ -62,17 +79,39 @@ def _price(value: Decimal | None) -> str | None:
 
 
 def _event(db: Session, user: User, action: str, *, supplier: str | None = None,
-           material: str | None = None, old: Decimal | None = None, new: Decimal | None = None) -> None:
+           material: str | None = None, old: Decimal | None = None, new: Decimal | None = None,
+           scope: str | None = None) -> None:
     """Record a pricing change in the caller's transaction (rolled back with it)."""
     db.add(PricingEvent(
         organization_id=user.organization_id, actor_user_id=user.id, action=action,
-        supplier_name=supplier, material_name=material, old_value=_price(old), new_value=_price(new),
+        supplier_name=supplier, material_name=material, old_value=_price(old), new_value=_price(new), scope=scope,
     ))
+
+
+def _scope_text(db: Session, project_id: int | None, effective_from: date | None) -> str:
+    """How history names a rate's scope: snapshotted text, readable after a rename."""
+    where = "Company-wide"
+    if project_id is not None:
+        project = db.get(Project, project_id)
+        where = f"Project {project.code} ({project.name})" if project else f"Project #{project_id}"
+    return where + (f", from {effective_from.isoformat()}" if effective_from else "")
+
+
+def _project_or_404(db: Session, organization_id: int, project_id: int | None) -> None:
+    if project_id is not None and db.scalar(select(Project.id).where(
+            Project.id == project_id, Project.organization_id == organization_id)) is None:
+        raise HTTPException(404, "Project not found")
+
+
+def _same_scope(project_id: int | None, effective_from: date | None):
+    return ((SupplierRate.project_id.is_(None) if project_id is None else SupplierRate.project_id == project_id),
+            (SupplierRate.effective_from.is_(None) if effective_from is None else SupplierRate.effective_from == effective_from))
 
 
 def _remove_rates(db: Session, user: User, rates) -> None:
     for r in rates:
-        _event(db, user, "rate_removed", supplier=r.supplier.name, material=r.material.name, old=r.unit_price)
+        _event(db, user, "rate_removed", supplier=r.supplier.name, material=r.material.name, old=r.unit_price,
+               scope=_scope_text(db, r.project_id, r.effective_from))
         db.delete(r)
 
 
@@ -232,8 +271,134 @@ def list_rates(db: Session = Depends(get_db), organization_id: int = Depends(cur
     return db.scalars(select(SupplierRate).where(SupplierRate.organization_id == organization_id)).all()
 
 
+PREVIEW_ROWS = 200
+
+
+EXPIRY_WARNING_DAYS = 30
+
+
+@router.get("/rates/timeline")
+def rates_timeline(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    """Each supplier and material's rates in date order, per scope, with the gaps,
+    overlaps and expiries a person should know about, and how many tickets waiting for
+    approval can't be priced because of them. Explains the rule; never changes a price."""
+    from datetime import timedelta
+    today = date.today()
+    codes = dict(db.execute(select(Project.id, Project.code).where(Project.organization_id == organization_id)).all())
+    rows = db.execute(select(SupplierRate, Supplier.name, Material.name)
+                      .join(Supplier, Supplier.id == SupplierRate.supplier_id).join(Material, Material.id == SupplierRate.material_id)
+                      .where(SupplierRate.organization_id == organization_id)).all()
+    pairs: dict[tuple[str, str], dict] = {}
+    for rate, supplier, material in rows:
+        pair = pairs.setdefault((supplier, material), {"supplier": supplier, "material": material, "scopes": {}})
+        pair["scopes"].setdefault(rate.project_id, []).append(rate)
+    book = pricing_svc.rate_table(db, organization_id)
+    waiting = db.scalars(select(Ticket).where(Ticket.organization_id == organization_id, Ticket.status.in_(("needs_review", "flagged")),
+                                              Ticket.unit_price_override.is_(None)))
+    blocked: dict[tuple[str, str], int] = {}
+    for t in waiting:
+        reason = book.for_ticket(t).reason
+        if reason and "ended on" in reason:
+            key = (norm(t.supplier), norm(t.material_type))
+            blocked[key] = blocked.get(key, 0) + 1
+    out = []
+    for (supplier, material), pair in sorted(pairs.items()):
+        scopes = []
+        for project_id, rates in sorted(pair["scopes"].items(), key=lambda kv: (kv[0] is not None, codes.get(kv[0], ""))):
+            rates.sort(key=lambda r: r.effective_from or date.min)
+            segments, warnings = [], []
+            label = "Company rate" if project_id is None else f"{codes.get(project_id, project_id)} agreement"
+            for n, rate in enumerate(rates):
+                following = rates[n + 1] if n + 1 < len(rates) else None
+                ends = rate.effective_to
+                if following is not None:
+                    day_before = following.effective_from - timedelta(days=1)
+                    if rate.effective_to is not None and rate.effective_to >= following.effective_from:
+                        warnings.append({"kind": "overlap", "text": f"{label}: the rate from {_day(rate.effective_from)} runs to "
+                                         f"{rate.effective_to.isoformat()}, but the next starts {following.effective_from.isoformat()}. "
+                                         "The later one applies from its start."})
+                    if ends is None or ends > day_before:
+                        ends = day_before
+                    elif ends < day_before:
+                        warnings.append({"kind": "gap", "text": f"{label}: no price from {(ends + timedelta(days=1)).isoformat()} "
+                                         f"to {day_before.isoformat()}. Tickets delivered then stay unpriced."})
+                elif rate.effective_to is not None:
+                    fallback = " The company rate is not used instead." if project_id is not None else ""
+                    if rate.effective_to < today:
+                        warnings.append({"kind": "expired", "text": f"{label}: expired {rate.effective_to.isoformat()}. "
+                                         f"Tickets delivered after that stay unpriced until a new rate is set.{fallback}"})
+                    elif rate.effective_to <= today + timedelta(days=EXPIRY_WARNING_DAYS):
+                        warnings.append({"kind": "expiring", "text": f"{label}: expires {rate.effective_to.isoformat()}. "
+                                         f"Ask the supplier for the next quote.{fallback}"})
+                starts = rate.effective_from
+                segments.append({
+                    "rate_id": rate.id, "price": _price(rate.unit_price), "from": starts.isoformat() if starts else None,
+                    "to": ends.isoformat() if ends else None, "declared_to": rate.effective_to.isoformat() if rate.effective_to else None,
+                    "state": "past" if ends is not None and ends < today else "future" if starts is not None and starts > today else "current",
+                })
+            scopes.append({"project_id": project_id, "project": codes.get(project_id), "label": label,
+                           "segments": segments, "warnings": warnings})
+        out.append({"supplier": supplier, "material": material, "scopes": scopes,
+                    "waiting_unpriced": blocked.get((norm(supplier), norm(material)), 0),
+                    "warnings": sum(len(scope["warnings"]) for scope in scopes)})
+    return {"today": today.isoformat(), "pairs": out}
+
+
+def _day(value: date | None) -> str:
+    return value.isoformat() if value else "the start"
+
+
+@router.post("/rates/preview")
+def preview_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    """What saving this rate would do to tickets not yet approved: which would change
+    price, from what to what. Saves nothing. Approved tickets keep their locked price
+    whatever happens, so they're never in this list."""
+    organization_id = user.organization_id
+    supplier = db.scalar(select(Supplier).where(Supplier.id == body.supplier_id, Supplier.organization_id == organization_id))
+    material = db.scalar(select(Material).where(Material.id == body.material_id, Material.organization_id == organization_id))
+    if supplier is None or material is None:
+        raise HTTPException(404, "Supplier or material not found")
+    _project_or_404(db, organization_id, body.project_id)
+    current = pricing_svc.rate_table(db, organization_id)
+    key = (norm(supplier.name), norm(material.name))
+    proposed_rows = [r for r in current.rows.get(key, [])
+                     if not (r.project_id == body.project_id and r.effective_from == body.effective_from)]
+    proposed_rows.append(pricing_svc.RateRow(body.unit_price, body.project_id, body.effective_from, body.effective_to))
+    projects_by_batch = current.projects_by_batch
+    if body.project_id is not None and not projects_by_batch:
+        projects_by_batch = dict(db.execute(select(Batch.id, Batch.project_id).where(Batch.organization_id == organization_id)).all())
+    proposed = pricing_svc.RateBook({**current.rows, key: proposed_rows}, projects_by_batch)
+    current = pricing_svc.RateBook(current.rows, projects_by_batch)
+    tickets = db.scalars(select(Ticket).where(
+        Ticket.organization_id == organization_id, Ticket.status.in_(("needs_review", "flagged")),
+        Ticket.supplier_key == key[0], Ticket.material_key == key[1], Ticket.unit_price_override.is_(None)))
+    codes = dict(db.execute(select(Project.id, Project.code).where(Project.organization_id == organization_id)).all())
+    changed = []
+    for t in tickets:
+        before = current.for_ticket(t).price
+        after = proposed.for_ticket(t).price
+        if before == after:
+            continue
+        changed.append({
+            "ticket_id": t.id, "batch_id": t.batch_id, "ticket_number": t.ticket_number,
+            "delivery_date": t.delivery_date.isoformat() if t.delivery_date else None,
+            "project": codes.get(proposed.project_of(t)), "tons": format(t.tonnage, ".3f") if t.tonnage is not None else None,
+            "price_now": _price(before), "price_after": _price(after),
+            "cost_change": str(pricing_svc.to_cents(t.tonnage * ((after or Decimal(0)) - (before or Decimal(0)))))
+            if t.tonnage is not None and before is not None and after is not None else None,
+        })
+    changed.sort(key=lambda row: (row["delivery_date"] or "", row["ticket_id"]))
+    total = sum((Decimal(row["cost_change"]) for row in changed if row["cost_change"] is not None), Decimal(0))
+    return {"scope": _scope_text(db, body.project_id, body.effective_from), "tickets": len(changed),
+            "newly_priced": sum(1 for row in changed if row["price_now"] is None),
+            "cost_change": str(total), "rows": changed[:PREVIEW_ROWS], "truncated": len(changed) > PREVIEW_ROWS,
+            "note": "Tickets not yet approved only. Approved tickets keep the price they were approved at."}
+
+
 @router.put("/rates", response_model=RateOut)
 def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    """Set the price for one supplier and material in one scope: company-wide or one
+    project, from a date or with no start date. Locked prices are never touched."""
     organization_id = user.organization_id
     supplier = db.scalar(select(Supplier).where(
         Supplier.id == body.supplier_id, Supplier.organization_id == organization_id))
@@ -241,22 +406,40 @@ def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depend
         Material.id == body.material_id, Material.organization_id == organization_id))
     if supplier is None or material is None:
         raise HTTPException(404, "Supplier or material not found")
+    _project_or_404(db, organization_id, body.project_id)
     take_turn(db, "rate", organization_id, body.supplier_id, body.material_id)
     rate = db.scalar(select(SupplierRate).where(
         SupplierRate.supplier_id == body.supplier_id,
         SupplierRate.material_id == body.material_id,
-        SupplierRate.organization_id == organization_id))
+        SupplierRate.organization_id == organization_id,
+        *_same_scope(body.project_id, body.effective_from)))
+    scope = _scope_text(db, body.project_id, body.effective_from)
     if rate:
         if rate.unit_price != body.unit_price:
             _event(db, user, "rate_changed", supplier=supplier.name, material=material.name,
-                   old=rate.unit_price, new=body.unit_price)
+                   old=rate.unit_price, new=body.unit_price, scope=scope)
             rate.unit_price = body.unit_price
+        _set_expiry(db, user, rate, body.effective_to, supplier.name, material.name, scope)
     else:
         rate = SupplierRate(organization_id=organization_id, **body.model_dump())
         db.add(rate)
-        _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=body.unit_price)
+        _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=body.unit_price,
+               scope=scope + (f", until {body.effective_to.isoformat()}" if body.effective_to else ""))
     db.commit()
     return rate
+
+
+def _set_expiry(db: Session, user: User, rate: SupplierRate, effective_to: date | None, supplier: str, material: str, scope: str) -> None:
+    """A quote's expiry changes which tickets it can price, so it's history like a price."""
+    if rate.effective_to == effective_to:
+        return
+    if effective_to is not None and rate.effective_from is not None and effective_to < rate.effective_from:
+        raise HTTPException(422, "The rate's last day is before its first day.")
+    db.add(PricingEvent(organization_id=user.organization_id, actor_user_id=user.id, action="rate_validity_changed",
+                        supplier_name=supplier, material_name=material, scope=scope,
+                        old_value=rate.effective_to.isoformat() if rate.effective_to else "open-ended",
+                        new_value=effective_to.isoformat() if effective_to else "open-ended"))
+    rate.effective_to = effective_to
 
 
 class RateSheetIn(BaseModel):
@@ -264,6 +447,17 @@ class RateSheetIn(BaseModel):
     text: str = Field(min_length=1, max_length=500_000)
     # False previews the plan and saves nothing.
     apply: bool = False
+    # A supplier's quote for one job, from a date: every row of the sheet gets this scope.
+    project_id: int | None = Field(default=None, gt=0)
+    effective_from: date | None = None
+    # The quote's expiry, for every row. Blank: open-ended.
+    effective_to: date | None = None
+
+    @model_validator(mode="after")
+    def _ends_after_it_starts(self):
+        if self.effective_from and self.effective_to and self.effective_to < self.effective_from:
+            raise ValueError("The quote's last day is before its first day.")
+        return self
 
 
 @router.post("/rates/import")
@@ -279,7 +473,10 @@ def import_rate_sheet(body: RateSheetIn, db: Session = Depends(get_db), user: Us
         raise HTTPException(422, str(exc)) from None
     suppliers = {norm(s.name): s for s in db.scalars(select(Supplier).where(Supplier.organization_id == organization_id))}
     materials = {norm(m.name): m for m in db.scalars(select(Material).where(Material.organization_id == organization_id))}
-    existing = {(r.supplier_id, r.material_id): r for r in db.scalars(select(SupplierRate).where(SupplierRate.organization_id == organization_id))}
+    _project_or_404(db, organization_id, body.project_id)
+    existing = {(r.supplier_id, r.material_id): r for r in db.scalars(select(SupplierRate).where(
+        SupplierRate.organization_id == organization_id, *_same_scope(body.project_id, body.effective_from)))}
+    scope = _scope_text(db, body.project_id, body.effective_from)
     problems = []
     seen_pairs: dict[tuple[str, str], int] = {}
     for row in rows:
@@ -303,14 +500,15 @@ def import_rate_sheet(body: RateSheetIn, db: Session = Depends(get_db), user: Us
         if material is None:
             new_materials.setdefault(norm(row.material), row.material)
         rate = existing.get((supplier.id, material.id)) if supplier and material else None
-        action = "add" if rate is None else "unchanged" if rate.unit_price == row.price else "change"
+        # A different expiry is a change too: pasting a sheet with none would end an expiry.
+        action = "add" if rate is None else "unchanged" if rate.unit_price == row.price and rate.effective_to == body.effective_to else "change"
         plan.append({"line": row.line, "supplier": supplier.name if supplier else row.supplier,
                      "material": material.name if material else row.material, "price": str(row.price),
                      "old_price": str(rate.unit_price) if rate else None, "action": action,
                      "new_supplier": supplier is None, "new_material": material is None})
     summary = {"plan": plan, "new_suppliers": sorted(new_suppliers.values()), "new_materials": sorted(new_materials.values()),
                "adds": sum(p["action"] == "add" for p in plan), "changes": sum(p["action"] == "change" for p in plan),
-               "unchanged": sum(p["action"] == "unchanged" for p in plan), "applied": False}
+               "unchanged": sum(p["action"] == "unchanged" for p in plan), "applied": False, "scope": scope}
     if not body.apply:
         return summary
 
@@ -327,11 +525,15 @@ def import_rate_sheet(body: RateSheetIn, db: Session = Depends(get_db), user: Us
         supplier, material = suppliers[norm(row.supplier)], materials[norm(row.material)]
         rate = existing.get((supplier.id, material.id))
         if rate is None:
-            db.add(SupplierRate(organization_id=organization_id, supplier_id=supplier.id, material_id=material.id, unit_price=row.price))
-            _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=row.price)
-        elif rate.unit_price != row.price:
-            _event(db, user, "rate_changed", supplier=supplier.name, material=material.name, old=rate.unit_price, new=row.price)
-            rate.unit_price = row.price
+            db.add(SupplierRate(organization_id=organization_id, supplier_id=supplier.id, material_id=material.id, unit_price=row.price,
+                                project_id=body.project_id, effective_from=body.effective_from, effective_to=body.effective_to))
+            _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=row.price,
+                   scope=scope + (f", until {body.effective_to.isoformat()}" if body.effective_to else ""))
+        else:
+            if rate.unit_price != row.price:
+                _event(db, user, "rate_changed", supplier=supplier.name, material=material.name, old=rate.unit_price, new=row.price, scope=scope)
+                rate.unit_price = row.price
+            _set_expiry(db, user, rate, body.effective_to, supplier.name, material.name, scope)
     db.commit()
     return {**summary, "applied": True}
 
@@ -362,7 +564,7 @@ def pricing_history(db: Session = Depends(get_db), organization_id: int = Depend
     ).all()
     return [
         {"id": e.id, "action": e.action, "supplier": e.supplier_name, "material": e.material_name,
-         "old": e.old_value, "new": e.new_value, "at": as_utc(e.created_at),
+         "old": e.old_value, "new": e.new_value, "scope": e.scope, "at": as_utc(e.created_at),
          "actor": people.get(e.actor_user_id) if e.actor_user_id else None}
         for e in events
     ]

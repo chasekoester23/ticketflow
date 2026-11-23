@@ -26,6 +26,7 @@ import { useAccount } from "../account-context";
 import { Dialog } from "../Dialog";
 import { BatchQueue } from "./BatchQueue";
 import { ActionFailure, ReviewForm, STATUS_LABEL, previousValues } from "./ReviewForm";
+import { withTicketStates } from "./manifestState";
 import { ScanCheck } from "./ScanCheck";
 import { ScanViewer, zoomIn, zoomOut } from "./ScanViewer";
 import { QueueFilter, TicketQueue, pendingStatus } from "./TicketQueue";
@@ -171,8 +172,19 @@ export default function Home() {
   // step with them. A stale count here would defeat its purpose.
   const batchId = batch?.id;
   const ticketStates = useMemo(() => statesOf(tickets), [tickets]);
+  const manifestNow = useRef<Manifest | null>(null);
+  manifestNow.current = manifest;
   useEffect(() => {
     if (batchId === undefined || !ticketStates || manifestStates.current === ticketStates) return;
+    // An approval or flag only moves a ticket between statuses the scan check counts: bring
+    // it up to date here, exactly as the server would, rather than reloading every slot of
+    // the batch after each ticket. Anything that could change its warnings goes to the server.
+    const local = manifestNow.current && withTicketStates(manifestNow.current, shownRef.current.tickets);
+    if (local) {
+      manifestStates.current = ticketStates;
+      setManifest(local);
+      return;
+    }
     // A brief pause, so someone working quickly through a stack doesn't reload it per ticket.
     const timer = setTimeout(() => {
       manifestStates.current = ticketStates;

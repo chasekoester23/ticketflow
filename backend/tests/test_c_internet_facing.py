@@ -272,7 +272,8 @@ def test_liveness_answers_without_the_database_and_says_nothing_else(client):
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_metrics_report_errors_reachability_queue_and_backups(client, monkeypatch):
+def test_metrics_report_errors_reachability_queue_and_backups(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "backup_dir", tmp_path)  # not the developer's own backups folder
     before = system_health.request_counts()
     with monkeypatch.context() as patch:
         patch.setattr(system_health, "build", _explode)

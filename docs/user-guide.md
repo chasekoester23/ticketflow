@@ -19,8 +19,17 @@ costs and invoice comparisons.
    - **Viewer**: reads everything and changes nothing.
 4. Create a **Project** for each job, using the job number your team already uses.
 5. Under **Suppliers & rates**, add each supplier and material, spelled the way your tickets
-   spell them, and the price per ton. An approved ticket locks the rate in force when it's
-   approved, so later rate changes don't alter it.
+   spell them, and the price per ton. A rate can apply to all projects or to one project
+   (a supplier's quote for that job), and can start on a date (a price change). Each ticket
+   is priced by its project's quote if there is one, otherwise the company rate, using the
+   latest rate that started on or before its delivery date. A rate can also have a last day
+   (a quote's expiry): after it, and until the next rate starts, tickets stay unpriced with
+   the reason shown, and an expired project agreement never falls back to the company rate.
+   The **Pricing timeline** shows each price's dates and warns about gaps, overlaps and
+   expiring quotes; **Preview effect** shows which waiting tickets a new rate would reprice.
+   To load a quote, paste the sheet and choose the project, start date and expiry. An approved ticket locks its price, and the review
+   screen and export say whether it came from a project agreement, the company rate or a
+   manual override. Later rate changes never alter an approved ticket.
 
 ## 2. Upload scanned tickets
 
@@ -30,6 +39,13 @@ tickets are entered:
 - **Manual entry**: blank fields beside each scan. No AI is involved.
 - **AI extraction**: fills the fields from the scan if your server has a provider key. Every
   value still needs checking.
+
+Phone photos work as well as scans: JPG, PNG, or a photo saved as a PDF. Large photos are
+reduced to fit, and a photo taken sideways is turned upright. Photograph one ticket per photo
+and choose **One ticket per page**: nothing can be cut off. Four tickets in one photo are split
+into fixed quarters, which works from a scanner but often cuts the edge of a ticket when a
+photo isn't taken square-on. If you do, lay them flat, one per quarter, and check each crop. iPhone HEIC photos aren't
+read yet: export them as JPEG, or set the iPhone's Camera > Formats to Most Compatible.
 
 Enter how many paper tickets you scanned if you can. The **scan check** compares that count
 with the tickets found, and shows every slot on every page. Faint slots ask a person whether

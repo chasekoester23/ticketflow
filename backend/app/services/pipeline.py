@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import Batch, Ticket, UploadedFile
+from ..models import Batch, Material, Supplier, Ticket, UploadedFile, normal_name
 from . import scan_manifest, splitter, storage, usage
 from .extraction import ExtractionError, Extractor
 from .validation import compute_flags, parse_date, parse_tonnage
@@ -44,7 +44,8 @@ def pages_for(file: UploadedFile, data: bytes):
             max_page_pixels=settings.max_rendered_page_pixels,
             max_total_pixels=settings.max_total_pdf_pixels,
         )
-    return [splitter.load_image(data, max_pixels=settings.max_image_pixels)]
+    return [splitter.load_image(data, max_pixels=settings.max_image_pixels,
+                                max_source_pixels=settings.max_source_image_pixels)]
 
 
 def set_blank_fields(ticket: Ticket) -> None:
@@ -69,13 +70,35 @@ def _values(ticket: Ticket) -> tuple:
     return tuple(getattr(ticket, name) for name in FIELDS)
 
 
-def apply_extraction(ticket: Ticket, extracted, raw: dict) -> None:
+def catalog_spellings(db: Session, organization_id: int | None) -> dict[str, dict[str, str]]:
+    """{kind: {normalized name: catalog name}} for one company. A normalized form two
+    catalog names share is left out, so it never picks between them."""
+    spellings: dict[str, dict[str, str]] = {}
+    for kind, model in (("supplier", Supplier), ("material", Material)):
+        found: dict[str, set[str]] = {}
+        for name in db.scalars(select(model.name).where(model.organization_id == organization_id)):
+            found.setdefault(normal_name(name), set()).add(name)
+        spellings[kind] = {key: next(iter(names)) for key, names in found.items() if len(names) == 1}
+    return spellings
+
+
+def _catalog_spelling(value: str | None, known: dict[str, str]) -> str | None:
+    """The catalog's spelling of a name that differs only by case, spacing or punctuation."""
+    if not value:
+        return value
+    return known.get(normal_name(value), value)
+
+
+def apply_extraction(ticket: Ticket, extracted, raw: dict, catalog: dict[str, dict[str, str]] | None = None) -> None:
+    """``catalog`` (from catalog_spellings) adopts the company's own spelling of a name the
+    reader wrote differently, e.g. "WABASH RIDGE AGGREGATES". ``raw`` keeps what was read."""
+    catalog = catalog or {}
     ticket.raw_extraction = raw
     ticket.ticket_number = extracted.ticket_number
     ticket.delivery_date = parse_date(extracted.delivery_date)
-    ticket.material_type = extracted.material_type
+    ticket.material_type = _catalog_spelling(extracted.material_type, catalog.get("material", {}))
     ticket.tonnage = parse_tonnage(extracted.tonnage)
-    ticket.supplier = extracted.supplier
+    ticket.supplier = _catalog_spelling(extracted.supplier, catalog.get("supplier", {}))
     ticket.job_location = extracted.job_location
     ticket.flags = compute_flags(
         ticket_number=ticket.ticket_number, delivery_date=ticket.delivery_date,
@@ -130,6 +153,8 @@ class _Reader:
         # Wide enough that one slow ticket at the front doesn't leave the other threads idle.
         self.window = max(1, workers * 4)
         self.queue: deque[_Job] = deque()
+        # Catalog spellings per company, read once per batch rather than once per ticket.
+        self.catalogs: dict[int | None, dict[str, dict[str, str]]] = {}
 
     def submit(self, state: _FileState, key, ticket: Ticket, is_new: bool, image) -> None:
         if self.extractor is None:
@@ -222,7 +247,10 @@ class _Reader:
             job.state.any_failure = True
         else:
             extracted, raw = result
-            apply_extraction(ticket, extracted, raw)
+            organization_id = self.db.scalar(select(Batch.organization_id).where(Batch.id == job.state.batch_id))
+            if organization_id not in self.catalogs:
+                self.catalogs[organization_id] = catalog_spellings(self.db, organization_id)
+            apply_extraction(ticket, extracted, raw, self.catalogs[organization_id])
         self.db.add(ticket)
         self.db.flush()
         self._record_usage(job, result, ticket.id)

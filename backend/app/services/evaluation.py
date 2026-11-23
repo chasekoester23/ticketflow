@@ -148,17 +148,17 @@ def load_crop(row: dict[str, Any]) -> Image.Image:
                     raise DatasetError("Password-protected PDF in evaluation dataset")
                 if row["page"] > len(document):
                     raise DatasetError("Referenced PDF page does not exist")
-                pix = document.load_page(row["page"] - 1).get_pixmap(
-                    dpi=settings.render_dpi, alpha=False,
-                )
-                image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                # Exactly as the worker renders it, so scores describe what production reads.
+                image = splitter.render_page(document.load_page(row["page"] - 1), settings.render_dpi,
+                                             settings.max_rendered_page_pixels)
         except DatasetError:
             raise
         except Exception as exc:
             raise DatasetError(f"Could not render dataset PDF: {type(exc).__name__}") from exc
     else:
         try:
-            image = splitter.load_image(source.read_bytes())
+            image = splitter.load_image(source.read_bytes(), max_pixels=settings.max_image_pixels,
+                                         max_source_pixels=settings.max_source_image_pixels)
         except (splitter.PdfError, OSError) as exc:
             raise DatasetError(f"Could not read evaluation image: {type(exc).__name__}") from exc
     crops = splitter.split_page(image, row["layout"])

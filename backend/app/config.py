@@ -64,7 +64,10 @@ class Settings(BaseSettings):
     max_pdf_pages: int = 20
     max_rendered_page_pixels: int = 14_000_000
     max_total_pdf_pixels: int = 70_000_000
+    # Photos and pages larger than this are reduced to fit, not refused.
     max_image_pixels: int = 14_000_000
+    # A photo above this is refused from its header before decoding (a 48 MP phone photo fits).
+    max_source_image_pixels: int = 50_000_000
     render_dpi: int = 200
     # How many times one job may take the worker down before it's set aside for a person.
     max_job_attempts: int = Field(default=3, ge=1)

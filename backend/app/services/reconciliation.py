@@ -30,8 +30,14 @@ def _unbilled(organization_id: int, project_id: int):
     """Approved deliveries in this project that no invoice line lists or covers, and that
     no person has linked to a line."""
     in_project = select(Batch.id).where(Batch.organization_id == organization_id, Batch.project_id == project_id)
+    return and_(Ticket.batch_id.in_(in_project), _not_billed(organization_id, project_id))
+
+
+def _not_billed(organization_id: int, project):
+    """The unbilled rule for a project given as an id, or as Batch.project_id in a query
+    joined to batches (every project at once)."""
     covered = select(InvoiceComparison.id).where(
-        InvoiceComparison.organization_id == organization_id, InvoiceComparison.project_id == project_id,
+        InvoiceComparison.organization_id == organization_id, InvoiceComparison.project_id == project,
         InvoiceComparison.supplier_key == Ticket.supplier_key, InvoiceComparison.material_key == Ticket.material_key,
         InvoiceComparison.date_from <= Ticket.delivery_date, InvoiceComparison.date_to >= Ticket.delivery_date).exists()
     # Listed by number on any line from this supplier, whatever its project or dates: that
@@ -40,7 +46,7 @@ def _unbilled(organization_id: int, project_id: int):
         InvoiceComparison.organization_id == organization_id, InvoiceComparison.supplier_key == Ticket.supplier_key,
         InvoiceTicketRef.ticket_key == Ticket.number_key).exists()
     linked = select(InvoiceTicketLink.id).where(InvoiceTicketLink.ticket_id == Ticket.id, InvoiceTicketLink.released_at.is_(None)).exists()
-    return and_(Ticket.organization_id == organization_id, Ticket.batch_id.in_(in_project), aggregates.COUNTED, ~covered, ~listed, ~linked)
+    return and_(Ticket.organization_id == organization_id, aggregates.COUNTED, ~covered, ~listed, ~linked)
 
 
 _ROW_COLUMNS = (Ticket.id, Ticket.batch_id, Ticket.ticket_number, Ticket.delivery_date, Ticket.supplier, Ticket.material_type,
@@ -100,6 +106,31 @@ def _gaps(db: Session, organization_id: int, project_id: int, condition) -> list
             InvoiceComparison.supplier_key, InvoiceComparison.material_key, InvoiceComparison.date_from, InvoiceComparison.date_to).where(
             InvoiceComparison.organization_id == organization_id, InvoiceComparison.project_id == project_id)):
         windows.setdefault((supplier_key, material_key), []).append((start, end))
+    return _runs(days, windows)
+
+
+def unbilled_gaps_by_project(db: Session, organization_id: int) -> dict[int, list[dict]]:
+    """unbilled_gaps for every project, read in one pass over the company's tickets instead
+    of one pass per project. Same rule, same runs."""
+    days = db.execute(select(Batch.project_id, Ticket.supplier_key, Ticket.material_key, Ticket.delivery_date,
+                             func.min(Ticket.supplier).label("supplier"), func.min(Ticket.material_type).label("material"),
+                             func.count().label("tickets"), aggregates.exact_sum(Ticket.tonnage, 3).label("tons"))
+                      .join(Batch, Batch.id == Ticket.batch_id)
+                      .where(Batch.organization_id == organization_id, Batch.project_id.is_not(None),
+                             _not_billed(organization_id, Batch.project_id), Ticket.delivery_date.is_not(None))
+                      .group_by(Batch.project_id, Ticket.supplier_key, Ticket.material_key, Ticket.delivery_date)).all()
+    windows: dict[int, dict[tuple, list[tuple[date, date]]]] = {}
+    for project_id, supplier_key, material_key, start, end in db.execute(select(
+            InvoiceComparison.project_id, InvoiceComparison.supplier_key, InvoiceComparison.material_key,
+            InvoiceComparison.date_from, InvoiceComparison.date_to).where(InvoiceComparison.organization_id == organization_id)):
+        windows.setdefault(project_id, {}).setdefault((supplier_key, material_key), []).append((start, end))
+    by_project: dict[int, list] = {}
+    for day in days:
+        by_project.setdefault(day.project_id, []).append(day)
+    return {project_id: _runs(entries, windows.get(project_id, {})) for project_id, entries in by_project.items()}
+
+
+def _runs(days, windows: dict[tuple, list[tuple[date, date]]]) -> list[dict]:
     by_scope: dict[tuple, list] = {}
     for day in days:
         by_scope.setdefault((day.supplier_key, day.material_key), []).append(day)

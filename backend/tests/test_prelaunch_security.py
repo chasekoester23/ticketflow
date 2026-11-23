@@ -75,7 +75,18 @@ def test_pdf_page_limit_fails_visibly_without_creating_tickets(client, monkeypat
     assert client.get(f"/api/batches/{bid}/tickets").json() == []
 
 
-def test_oversized_pdf_dimensions_rejected_before_rasterization(client):
+def test_oversized_pdf_page_is_rendered_within_the_pixel_limit(client, monkeypatch):
+    """A 139-inch page would be 772 MP at 200 dpi. It is rendered to fit the limit
+    instead (sized before allocating), and a blank page still yields no tickets."""
+    rendered = []
+    real = pymupdf.Page.get_pixmap
+
+    def spy(page, *args, **kwargs):
+        pix = real(page, *args, **kwargs)
+        rendered.append(pix.width * pix.height)
+        return pix
+
+    monkeypatch.setattr(pymupdf.Page, "get_pixmap", spy)
     with pymupdf.open() as document:
         document.new_page(width=10000, height=10000)
         pdf = document.tobytes()
@@ -83,21 +94,24 @@ def test_oversized_pdf_dimensions_rejected_before_rasterization(client):
     assert result.status_code == 200
     bid = result.json()["id"]
     batch = client.get(f"/api/batches/{bid}").json()
-    assert batch["status"] == "failed"
-    assert "too large to render safely" in batch["files"][0]["error"]
+    assert rendered and max(rendered) <= settings.max_rendered_page_pixels
+    assert batch["status"] == "failed"  # blank: nothing to review, said plainly
     assert client.get(f"/api/batches/{bid}/tickets").json() == []
 
 
 def test_compressed_image_dimensions_rejected_before_decode(client, monkeypatch):
-    monkeypatch.setattr(settings, "max_image_pixels", 2000)
+    monkeypatch.setattr(settings, "max_source_image_pixels", 2000)
     image = io.BytesIO()
     Image.new("RGB", (80, 40), "white").save(image, format="PNG")
+    decoded = []
+    monkeypatch.setattr(Image.Image, "load", lambda self: decoded.append(self.size))
     result = upload(client, "large.png", image.getvalue(), layout="single")
     assert result.status_code == 200
     bid = result.json()["id"]
     batch = client.get(f"/api/batches/{bid}").json()
     assert batch["status"] == "failed"
     assert "Image dimensions are too large" in batch["files"][0]["error"]
+    assert (80, 40) not in decoded  # refused from the header, never decoded
 
 
 def test_new_scans_and_crops_are_private_on_disk(client):

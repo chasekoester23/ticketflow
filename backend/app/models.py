@@ -118,16 +118,42 @@ class Material(Base):
     unit: Mapped[str] = mapped_column(String(20), default="ton")
 
 
+_COMPANY, _PROJECT = "project_id IS NULL", "project_id IS NOT NULL"
+_UNDATED, _DATED = "effective_from IS NULL", "effective_from IS NOT NULL"
+
+
+def _rate_scope_index(name: str, columns: tuple[str, ...], where: str) -> Index:
+    return Index(name, "organization_id", "supplier_id", "material_id", *columns, unique=True,
+                 sqlite_where=text(where), postgresql_where=text(where))
+
+
 class SupplierRate(Base):
-    """Tenant-scoped price per supplier+material. Historical snapshots stay immutable."""
+    """A price for one supplier and material, company-wide or for one project
+    (``project_id``), from a date or with no start date (``effective_from``).
+
+    A ticket takes its project's agreement over the company rate, and within
+    one scope the latest rate starting on or before its delivery date. Prices
+    locked into approved tickets never change with these rows.
+    """
     __tablename__ = "supplier_rates"
-    # Two rows for one pair would make the price locked at approval arbitrary.
-    __table_args__ = (Index("uq_supplier_rate", "organization_id", "supplier_id", "material_id", unique=True),)
+    # One row per scope and start date, or the price locked at approval would be
+    # arbitrary. Blank scopes and dates need their own partial indexes, since a
+    # plain unique index treats every blank as different.
+    __table_args__ = (
+        _rate_scope_index("uq_supplier_rate", (), f"{_COMPANY} AND {_UNDATED}"),
+        _rate_scope_index("uq_supplier_rate_dated", ("effective_from",), f"{_COMPANY} AND {_DATED}"),
+        _rate_scope_index("uq_supplier_rate_project", ("project_id",), f"{_PROJECT} AND {_UNDATED}"),
+        _rate_scope_index("uq_supplier_rate_project_dated", ("project_id", "effective_from"), f"{_PROJECT} AND {_DATED}"),
+    )
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     id: Mapped[int] = mapped_column(primary_key=True)
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id", ondelete="CASCADE"))
     material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 4))
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Last day the price is valid (a quote's expiry). Blank: open-ended.
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     supplier: Mapped[Supplier] = relationship()
     material: Mapped[Material] = relationship()
 
@@ -171,11 +197,13 @@ class PricingEvent(Base):
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
     actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     # supplier_added | supplier_removed | material_added | material_removed |
-    # rate_set | rate_changed | rate_removed
+    # rate_set | rate_changed | rate_validity_changed | rate_removed
     action: Mapped[str] = mapped_column(String(40), nullable=False)
     supplier_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     material_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     old_value: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Which rate a rate_* event is about: "Company-wide", or a project and start date.
+    scope: Mapped[str | None] = mapped_column(String(240), nullable=True)
     new_value: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
@@ -611,3 +639,43 @@ class InvoiceComparisonEvent(Base):
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ExceptionReview(Base):
+    """A person's handling of one billing exception: who owns it, where it stands, and
+    any credit the supplier has confirmed. The exception itself is never stored: it is
+    recomputed from invoices, tickets and rates, and found again by its key. Nothing
+    here changes an invoice line, a ticket or a locked price.
+    """
+    __tablename__ = "exception_reviews"
+    __table_args__ = (Index("uq_exception_review_key", "organization_id", "key", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(200), nullable=False)
+    # open | investigating | disputed | recovered | resolved | dismissed
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
+    assignee_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # Credit the supplier confirmed, as a person recorded it. Never computed.
+    recovered_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # What the exception said when a person last acted on it, kept for the record.
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    # Its figures at that moment. If they change after it was closed, it needs a person again.
+    basis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class ExceptionEvent(Base):
+    """Append-only history of every action on a billing exception."""
+    __tablename__ = "exception_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # status | assignee | recovered_amount | note
+    field: Mapped[str] = mapped_column(String(40), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

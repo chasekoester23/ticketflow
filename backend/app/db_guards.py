@@ -15,7 +15,7 @@ from sqlalchemy import event
 from .db import Base
 
 HISTORY_TABLES = ("audit_events", "pricing_events", "account_events", "scan_events",
-                  "invoice_comparison_events", "invoice_document_events")
+                  "invoice_comparison_events", "invoice_document_events", "exception_events")
 APPEND_ONLY = "This history is append-only."
 LOCKED = "Approved tons and locked prices can only change by withdrawing the approval."
 
