@@ -34,6 +34,7 @@ PROJECTS = 20
 
 READS = [
     ("One batch's tickets", "/api/batches/1/tickets"),
+    ("One batch's scan check", "/api/batches/1/manifest"),
     ("Uploads list", "/api/batches/queue"),
     ("Dashboard", "/api/dashboard"),
     ("Register, first page", "/api/records/search?page_size=50"),
