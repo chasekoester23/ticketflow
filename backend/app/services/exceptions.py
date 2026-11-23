@@ -145,11 +145,9 @@ def detect(db: Session, organization_id: int, items: list[InvoiceComparison], li
             project_id=group[0].project_id if len({g.project_id for g in group}) == 1 else None,
             supplier=group[0].supplier_name, material=group[0].material_name,
             invoice_numbers=sorted({g.invoice_number for g in group}), line_ids=pattern["line_ids"]))
-    for project in db.query(Project).filter(Project.organization_id == organization_id):
-        report = reconciliation.unbilled(db, organization_id, project)
-        if not report["total_tickets"]:
-            continue
-        for gap in report["gaps"]:
+    gaps = reconciliation.unbilled_gaps_by_project(db, organization_id)
+    for project in db.query(Project).filter(Project.organization_id == organization_id, Project.id.in_(list(gaps))):
+        for gap in gaps[project.id]:
             found.append(Detected(
                 key=f"U:{project.id}:{gap['supplier']}:{gap['material']}:{gap['date_from']}", category="not_invoiced",
                 severity="low",

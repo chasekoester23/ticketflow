@@ -167,3 +167,15 @@ def test_the_history_is_append_only_in_the_database(client, scenario):
         event.new_value = "dismissed"
         with pytest.raises(sqlalchemy.exc.DatabaseError):
             db.commit()
+
+
+def test_the_one_pass_unbilled_gaps_match_the_per_project_report(client, scenario):
+    from app.models import Project
+    from app.routers import api as api_module
+    from app.services import reconciliation
+
+    client.post("/api/projects", json={"code": "P2", "name": "Fictional P2"})  # a project with nothing unbilled
+    with api_module.SessionLocal() as db:
+        together = reconciliation.unbilled_gaps_by_project(db, 1)
+        one_by_one = {p.id: reconciliation.unbilled(db, 1, p)["gaps"] for p in db.query(Project).filter(Project.organization_id == 1)}
+    assert together == {k: v for k, v in one_by_one.items() if v} and together  # the scenario has one unbilled run

@@ -45,6 +45,8 @@ READS = [
     ("Name variants", "/api/records/name-variants?field=supplier"),
     ("Invoice list, 20 lines", "/api/invoice-comparisons"),
     ("Invoice overview", "/api/invoice-comparisons/overview"),
+    ("Invoice exceptions", "/api/exceptions"),
+    ("Invoice exceptions CSV", "/api/exceptions.csv?status=all"),
     ("Project report", "/api/reports/project/1"),
     ("Pilot report", "/api/reports/pilot"),
     ("CSV export, one project", "/api/records/export.csv?project_id=1"),
