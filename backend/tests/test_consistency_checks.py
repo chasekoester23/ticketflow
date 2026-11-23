@@ -82,3 +82,34 @@ def test_an_hourly_ticket_says_so_instead_of_tonnage_missing():
     ticket = SimpleNamespace(flags=[], tonnage=None)
     pipeline.apply_extraction(ticket, ExtractedTicket.model_validate({"tonnage": "22.41"}), {"tonnage": "22.41", "hours": None})
     assert not any("Hourly" in flag for flag in ticket.flags)
+
+
+def test_catalog_spelling_is_adopted_only_for_an_exact_normalized_match():
+    catalog = {"supplier": {"wabash ridge aggregates": "Wabash Ridge Aggregates"}, "material": {"8 stone": "#8 Stone"}}
+    ticket = SimpleNamespace()
+    raw = {"supplier": "WABASH RIDGE AGGREGATES", "material_type": "# 8 stone"}
+    pipeline.apply_extraction(ticket, ExtractedTicket.model_validate({**raw, "tonnage": "22.10"}), raw, catalog)
+    assert (ticket.supplier, ticket.material_type) == ("Wabash Ridge Aggregates", "#8 Stone")
+    assert ticket.raw_extraction == raw  # what was read is kept as read
+    other = {"supplier": "Wabash Ridge Aggregate Co", "material_type": "#57 Stone"}
+    pipeline.apply_extraction(ticket, ExtractedTicket.model_validate(other), other, catalog)
+    assert (ticket.supplier, ticket.material_type) == ("Wabash Ridge Aggregate Co", "#57 Stone")  # never fuzzy
+
+
+def test_uploaded_tickets_take_the_companys_spelling_and_show_what_was_read(client, monkeypatch):
+    from app.routers import api as api_module
+    from .conftest import FixtureExtractor
+
+    client.post("/api/suppliers", json={"name": "Example Aggregates"})
+    client.post("/api/materials", json={"name": "No. 8 Stone"})
+    truths = [dict(ticket_number="1", delivery_date="2026-10-15", material_type="NO 8 STONE", tonnage="22.10",
+                   supplier="EXAMPLE AGGREGATES", job_location="Project A"),
+              dict(ticket_number="2", delivery_date="2026-10-15", material_type="Sand", tonnage="19.75",
+                   supplier="Sample Materials", job_location="Project A")]
+    monkeypatch.setattr(api_module, "get_extractor", lambda: FixtureExtractor(truths))
+    batch = client.post("/api/batches", data={"layout": "grid_2x2"},
+                        files=[("files", ("scan.pdf", make_scan_pdf(), "application/pdf"))]).json()
+    first, second = client.get(f"/api/batches/{batch['id']}/tickets").json()[:2]
+    assert (first["supplier"], first["material_type"]) == ("Example Aggregates", "No. 8 Stone")
+    assert first["as_read"]["supplier"] == "EXAMPLE AGGREGATES"
+    assert (second["supplier"], second["material_type"]) == ("Sample Materials", "Sand")  # not in the catalog: as read
