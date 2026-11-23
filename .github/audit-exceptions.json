@@ -1,0 +1,13 @@
+{
+  "_doc": "Known findings the scans may report without failing. Each needs a reason and a date to look again. See docs/security/dependency-scanning.md.",
+  "python": {},
+  "npm": {
+    "GHSA-6g55-p6wh-862q": {"package": "postcss (inside next)", "review_by": "2027-01-31",
+      "reason": "Next 15 bundles postcss 8.4.31. It runs only at build time, on our own CSS, never on anything a visitor sends. Fixed by Next 16, a major upgrade planned separately."},
+    "GHSA-r28c-9q8g-f849": {"package": "postcss (inside next)", "review_by": "2027-01-31",
+      "reason": "Same build-time postcss inside Next 15: source-map auto-loading on CSS we write ourselves. Fixed by Next 16."}
+  },
+  "bandit": {
+    "_policy": "High severity fails the build. Medium and low are reported as warnings; the accepted ones are listed in docs/security/dependency-scanning.md."
+  }
+}

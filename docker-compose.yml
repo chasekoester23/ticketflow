@@ -1,0 +1,128 @@
+# A production-like TicketFlow stack on one machine: PostgreSQL 16, a private S3-compatible
+# store (MinIO, standing in for Cloudflare R2), migrations, the API, the worker and the
+# frontend, which proxies /api/... to the API so the browser only sees one origin.
+#
+#   docker compose up --build            then open http://127.0.0.1:3301
+#
+# Every credential below is a local placeholder for this throwaway stack only. Nothing
+# is published beyond 127.0.0.1. The worker reads with Gemini, so without GEMINI_API_KEY
+# uploads that need reading fail visibly; manual intake works. CI runs this same file with
+# deploy/smoke/docker-compose.smoke.yml, which swaps in a stand-in reader.
+#
+# It runs in development mode because it's plain HTTP. Production settings are checked
+# separately (docs/deploy/*.env.example, .github/workflows/deploy-validation.yml).
+name: ticketflow-local
+
+x-backend-env: &backend-env
+  TICKETFLOW_ENV: development
+  DATABASE_URL: postgresql+psycopg://ticketflow:local-only-password@postgres:5432/ticketflow
+  STORAGE_BACKEND: s3
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_BUCKET: ticketflow-local
+  S3_ACCESS_KEY_ID: ticketflow-app
+  S3_SECRET_ACCESS_KEY: local-only-app-secret
+  S3_REGION: us-east-1
+  S3_PREFIX: local
+  # The frontend's proxy reaches the API as "api". The healthcheck asks as the first entry.
+  TRUSTED_HOSTS: '["api","localhost","127.0.0.1"]'
+  # The browser's origin. Checked against Origin on every state change (CSRF), not for CORS.
+  CORS_ORIGINS: '["http://127.0.0.1:3301","http://localhost:3301"]'
+  SESSION_SECURE_COOKIE: "false"
+  EXTRACTION_PROVIDER: gemini
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  HOST: 0.0.0.0
+  PORT: "8080"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ticketflow
+      POSTGRES_PASSWORD: local-only-password
+      POSTGRES_DB: ticketflow
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticketflow -d ticketflow"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    # MinIO no longer publishes images on Docker Hub. Chainguard's build, pinned by digest
+    # (2026-11-09). Its user can't write to a fresh named volume, so it runs as root here:
+    # this is a local stand-in for R2, never deployed.
+    image: chainguard/minio@sha256:fb893e36fc369d41e92f678b17ec27378fa5bf0576aeef7ac15460c13629ab5a
+    user: "0:0"
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      # Local placeholders. In R2 the app gets its own token, limited to one bucket.
+      MINIO_ROOT_USER: ticketflow-app
+      MINIO_ROOT_PASSWORD: local-only-app-secret
+    volumes: [minio-data:/data]
+    ports: ["127.0.0.1:9301:9000"]
+
+  # Makes the private bucket, as you would once in the R2 dashboard. Waits for MinIO.
+  storage-init:
+    image: ticketflow-backend:local
+    build: ./backend
+    depends_on: [minio]
+    environment: *backend-env
+    volumes: ["./deploy/minio:/init:ro"]
+    command: ["python", "/init/init_bucket.py"]
+    restart: "no"
+    healthcheck:
+      disable: true
+
+  # The same step Railway runs before each API deploy.
+  migrate:
+    image: ticketflow-backend:local
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment: *backend-env
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    healthcheck:
+      disable: true
+
+  api:
+    image: ticketflow-backend:local
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      storage-init: {condition: service_completed_successfully}
+    environment: *backend-env
+    command: ["sh", "docker/start-api.sh"]
+    volumes: [api-var:/app/var]
+    healthcheck:
+      test: ["CMD", "python", "docker/healthcheck.py"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  worker:
+    image: ticketflow-backend:local
+    depends_on:
+      api: {condition: service_healthy}
+    environment: *backend-env
+    command: ["python", "scripts/run_worker.py"]
+    volumes: [worker-var:/app/var]
+    healthcheck:
+      disable: true
+
+  web:
+    image: ticketflow-frontend:local
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ""
+    depends_on:
+      api: {condition: service_healthy}
+    environment:
+      API_INTERNAL_URL: http://api:8080
+      PORT: "3000"
+    ports: ["127.0.0.1:3301:3000"]
+
+volumes:
+  postgres-data:
+  minio-data:
+  api-var:
+  worker-var:

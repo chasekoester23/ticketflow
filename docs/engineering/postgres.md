@@ -88,6 +88,51 @@ Stored documents aren't copied, because they aren't in the database. Point `STOR
 
 **Not tested:** a real database, a large one, or the time a large copy takes. Rehearse on a copy of the real data before relying on it.
 
+## Connections
+
+| Setting | Default | Notes |
+|---|---|---|
+| `DATABASE_POOL_SIZE` | 10 | Connections each process keeps. Size the server for (API processes + workers) × (pool + overflow) |
+| `DATABASE_POOL_OVERFLOW` | 10 | Extra connections allowed at a peak |
+| `DATABASE_POOL_PRE_PING` | true | A connection dropped by a restart or failover is replaced instead of failing a request |
+| `DATABASE_POOL_RECYCLE_SECONDS` | 1800 | Replaces a connection before a proxy drops it for being idle. -1 never |
+| `DATABASE_POOL_TIMEOUT_SECONDS` | 30 | How long a request waits for a free connection |
+| `DATABASE_LOCK_TIMEOUT_MS` | 10000 | A statement stuck on a lock fails clearly |
+| `DATABASE_STATEMENT_TIMEOUT_MS` | 120000 | No statement runs longer |
+
+A worker uses up to two connections at once: one for claiming and its job, one for its heartbeat.
+
+## Migrating in production
+
+- **Additive and forward-only.** Migrations add tables, columns, indexes and policies. They never drop or rewrite data, and `downgrade` refuses: restore from a backup instead. The code that runs during a deploy therefore works on the schema before and after it.
+- **Once, before the new code starts:** run `python -m alembic upgrade head` from the API's pre-deploy step, never from each process at start. The API refuses to start on PostgreSQL unless the database is at the expected version.
+- **One deploy at a time.** On PostgreSQL, `migrations/env.py` takes an advisory lock for the whole upgrade, so a second deploy starting at the same moment waits, then finds nothing to do. `test_migration_lock.py` proves it in CI.
+- **Before every deploy that migrates, take a backup** (`scripts/backup.py`).
+
+## Row-level security (opt-in)
+
+Every query already filters by company, and the tenant sweep tests check every route. Row-level security makes PostgreSQL itself refuse a query that forgets.
+
+**How it works.** Migration `20261111_25` creates a policy named `ticketflow_tenant` on each company table. A row is visible, and may be written, only when its company matches `app.organization_id`. Child tables follow their parent through a subquery, so the parent's own policy applies. With `POSTGRES_RLS=on`, every request runs, from the moment the signed-in user is known, as the role `ticketflow_tenant` with `app.organization_id` set to that user's company, for each transaction (`SET LOCAL`). The worker does the same for the job's company while it reads the job. The connecting role owns the tables and so passes the policies by: that is the bypass for migrations, scripts, backups and the worker's claiming.
+
+**Covered:** batches, tickets, projects, uploaded files, scan slots and events, audit events, extraction usage, and every invoice table (comparisons, ticket references and links, documents, draft lines and both event tables).
+
+**Not covered yet,** still protected by the application's filters: organizations, users, login sessions, account events, suppliers, materials, rates, name aliases, pricing events, saved views, review timings, processing jobs, worker heartbeats and access requests. Most are read before the user is known (sign-in), or across companies by the worker. Each needs its own policy and tests before it's added.
+
+**Turning it on,** after `alembic upgrade head`, as the role that owns the tables, which needs permission to create a role:
+
+```bash
+python scripts/postgres_rls.py enable    # creates the role, grants it the tables, enables the policies
+# then set POSTGRES_RLS=on for the API and the worker, and restart them
+python scripts/postgres_rls.py status    # what's on, and anything missing
+```
+
+To turn it off: set `POSTGRES_RLS=off`, restart, then `python scripts/postgres_rls.py disable`.
+
+**Important:** a superuser that connects without switching role isn't held by the policies, and neither is the owner. Only the API's and worker's scoped transactions are. That is the design (scripts need the bypass), but it means the protection depends on `POSTGRES_RLS=on` in the running processes.
+
+**Tested in CI, on PostgreSQL** (`test_row_security.py`): the role without a company sees nothing in any covered table; each company sees only its own rows and a company with no rows sees nothing; writing into another company's records is refused; history stays append-only for the role; every read route in the app answers correctly for both companies with row-level security on; uploading, the worker's reading, editing and approving work; and a real sign-in runs its request as the company role. **Not yet run with real traffic or on a hosted database.**
+
 ## Schema changes
 
 - A fresh database starts from `migrations/frozen_schema.py`, the schema at `20261105_17`, and applies every later migration. It no longer depends on the current models.

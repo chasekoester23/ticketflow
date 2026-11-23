@@ -131,5 +131,5 @@ test("the project report and system health load on the real stack", async ({ pag
   const worker = page.getByRole("row").filter({ hasText: "Processing worker" });
   await expect(worker).toContainText("OK"); // The run script started a real worker.
   await expect(page.getByRole("row").filter({ hasText: "Database version" })).toContainText("Up to date");
-  await expect(page.getByRole("row").filter({ hasText: "Backups" })).toContainText("No backup found");
+  await expect(page.getByRole("row").filter({ hasText: "Backups" })).toContainText("No backup yet");
 });

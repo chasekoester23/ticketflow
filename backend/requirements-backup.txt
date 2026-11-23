@@ -1,0 +1,5 @@
+# Only for scripts/backup_pg.py, restore_pg_drill.py and check_health.py (encrypted,
+# off-service PostgreSQL backups). Install with requirements-postgres.txt, constrained:
+#     pip install -r requirements-postgres.txt -r requirements-backup.txt -c constraints.txt
+boto3>=1.40,<2
+cryptography>=44,<52

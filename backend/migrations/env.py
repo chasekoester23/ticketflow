@@ -2,11 +2,12 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import create_engine, pool, text
 
 from app.config import settings
 from app.db import Base, normalized_url
 from app import models  # noqa: F401 - register ORM tables with Base.metadata
+from app.services.row_security import SCHEMA_LOCK_KEY
 
 config = context.config
 if config.config_file_name and config.get_section("loggers"):
@@ -29,10 +30,22 @@ def run_migrations_online() -> None:
     engine = create_engine(url, poolclass=pool.NullPool)
     try:
         with engine.connect() as connection:
-            context.configure(connection=connection, target_metadata=target_metadata,
-                              compare_type=True)
-            with context.begin_transaction():
-                context.run_migrations()
+            postgres = connection.dialect.name == "postgresql"
+            if postgres:
+                # Two deploys starting at once take turns: the second waits, then finds
+                # nothing left to do. Held for this connection, across the commit below.
+                connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": SCHEMA_LOCK_KEY})
+                connection.commit()
+            try:
+                context.configure(connection=connection, target_metadata=target_metadata,
+                                  compare_type=True)
+                with context.begin_transaction():
+                    context.run_migrations()
+            finally:
+                if postgres:
+                    connection.rollback()
+                    connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": SCHEMA_LOCK_KEY})
+                    connection.commit()
     finally:
         engine.dispose()
 

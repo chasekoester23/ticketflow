@@ -146,3 +146,19 @@ def client(tmp_path, monkeypatch, postgres_engine):
         c.headers.update({"X-TicketFlow-Request": "1"})
         yield c
     app.dependency_overrides.clear()
+
+
+_DURATIONS_LOG = os.environ.get("TF_DURATIONS_LOG")
+
+
+def pytest_runtest_logstart(nodeid, location):
+    """CI only: which test started, so a run stopped by a time limit can say where it was."""
+    if _DURATIONS_LOG:
+        with open(_DURATIONS_LOG, "a") as log:
+            log.write(f"start {nodeid}\n")
+
+
+def pytest_runtest_logreport(report):
+    if _DURATIONS_LOG and report.when == "call":
+        with open(_DURATIONS_LOG, "a") as log:
+            log.write(f"{report.duration:.1f} {report.outcome} {report.nodeid}\n")

@@ -1,7 +1,7 @@
 """Project pricing agreements and rates that start on a date.
 
 Revision ID: 20261123_24
-Revises: 20261109_23
+Revises: 20261111_25
 
 ADDITIVE: two nullable columns on supplier_rates (project_id, effective_from) and
 one on pricing_events (scope). Every existing rate becomes a company-wide rate with
@@ -17,7 +17,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "20261123_24"
-down_revision = "20261109_23"
+down_revision = "20261111_25"
 branch_labels = None
 depends_on = None
 

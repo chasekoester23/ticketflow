@@ -6,8 +6,9 @@ somewhere new would otherwise lose every scan. A full path is first looked for u
 the current STORAGE_DIR, from its ``uploads``, ``crops`` or ``invoices`` folder on.
 Only if it isn't there is the old location tried.
 
-The methods on LocalStorage are the whole interface, so a private object-storage
-driver could be added beside it. Only the local driver exists.
+The methods on LocalStorage are the whole interface. ``object_store.ObjectStorage``
+implements the same methods for a private S3-compatible bucket (Cloudflare R2 in
+production), selected by STORAGE_BACKEND=s3. Keys are the same in both.
 """
 from __future__ import annotations
 
@@ -152,7 +153,11 @@ class LocalStorage:
 
 
 def current() -> LocalStorage:
-    """The store for this installation. Read each time, so it follows STORAGE_DIR."""
+    """The store for this installation. Read each time, so it follows STORAGE_DIR and
+    STORAGE_BACKEND. The object store has the same methods (see object_store.py)."""
+    if settings.storage_backend == "s3":
+        from . import object_store
+        return object_store.from_settings(settings)
     return LocalStorage(settings.storage_dir)
 
 

@@ -1,0 +1,25 @@
+# Secrets, databases, documents and backups never go into an image.
+.env
+.env.*
+*.db
+*.db-*
+*.sqlite*
+storage/
+backups/
+var/
+# Evaluation data and results can hold real scans and labels.
+evaluation_data/
+evaluation_results/
+demo_output/
+# Tests, local environments and caches aren't needed to run.
+tests/
+.venv/
+venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+*.pdf
+*.md
+Dockerfile
+.dockerignore
+railway.*.json

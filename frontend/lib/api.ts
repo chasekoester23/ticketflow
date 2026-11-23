@@ -1,4 +1,8 @@
-export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Where the browser sends API requests. Unset means the localhost dev mode (the API on
+// port 8000). Empty means same-origin: /api/... on this site, proxied by the Next server
+// to API_INTERNAL_URL (app/api/[...path]/route.ts). The production image builds with it
+// empty, so production needs no CORS. Inlined at build time.
+export const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 // All APIs share the same revocable HTTP-only session cookie. A custom request
 // header protects state-changing endpoints against cross-site form requests.

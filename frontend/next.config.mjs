@@ -24,7 +24,12 @@ const securityHeaders = [
 
 export default {
   poweredByHeader: false,
+  // A self-contained server in .next/standalone, for the production image only
+  // (frontend/Dockerfile sets NEXT_OUTPUT). `next dev` and `next start` are unchanged.
+  ...(process.env.NEXT_OUTPUT === "standalone" ? { output: "standalone" } : {}),
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    // /api/... is the same-origin proxy (app/api/[...path]/route.ts). Those responses carry
+    // the backend's own headers, so the page headers here aren't added on top of them.
+    return [{ source: "/:path((?!api/).*)", headers: securityHeaders }];
   },
 };
