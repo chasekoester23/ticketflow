@@ -53,3 +53,23 @@ test("manual scan upload is visibly non-AI and sends deliberate intake mode", as
   expect(received[0]).toContain("manual");
   expect(received[0]).not.toContain("ANTHROPIC_API_KEY");
 });
+
+test("photos with the four-per-page layout get a note to use one ticket per photo", async ({ page }) => {
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (path === "/api/auth/me") return json(route, profile("owner", { username: "test-owner" }));
+    if (path === "/api/status") return json(route, { extraction_configured: false, model: "unused" });
+    if (path === "/api/projects") return json(route, []);
+    return json(route, { detail: "Unmocked" }, 404);
+  });
+  await page.goto("/upload");
+  const files = page.locator('input[type="file"]');
+  await files.setInputFiles({ name: "scan.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4") });
+  await expect(page.getByTestId("photo-layout-note")).toHaveCount(0); // a scan: the grid is fine
+  await files.setInputFiles({ name: "IMG_0412.jpg", mimeType: "image/jpeg", buffer: Buffer.from([0xff, 0xd8, 0xff]) });
+  await expect(page.getByTestId("photo-layout-note")).toContainText("One ticket per photo");
+  await page.getByRole("combobox", { name: "Document layout" }).selectOption("single");
+  await expect(page.getByTestId("photo-layout-note")).toHaveCount(0);
+});

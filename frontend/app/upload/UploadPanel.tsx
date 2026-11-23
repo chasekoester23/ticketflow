@@ -111,6 +111,10 @@ export function UploadPanel({ projects, onUploaded, onError }: {
               <option value="grid_2x2">Four tickets per page (2×2)</option>
               <option value="single">One ticket per page</option>
             </select>
+            {layout === "grid_2x2" && files.some((f) => /\.(jpe?g|png)$/i.test(f.name)) &&
+              <span role="note" data-testid="photo-layout-note" className="mt-1 block text-xs font-normal text-[#8a5a12]">
+                Photos: four tickets in one photo are often cut at the edges unless it&apos;s taken square-on. One ticket per photo, with &ldquo;One ticket per page&rdquo;, is never cut.
+              </span>}
           </label>
           <label className="tf-field-label">Paper tickets in this upload (optional)
             <input className="tf-field w-full" inputMode="numeric" pattern="[0-9]*" value={expected} onChange={(e) => setExpected(e.target.value)} />

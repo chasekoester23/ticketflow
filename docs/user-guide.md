@@ -37,8 +37,10 @@ tickets are entered:
   value still needs checking.
 
 Phone photos work as well as scans: JPG, PNG, or a photo saved as a PDF. Large photos are
-reduced to fit, and a photo taken sideways is turned upright. Lay the tickets flat, fill the
-frame, and for four tickets keep one in each quarter of the photo. iPhone HEIC photos aren't
+reduced to fit, and a photo taken sideways is turned upright. Photograph one ticket per photo
+and choose **One ticket per page**: nothing can be cut off. Four tickets in one photo are split
+into fixed quarters, which works from a scanner but often cuts the edge of a ticket when a
+photo isn't taken square-on. If you do, lay them flat, one per quarter, and check each crop. iPhone HEIC photos aren't
 read yet: export them as JPEG, or set the iPhone's Camera > Formats to Most Compatible.
 
 Enter how many paper tickets you scanned if you can. The **scan check** compares that count
