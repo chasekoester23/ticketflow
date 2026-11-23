@@ -13,8 +13,10 @@ from decimal import Decimal
 import pymupdf
 import pytest
 from openpyxl import load_workbook
+from PIL import Image
 from sqlalchemy import select
 
+from app.config import settings
 from app.models import Batch, Project, ScanSlot, Ticket, UploadedFile
 
 from .sample_data import TICKETS, make_page, make_pdf
@@ -322,7 +324,9 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 BAD_SCANS = [
     ("encrypted.pdf", _encrypted, "password protected"),
     ("empty.pdf", lambda: ZERO_PAGES, "no pages"),
-    ("huge.pdf", _huge, "too large"),
+    # Rendered within the pixel limit (as a phone photo-PDF is), so 12-point text on a
+    # 200-inch page is too small to see: it fails by name for a person to inspect.
+    ("huge.pdf", _huge, "No ticket content detected"),
     ("long.pdf", _too_many_pages, "limit is 20"),
     ("image.pdf", lambda: PNG, 400),
     ("scan.png", lambda: make_pdf([make_page(TICKETS)]), 400),
@@ -359,10 +363,12 @@ def test_an_invoice_that_isnt_what_it_claims_is_refused_by_name(client, name, ma
     assert client.get("/api/invoice-documents").json() == []
 
 
-def test_a_huge_invoice_page_is_kept_but_never_rendered_whole(client):
+def test_a_huge_invoice_page_is_kept_and_previewed_within_the_pixel_limit(client):
     document = client.post("/api/invoice-documents", files={"file": ("huge.pdf", _huge(), "application/pdf")}).json()
     preview = client.get(f"/api/invoice-documents/{document['id']}/pages/1/image")
-    assert preview.status_code == 404 and "not available" in preview.json()["detail"]
+    assert preview.status_code == 200, preview.text
+    with Image.open(io.BytesIO(preview.content)) as image:
+        assert image.width * image.height <= settings.max_rendered_page_pixels
 
 
 def test_an_invoice_with_no_pages_is_refused_for_having_no_pages(client):
