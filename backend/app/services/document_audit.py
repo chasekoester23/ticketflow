@@ -20,6 +20,8 @@ DOCUMENT_COLUMNS = (
     ("invoice_documents", "storage_path", "sha256"),
     ("scan_slots", "crop_path", "crop_sha256"),
     ("tickets", "crop_path", "crop_sha256"),
+    ("truck_shifts", "timesheet_path", "timesheet_sha256"),
+    ("hauling_invoices", "document_path", "document_sha256"),
 )
 # A rotated crop is a derived file. The recorded hash is of the original it came from.
 _ROTATED = re.compile(r"_r(90|180|270)\.[a-z]+$")

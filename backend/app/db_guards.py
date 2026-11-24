@@ -16,7 +16,7 @@ from .db import Base
 
 HISTORY_TABLES = ("audit_events", "pricing_events", "account_events", "scan_events",
                   "invoice_comparison_events", "invoice_document_events", "exception_events",
-                  "truck_shift_events")
+                  "truck_shift_events", "hauling_invoice_events")
 APPEND_ONLY = "This history is append-only."
 LOCKED = "Approved tons and locked prices can only change by withdrawing the approval."
 SHIFT_LOCKED = "An approved truck shift has locked hours, rates and cost. Reopen it to change them."
