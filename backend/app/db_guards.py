@@ -15,9 +15,44 @@ from sqlalchemy import event
 from .db import Base
 
 HISTORY_TABLES = ("audit_events", "pricing_events", "account_events", "scan_events",
-                  "invoice_comparison_events", "invoice_document_events", "exception_events")
+                  "invoice_comparison_events", "invoice_document_events", "exception_events",
+                  "truck_shift_events")
 APPEND_ONLY = "This history is append-only."
 LOCKED = "Approved tons and locked prices can only change by withdrawing the approval."
+SHIFT_LOCKED = "An approved truck shift has locked hours, rates and cost. Reopen it to change them."
+SHIFT_FIGURES = ("approved_work_hours", "approved_standby_hours", "approved_billable_hours", "applied_hourly_rate",
+                 "applied_standby_rate", "applied_minimum_hours", "approved_cost")
+
+
+def shift_sqlite_statements() -> list[str]:
+    changed = " OR ".join(f"NEW.{c} IS NOT OLD.{c}" for c in SHIFT_FIGURES)
+    return [
+        "CREATE TRIGGER IF NOT EXISTS truck_shifts_approved_figures_locked BEFORE UPDATE ON truck_shifts "
+        f"WHEN OLD.status = 'approved' AND NEW.status = 'approved' AND ({changed}) "
+        f"BEGIN SELECT RAISE(ABORT, '{SHIFT_LOCKED}'); END",
+        *(f"CREATE TRIGGER IF NOT EXISTS shift_allocations_locked_{action.lower()} BEFORE {action} ON shift_allocations "
+          "WHEN (SELECT status FROM truck_shifts WHERE id = OLD.shift_id) = 'approved' "
+          f"BEGIN SELECT RAISE(ABORT, '{SHIFT_LOCKED}'); END" for action in ("UPDATE", "DELETE")),
+    ]
+
+
+def shift_postgres_statements() -> list[str]:
+    changed = " OR ".join(f"NEW.{c} IS DISTINCT FROM OLD.{c}" for c in SHIFT_FIGURES)
+    return [
+        "CREATE OR REPLACE FUNCTION ticketflow_shift_figures_locked() RETURNS trigger AS $$ "
+        f"BEGIN IF OLD.status = 'approved' AND NEW.status = 'approved' AND ({changed}) THEN "
+        f"RAISE EXCEPTION '{SHIFT_LOCKED}' USING ERRCODE = 'restrict_violation'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql",
+        "DROP TRIGGER IF EXISTS truck_shifts_approved_figures_locked ON truck_shifts",
+        "CREATE TRIGGER truck_shifts_approved_figures_locked BEFORE UPDATE ON truck_shifts "
+        "FOR EACH ROW EXECUTE FUNCTION ticketflow_shift_figures_locked()",
+        "CREATE OR REPLACE FUNCTION ticketflow_allocation_locked() RETURNS trigger AS $$ "
+        "BEGIN IF (SELECT status FROM truck_shifts WHERE id = OLD.shift_id) = 'approved' THEN "
+        f"RAISE EXCEPTION '{SHIFT_LOCKED}' USING ERRCODE = 'restrict_violation'; END IF; "
+        "IF TG_OP = 'DELETE' THEN RETURN OLD; END IF; RETURN NEW; END $$ LANGUAGE plpgsql",
+        "DROP TRIGGER IF EXISTS shift_allocations_locked ON shift_allocations",
+        "CREATE TRIGGER shift_allocations_locked BEFORE UPDATE OR DELETE ON shift_allocations "
+        "FOR EACH ROW EXECUTE FUNCTION ticketflow_allocation_locked()",
+    ]
 
 
 def sqlite_statements() -> list[str]:
@@ -33,7 +68,7 @@ def sqlite_statements() -> list[str]:
         "AND (NEW.tonnage IS NOT OLD.tonnage OR NEW.applied_unit_price IS NOT OLD.applied_unit_price "
         "OR NEW.approved_cost IS NOT OLD.approved_cost) "
         f"BEGIN SELECT RAISE(ABORT, '{LOCKED}'); END")
-    return statements
+    return statements + shift_sqlite_statements()
 
 
 def postgres_statements() -> list[str]:
@@ -56,7 +91,7 @@ def postgres_statements() -> list[str]:
     statements.append("DROP TRIGGER IF EXISTS tickets_approved_figures_locked ON tickets")
     statements.append("CREATE TRIGGER tickets_approved_figures_locked BEFORE UPDATE ON tickets "
                       "FOR EACH ROW EXECUTE FUNCTION ticketflow_approved_figures_locked()")
-    return statements
+    return statements + shift_postgres_statements()
 
 
 @event.listens_for(Base.metadata, "after_create")

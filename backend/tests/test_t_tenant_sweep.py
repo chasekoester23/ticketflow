@@ -37,10 +37,11 @@ SELF = SELF_SERVICE | {"/api/auth/me"}
 # Path parameter -> which record it names. A new parameter must be added here.
 PATH_PARAMS = {"batch_id": "batch", "ticket_id": "ticket", "link_id": "link", "document_id": "document", "file_id": "file",
                "slot_id": "slot", "view_id": "view", "member_id": "member", "sid": "supplier", "mid": "material", "rid": "rate",
-               "pid": "project", "alias_id": "alias", "project_id": "project"}
+               "pid": "project", "alias_id": "alias", "project_id": "project", "rate_id": "hauling_rate", "shift_id": "shift"}
 # Query, body and form fields that name a record. Anything else ending in _id or _ids must be added.
 FIELDS = {"project_id": "project", "ticket_id": "ticket", "ticket_ids": "ticket", "supplier_id": "supplier",
-          "material_id": "material", "target_id": "supplier", "view_id": "view", "assignee_user_id": "member"}
+          "material_id": "material", "target_id": "supplier", "view_id": "view", "assignee_user_id": "member",
+          "hauler_id": "hauler", "truck_id": "truck"}
 
 
 def _record(param: str, path: str) -> str:
@@ -118,6 +119,12 @@ def _company(client, org: int) -> dict:
                            files={"file": ("invoice.pdf", INVOICE, "application/pdf")}).json()
     ids["document"], ids["draft"] = document["id"], document["lines"][0]["id"]
     ids["member"] = org * 10 + ROLES.index("clerk")
+    ids["hauler"] = client.post("/api/haulers", json={"name": f"Hauler {MARK[org]}"}).json()["id"]
+    ids["truck"] = client.post("/api/trucks", json={"hauler_id": ids["hauler"], "identifier": f"T-{MARK[org]}",
+                                                    "equipment_type": "tandem"}).json()["id"]
+    ids["hauling_rate"] = client.post("/api/hauling-rates", json={"hauler_id": ids["hauler"], "hourly_rate": "100"}).json()["id"]
+    ids["shift"] = client.post("/api/truck-shifts", json={"project_id": ids["project"], "truck_id": ids["truck"], "notes": MARK[org],
+                                                          "start_at": "2026-09-15T07:00", "end_at": "2026-09-15T15:00"}).json()["id"]
     return ids
 
 
@@ -162,6 +169,16 @@ def _body(method: str, path: str, ids: dict):
         ("POST", "/api/name-aliases"): {"kind": "supplier", "alias": "Sweep Alias", "target_id": ids["supplier"]},
         ("PUT", "/api/rates"): {"supplier_id": ids["supplier"], "material_id": ids["material"], "unit_price": "12"},
         ("POST", "/api/rates/import"): {"text": "Example Aggregates,Sand,12", "apply": False},
+        ("POST", "/api/haulers"): {"name": "Sweep Hauler"},
+        ("POST", "/api/trucks"): {"hauler_id": ids["hauler"], "identifier": "SW-1", "equipment_type": "tandem"},
+        ("POST", "/api/hauling-rates"): {"hauler_id": ids["hauler"], "hourly_rate": "100"},
+        ("POST", "/api/truck-shifts"): {"project_id": ids["project"], "truck_id": ids["truck"],
+                                        "start_at": "2026-09-16T07:00", "end_at": "2026-09-16T15:00"},
+        ("PUT", "/api/truck-shifts/{shift_id}"): {"project_id": ids["project"], "truck_id": ids["truck"],
+                                                  "start_at": "2026-09-15T07:00", "end_at": "2026-09-15T16:00"},
+        ("POST", "/api/truck-shifts/{shift_id}/approve"): {"work_hours": "8", "standby_hours": "0"},
+        ("POST", "/api/truck-shifts/{shift_id}/reopen"): {"reason": "swept"},
+        ("PUT", "/api/truck-shifts/{shift_id}/deliveries"): {"ticket_ids": [ids["ticket2"]]},
         ("POST", "/api/rates/preview"): {"supplier_id": ids["supplier"], "material_id": ids["material"], "unit_price": "12"},
         ("POST", "/api/exceptions/review"): {"key": "sweep", "status": "investigating", "assignee_user_id": ids["member"]},
         ("POST", "/api/invoice-comparisons"): line,
@@ -344,6 +361,7 @@ NOT_SHOWING_MARKS = {"/api/batches", "/api/batches/queue", "/api/batches/{batch_
                      "/api/invoice-documents/{document_id}", "/api/invoice-documents/{document_id}/history",
                      "/api/invoice-comparisons/overview", "/api/reports/pilot", "/api/reports/pilot.csv", "/api/records/name-variants",
                      "/api/dashboard", "/api/setup/status", "/api/exceptions/history", "/api/rates/timeline",
+                     "/api/hauling-rates",
                      # Counts of reads and tokens, never a record.
                      "/api/system/usage",
                      "/api/invoice-comparisons/discrepancies.csv",

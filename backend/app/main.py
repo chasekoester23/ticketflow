@@ -19,7 +19,7 @@ from . import rate_limit
 from .config import configuration_problems, settings
 from .proxy import ProxyHeaders
 from .db import Base, engine
-from .routers import access_requests, api, auth as auth_router, exceptions, invoice_documents, invoices, pricing, projects, records, reports, setup, system, team, scans
+from .routers import access_requests, api, auth as auth_router, exceptions, trucking, invoice_documents, invoices, pricing, projects, records, reports, setup, system, team, scans
 from .services import system_health
 from .services.job_log import frames
 from .auth import current_user
@@ -299,6 +299,7 @@ app.include_router(api.router, dependencies=[Depends(current_user)])
 app.include_router(pricing.router, dependencies=[Depends(current_user)])
 app.include_router(invoices.router, dependencies=[Depends(current_user)])
 app.include_router(exceptions.router, dependencies=[Depends(current_user)])
+app.include_router(trucking.router, dependencies=[Depends(current_user)])
 app.include_router(projects.router, dependencies=[Depends(current_user)])
 app.include_router(reports.router, dependencies=[Depends(current_user)])
 app.include_router(records.router, dependencies=[Depends(current_user)])

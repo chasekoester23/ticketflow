@@ -668,6 +668,16 @@ def build_fictional_business(url: str, storage: Path, monkeypatch) -> dict:
         assert client.post("/api/name-aliases", json={"kind": "supplier", "alias": "EA Inc", "target_id": supplier_id}).status_code == 201
         assert client.post("/api/saved-views", json={"name": "Our sheet", "filters": {"status": "verified"}, "columns": ["ticket_number", "tons"]}).status_code == 201
         assert client.post("/api/team/members", json={"username": "first-clerk", "display_name": "First Clerk", "role": "clerk"}).status_code == 201
+        hauler = client.post("/api/haulers", json={"name": "Fictional Hauling"}).json()["id"]
+        truck = client.post("/api/trucks", json={"hauler_id": hauler, "identifier": "T-7", "equipment_type": "quad_axle"}).json()["id"]
+        assert client.post("/api/hauling-rates", json={"hauler_id": hauler, "hourly_rate": "108.3333", "minimum_hours": "4",
+                                                       "standby_rate": "81.25"}).status_code == 201
+        shift = client.post("/api/truck-shifts", json={"project_id": project, "truck_id": truck, "start_at": "2026-09-10T21:15",
+                                                       "end_at": "2026-09-11T05:40", "unpaid_break_minutes": 25, "standby_hours": "0.75"}).json()
+        approved = client.post(f"/api/truck-shifts/{shift['id']}/approve", headers={"If-Match": shift["revision"]}, json={
+            "work_hours": "7.25", "standby_hours": "0.75", "allocations": [{"project_id": project, "hours": "5.33", "cost_code": "31-2300"},
+                                                                           {"project_id": other_project, "hours": "2.67"}]})
+        assert approved.status_code == 200, approved.text
         exception = client.get("/api/exceptions").json()["items"][0]
         owned = client.post("/api/exceptions/review", headers={"If-Match": exception["revision"]}, json={
             "key": exception["key"], "status": "disputed", "assignee_user_id": ids["first_owner"], "note": "Sent to the supplier."})
@@ -708,6 +718,7 @@ def company_answers(client, ids: dict) -> dict:
             "invoice_line_details": {line["id"]: client.get(f"/api/invoice-comparisons/{line['id']}").json() for line in lines},
             "invoice_overview": client.get("/api/invoice-comparisons/overview").json(),
             "exceptions": client.get("/api/exceptions", params={"status": "all"}).json(),
+            "truck_shifts": client.get("/api/truck-shifts").json(),
             "records": records,
             "audit": {row["id"]: client.get(f"/api/tickets/{row['id']}/audit").json() for row in records["rows"]},
             "pricing_history": client.get("/api/pricing/history").json(),

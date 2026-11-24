@@ -184,11 +184,33 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
         ],
         "projects": _active_projects(db, organization_id, project_id),
         "activity": _recent_activity(db, organization_id, project_id),
+        "hauling": _hauling(db, organization_id, project_id, aggregates.as_decimal(total.cost, 2)),
     }
 
 
 OPEN_STATUSES = ("needs_review", "flagged", "failed")
 ACTIVITY = {"verified": "approved", "flagged": "flagged", "skipped": "skipped"}
+
+
+def _hauling(db: Session, organization_id: int, project_id: int | None, material: Decimal) -> dict:
+    """Approved hourly trucking, kept apart from material cost: different work, often a
+    different company. Per project through each shift's allocations, so a shift split
+    across jobs counts once, in its parts."""
+    from ..models import ShiftAllocation, TruckShift
+    allocations = select(aggregates.exact_sum(ShiftAllocation.cost, 2), aggregates.exact_sum(ShiftAllocation.hours, 2)).join(
+        TruckShift, TruckShift.id == ShiftAllocation.shift_id).where(
+        TruckShift.organization_id == organization_id, TruckShift.status == "approved")
+    shifts = select(func.count()).select_from(TruckShift).where(TruckShift.organization_id == organization_id)
+    if project_id is not None:
+        allocations = allocations.where(ShiftAllocation.project_id == project_id)
+        shifts = shifts.where(TruckShift.project_id == project_id)
+    cost, hours = db.execute(allocations).one()
+    hauling = aggregates.as_decimal(cost, 2)
+    return {"approved_cost": str(hauling), "approved_hours": str(aggregates.as_decimal(hours, 2)),
+            # Added here, exactly: approved material and approved hauling, each counted once.
+            "approved_with_material": str(material + hauling),
+            "awaiting_approval": db.scalar(shifts.where(TruckShift.status == "needs_review")),
+            "disputed": db.scalar(shifts.where(TruckShift.status == "disputed"))}
 
 
 def _active_projects(db: Session, organization_id: int, project_id: int | None, limit: int = 8) -> list[dict]:

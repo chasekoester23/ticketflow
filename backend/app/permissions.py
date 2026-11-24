@@ -53,6 +53,9 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     "projects.manage": _APPROVERS,
     "pricing.manage": _APPROVERS,
     "invoices.manage": _APPROVERS,
+    # Entering truck shifts and linking deliveries makes nothing payable; approving does.
+    "trucking.edit": _PREPARERS,
+    "trucking.approve": _APPROVERS,
     "team.manage": frozenset({OWNER}),
     # Installation health: worker, backups, database version.
     "system.read": _APPROVERS,

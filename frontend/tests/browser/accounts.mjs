@@ -14,6 +14,9 @@ const PERMISSIONS = {
   "invoices.manage": ["owner", "manager"],
   "team.manage": ["owner"],
   "system.read": ["owner", "manager"],
+  "usage.read": ["owner"],
+  "trucking.edit": ["owner", "manager", "clerk"],
+  "trucking.approve": ["owner", "manager"],
 };
 const LABELS = { owner: "Owner", manager: "Manager", clerk: "Clerk", viewer: "Viewer" };
 

@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import false as sa_false
+from sqlalchemy import true as sa_true
 from sqlalchemy import (
     JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, event,
     select, text,
@@ -382,6 +383,9 @@ class Ticket(Base):
     number_loose: Mapped[str | None] = mapped_column(String(100), nullable=True)  # leading zeros ignored too
     # Tons x locked rate, set at approval and cleared when approval is withdrawn.
     approved_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    # The truck shift that carried this delivery, if a person linked it. The hourly cost
+    # belongs to the shift alone: linking never charges a delivery for trucking.
+    truck_shift_id: Mapped[int | None] = mapped_column(ForeignKey("truck_shifts.id"), nullable=True, index=True)
 
     file: Mapped[UploadedFile] = relationship(back_populates="tickets")
 
@@ -675,6 +679,117 @@ class ExceptionEvent(Base):
     key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     # status | assignee | recovered_amount | note
+    field: Mapped[str] = mapped_column(String(40), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Hauler(Base):
+    """A trucking company. Often a different business from the material supplier."""
+    __tablename__ = "haulers"
+    __table_args__ = (Index("uq_hauler_name", "organization_id", "name_key", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    contact: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Truck(Base):
+    __tablename__ = "trucks"
+    __table_args__ = (Index("uq_truck_identifier", "organization_id", "hauler_id", "identifier", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    hauler_id: Mapped[int] = mapped_column(ForeignKey("haulers.id"), nullable=False, index=True)
+    # The number painted on the truck or used on the time sheet.
+    identifier: Mapped[str] = mapped_column(String(50), nullable=False)
+    # tandem | tri_axle | quad_axle | semi_end_dump | belly_dump | other
+    equipment_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sa_true())
+
+
+class HaulingRate(Base):
+    """An hourly agreement with a hauler: for one project or all, one truck type or all,
+    from a date or with no start, until a date or open-ended. See services/trucking.py."""
+    __tablename__ = "hauling_rates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    hauler_id: Mapped[int] = mapped_column(ForeignKey("haulers.id"), nullable=False, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    equipment_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    hourly_rate: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    # Paid hours below this are topped up at the hourly rate. Blank: no minimum.
+    minimum_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    # Blank: standby isn't payable under this agreement, so standby leaves a shift unpriced.
+    standby_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class TruckShift(Base):
+    """One truck's working day (or night). Times as written on the time sheet; hours a
+    person approves; the price locked at approval. Approved figures can only change by
+    reopening, which the database enforces (db_guards)."""
+    __tablename__ = "truck_shifts"
+    __table_args__ = (Index("ix_truck_shifts_org_date", "organization_id", "work_date"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    truck_id: Mapped[int] = mapped_column(ForeignKey("trucks.id"), nullable=False, index=True)
+    hauler_id: Mapped[int] = mapped_column(ForeignKey("haulers.id"), nullable=False, index=True)
+    work_date: Mapped[date] = mapped_column(Date, nullable=False)
+    driver_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # local time on site, as written
+    end_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    unpaid_break_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    standby_hours: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, default=Decimal(0), server_default="0")
+    # What the hauler's time sheet or invoice claims, if it says. Evidence, never used to pay.
+    claimed_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    loads: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Who signed the time sheet in the field, as written on it.
+    field_signoff: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    cost_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # needs_review | approved | disputed
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="needs_review", server_default="needs_review")
+    # Locked at approval.
+    approved_work_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    approved_standby_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    approved_billable_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    applied_rate_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # the agreement, kept even if it's removed
+    applied_hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    applied_standby_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    applied_minimum_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    approved_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class ShiftAllocation(Base):
+    """Where an approved shift's hours and cost go: a project and, optionally, a cost code.
+    Written at approval; the parts add up to the shift's cost to the cent."""
+    __tablename__ = "shift_allocations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    shift_id: Mapped[int] = mapped_column(ForeignKey("truck_shifts.id"), nullable=False, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    cost_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    hours: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
+    cost: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+
+
+class TruckShiftEvent(Base):
+    """Append-only history of every change to a truck shift."""
+    __tablename__ = "truck_shift_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    shift_id: Mapped[int] = mapped_column(ForeignKey("truck_shifts.id"), nullable=False, index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     field: Mapped[str] = mapped_column(String(40), nullable=False)
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
