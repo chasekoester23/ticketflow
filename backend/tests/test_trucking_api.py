@@ -179,3 +179,16 @@ def test_the_dashboard_counts_approved_hauling_per_project_through_allocations(c
     p2 = client.get("/api/dashboard", params={"project_id": yard["other"]}).json()["hauling"]
     assert (p1["approved_cost"], p2["approved_cost"]) == ("660.00", "330.00")  # the shift counted once, in its parts
     assert client.get("/api/dashboard", params={"project_id": yard["project"]}).json()["total_cost"] == "0.00"  # material unchanged
+
+
+def test_an_approved_shifts_deliveries_are_locked_with_it(client, yard):
+    batch = client.post("/api/batches", data={"layout": "grid_2x2", "project_id": str(yard["project"])},
+                        files=[("files", ("s.pdf", make_scan_pdf(), "application/pdf"))]).json()
+    first, second = [t["id"] for t in client.get(f"/api/batches/{batch['id']}/tickets").json()[:2]]
+    shift = _shift(client, yard)
+    linked = client.put(f"/api/truck-shifts/{shift['id']}/deliveries", json={"ticket_ids": [first]}).json()
+    approved = _approve(client, linked, work_hours="9", standby_hours="0").json()
+    for change in ([first, second], []):  # neither adding nor removing after approval
+        assert client.put(f"/api/truck-shifts/{shift['id']}/deliveries", json={"ticket_ids": change}).status_code == 409
+    again = next(s for s in client.get("/api/truck-shifts").json()["shifts"] if s["id"] == shift["id"])
+    assert again["deliveries"]["ticket_ids"] == [first] and again["cost"] == approved["cost"]

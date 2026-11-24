@@ -470,6 +470,10 @@ def link_deliveries(shift_id: int, body: DeliveriesIn, db: Session = Depends(get
     organization_id = user.organization_id
     take_turn(db, "truck-shift", organization_id, shift_id)
     shift = _shift_or_404(db, organization_id, shift_id)
+    if shift.status == "approved":
+        # Cost per ton and loads hauled are reported from the deliveries an approval was made
+        # with; changing them afterwards would rewrite history. Reopen first, with a reason.
+        raise HTTPException(409, "This shift is approved. A manager reopens it before its deliveries change.")
     wanted = set(body.ticket_ids)
     found = {t.id: t for t in db.scalars(select(Ticket).where(Ticket.organization_id == organization_id, Ticket.id.in_(wanted)))} if wanted else {}
     missing = sorted(wanted - set(found))
