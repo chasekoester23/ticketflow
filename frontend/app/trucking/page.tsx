@@ -314,6 +314,8 @@ export default function TruckingPage() {
     try { setPage(await listShifts(filters)); setError(null); } catch (e) { setError((e as Error).message); }
   }, [filters]);
   const [ready, setReady] = useState(false);
+  const [tab, setTab] = useState<"shifts" | "invoices" | "setup">("shifts");
+  const [newInvoice, setNewInvoice] = useState(false);
   useEffect(() => {
     // Filters from the address, so the Overview's "to approve" link opens that view.
     const params = new URLSearchParams(window.location.search);
@@ -322,6 +324,9 @@ export default function TruckingPage() {
     setFilters(initial);
     const wanted = Number(params.get("shift_id"));
     if (wanted) setSelected(wanted);
+    const opened = params.get("tab");
+    if (opened === "invoices" || opened === "setup") setTab(opened);
+    if (params.get("new") === "1") { if (opened === "invoices") setNewInvoice(true); else setAdding(true); }
     setReady(true);
     loadInvoices().catch(() => setInvoices([]));
     listProjects().then(setProjects).catch(() => setProjects([]));
@@ -337,11 +342,17 @@ export default function TruckingPage() {
   return <div className="space-y-5">
     <div className="tf-page-heading">
       <div><h1 className="tf-page-title">Hourly trucking</h1>
-        <p className="tf-page-description">Truck shifts from the time sheets, the hours a person approves, and what they cost under the hauler&apos;s agreement. Separate from material: linked deliveries never add a trucking charge.</p></div>
-      {canEdit && <button type="button" className="tf-primary-button" onClick={() => setAdding((v) => !v)}>{adding ? "Close" : "+ Enter a shift"}</button>}
+        <p className="tf-page-description">Truck shifts from the time sheets, approved hours, and what they cost.</p></div>
+      {canEdit && tab === "shifts" && <button type="button" className="tf-primary-button" onClick={() => setAdding((v) => !v)}>{adding ? "Close" : "+ Enter a shift"}</button>}
+    </div>
+    <div role="tablist" aria-label="Trucking" className="tf-section-tabs">
+      {([["shifts", "Shifts"], ["invoices", "Hauling invoices"], ["setup", "Haulers & agreements"]] as const).map(([key, label]) =>
+        <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "tf-section-tab-active" : ""}
+          onClick={() => { setTab(key); window.history.replaceState(null, "", key === "shifts" ? "/trucking" : `/trucking?tab=${key}`); }}>{label}</button>)}
     </div>
     {error && <div role="alert" className="tf-alert tf-alert-bad">{error}</div>}
 
+    {tab === "shifts" && <>
     {adding && <section className="tf-panel" aria-label="Enter a shift"><form className="space-y-3 p-5" onSubmit={(e) => {
       e.preventDefault();
       createShift(toInput(form)).then((created) => { setAdding(false); setForm(EMPTY_SHIFT); setSelected(created.id); return load(); })
@@ -393,10 +404,12 @@ export default function TruckingPage() {
         onChanged={(updated) => { replace(updated); void load(); void loadInvoices().catch(() => undefined); }} />}
     </div>
 
-    <HaulingInvoices invoices={invoices} haulers={haulers} projects={projects} canManage={canInvoice}
-      onChanged={loadInvoices} onOpenShift={(id) => { setSelected(id); window.scrollTo({ top: 0 }); }} />
+    </>}
 
-    <Setup haulers={haulers} rates={rates} projects={projects} canEdit={canEdit} canPrice={canPrice} onChanged={loadSetup} />
+    {tab === "invoices" && <HaulingInvoices invoices={invoices} haulers={haulers} projects={projects} canManage={canInvoice} startNew={newInvoice}
+      onChanged={loadInvoices} onOpenShift={(id) => { setSelected(id); setTab("shifts"); window.scrollTo({ top: 0 }); }} />}
+
+    {tab === "setup" && <Setup haulers={haulers} rates={rates} projects={projects} canEdit={canEdit} canPrice={canPrice} onChanged={loadSetup} />}
     <p className="text-[11px] leading-5 text-[#5f6c7b]">Hours are on site less the unpaid break, to the hundredth. Each cost line rounds half up to the cent. Approved cost appears on the <Link prefetch={false} className="tf-link text-[11px]" href="/">Overview</Link> separately from material cost.</p>
   </div>;
 }

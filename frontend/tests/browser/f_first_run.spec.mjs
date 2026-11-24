@@ -170,11 +170,11 @@ test("with a saved view open, exports carry its id, so its column names apply", 
 test("a viewer isn't offered actions their role can't take", async ({ page }) => {
   await mockWorkspace(page, { role: "viewer" });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Delivery operations" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /New ticket upload/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Upload" })).toHaveCount(0);
   await page.goto("/records");
   await expect(page.getByTestId("records-summary")).toContainText("3 records");
-  await expect(page.getByRole("link", { name: /New ticket upload/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Upload" })).toHaveCount(0);
   await page.getByLabel("Saved view").selectOption({ label: "October stone" });
   await expect(page.getByRole("button", { name: "Remove view" })).toHaveCount(0);
 });

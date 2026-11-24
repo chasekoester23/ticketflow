@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { ApiError, getAuthMe, logOut, type Account, type Permission } from "../lib/api";
+import { ApiError, getAuthMe, getDashboard, logOut, type Account, type Permission } from "../lib/api";
 import { mayNavigate } from "../lib/navigation-guard";
 import { beginSignOut, clearAllDrafts, clearOtherAccountsDrafts, hasDrafts } from "../lib/drafts";
 import { AccountContext } from "./account-context";
 
-type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "team" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers" | "report" | "health";
+type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "team" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers" | "report" | "health" | "truck" | "settings" | "upload";
 
 function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
@@ -27,28 +27,43 @@ function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
     layers: <><path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5" /></>,
     report: <><path d="M4 20V4M4 20h16M8 16v-5M12 16V7M16 16v-3" /></>,
     health: <path d="M3 12h4l2.5-6 4 12 2.5-6h5" />,
+    truck: <><path d="M3 6h11v10H3zM14 9h4l3 3v4h-7" /><circle cx="7" cy="18" r="2" /><circle cx="17" cy="18" r="2" /></>,
+    settings: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" /></>,
+    upload: <path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4" />,
   };
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
-type NavLink = { href: string; label: string; icon: IconName; requires?: Permission };
-const workLinks: NavLink[] = [
-  { href: "/", label: "Overview", icon: "overview" },
-  { href: "/upload", label: "Ticket intake", icon: "tickets" },
-  { href: "/records", label: "Delivery records", icon: "records" },
-  { href: "/invoices", label: "Invoice comparison", icon: "invoices" },
-  { href: "/trucking", label: "Hourly trucking", icon: "layers" },
-  { href: "/invoices/exceptions", label: "Invoice exceptions", icon: "health" },
-  { href: "/reports/project", label: "Project report", icon: "report" },
+type Tab = { href: string; label: string; requires?: Permission };
+type Section = { href: string; label: string; icon: IconName; match: string[]; tabs: Tab[]; badge?: "tickets" | "trucking" };
+// Five places for everyday work, and Settings. Every page keeps its address; related
+// pages are tabs of one section instead of separate sidebar entries.
+const sections: Section[] = [
+  { href: "/", label: "Overview", icon: "overview", match: [], tabs: [] },
+  { href: "/projects", label: "Projects", icon: "projects", match: ["/projects", "/reports"], tabs: [
+    { href: "/projects", label: "Projects" }, { href: "/reports/project", label: "Project report" }, { href: "/reports", label: "Pilot measurement" }] },
+  { href: "/upload", label: "Tickets", icon: "tickets", match: ["/upload", "/records"], badge: "tickets", tabs: [
+    { href: "/upload", label: "Upload & review" }, { href: "/records", label: "Delivery records" },
+    { href: "/records/names", label: "Name cleanup", requires: "tickets.edit" }] },
+  { href: "/trucking", label: "Trucking", icon: "truck", match: ["/trucking"], badge: "trucking", tabs: [] },
+  { href: "/invoices", label: "Invoices", icon: "invoices", match: ["/invoices"], tabs: [
+    { href: "/invoices", label: "Comparison" }, { href: "/invoices/documents", label: "Invoice PDFs" },
+    { href: "/invoices/exceptions", label: "Exceptions & disputes" }] },
 ];
-const setupLinks: NavLink[] = [
-  { href: "/projects", label: "Projects", icon: "projects" },
-  { href: "/pricing", label: "Suppliers & rates", icon: "rates" },
-  { href: "/reports", label: "Pilot report", icon: "report" },
-  { href: "/team", label: "Team", icon: "team", requires: "team.manage" },
-  { href: "/system", label: "System health", icon: "health", requires: "system.read" },
+const settings: Section = { href: "/pricing", label: "Settings", icon: "settings", match: ["/pricing", "/team", "/system", "/account"], tabs: [
+  { href: "/pricing", label: "Suppliers & pricing" }, { href: "/team", label: "Team", requires: "team.manage" },
+  { href: "/system", label: "System health", requires: "system.read" }, { href: "/account", label: "Account" }] };
+const allSections = [...sections, settings];
+const sectionOf = (path: string) => path === "/" ? sections[0]
+  : allSections.find((s) => s.match.some((m) => path === m || path.startsWith(m + "/"))) ?? null;
+const titleOf = (path: string) => allSections.flatMap((s) => s.tabs).find((t) => t.href === path)?.label ?? sectionOf(path)?.label;
+// One place to start any document: where each kind goes, and the page opens ready for it.
+const uploads: { href: string; label: string; hint: string; requires: Permission }[] = [
+  { href: "/upload?new=1", label: "Delivery tickets", hint: "Scans or phone photos", requires: "tickets.upload" },
+  { href: "/trucking?new=1", label: "Truck time sheet", hint: "Enter a shift, attach the sheet", requires: "trucking.edit" },
+  { href: "/invoices/documents", label: "Supplier invoice", hint: "PDF, checked against deliveries", requires: "invoices.manage" },
+  { href: "/trucking?tab=invoices&new=1", label: "Hauling invoice", hint: "Checked against approved shifts", requires: "invoices.manage" },
 ];
-const links = [...workLinks, ...setupLinks];
 const PUBLIC_PATHS = ["/welcome", "/login", "/signup"];
 // Pages change without reloading, so the session is re-checked in the background, at most this often.
 const SESSION_RECHECK_MS = 30_000;
@@ -64,10 +79,6 @@ function onInternalLink(event: MouseEvent<HTMLAnchorElement>, href: string) {
   }
   if (!mayNavigate()) event.preventDefault();
 }
-const pageTitles: Record<string, string> = {
-  "/account": "Account settings", "/records/names": "Name cleanup",
-  "/invoices/documents": "Invoice PDFs",
-};
 
 export default function AuthShell({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null);
@@ -77,14 +88,18 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   const shownBefore = useRef(false);
   const pathname = usePathname();
   const isPublic = PUBLIC_PATHS.includes(pathname);
-  const current = links.find((l) => l.href === pathname);
-  const allowed = (l: NavLink) => !l.requires || account?.permissions?.includes(l.requires);
-  const navLink = ({ href, label, icon }: NavLink) => {
-    const active = pathname === href;
+  const section = sectionOf(pathname);
+  const [pending, setPending] = useState<{ tickets: number; trucking: number } | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const can = (p?: Permission) => !p || Boolean(account?.permissions?.includes(p));
+  const navLink = ({ href, label, icon, badge }: Section) => {
+    const active = sectionOf(pathname)?.href === href;
+    const count = badge && pending ? pending[badge] : 0;
     return <Link key={href} href={href} aria-current={active ? "page" : undefined}
       className={`tf-nav-link ${active ? "tf-nav-link-active" : ""}`}
       onClick={(event) => { setMenuOpen(false); onInternalLink(event, href); }}>
       <Icon name={icon} /><span>{label}</span>
+      {count > 0 && <span className="tf-nav-badge" aria-label={`${count} to review`}>{count > 999 ? "999+" : count}</span>}
       {active && <span className="tf-nav-active-rule" />}
     </Link>;
   };
@@ -117,7 +132,16 @@ export default function AuthShell({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, [isPublic]);
 
-  useEffect(() => { setMenuOpen(false); }, [pathname]);
+  useEffect(() => { setMenuOpen(false); setUploadOpen(false); }, [pathname]);
+
+  // What's waiting for a person, on the sidebar. Refreshed as people move around, at most once a minute.
+  const pendingAt = useRef(0);
+  useEffect(() => {
+    if (isPublic || checking || Date.now() - pendingAt.current < 60_000) return;
+    pendingAt.current = Date.now();
+    getDashboard().then((d) => setPending({ tickets: d.needs_review, trucking: d.hauling?.awaiting_approval ?? 0 }))
+      .catch(() => setPending(null));
+  }, [pathname, isPublic, checking]);
 
   // The shell stays up between pages, so nothing waits on this. Each API call is still
   // checked by the server; this catches an ended session or a changed role.
@@ -136,8 +160,8 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   // A reload used to retitle the tab and put a screen reader at the top of the new page.
   useEffect(() => {
     if (isPublic || checking) return;
-    const label = links.find((l) => l.href === pathname)?.label ?? pageTitles[pathname];
-    document.title = label ? `${label} · TicketFlow` : "TicketFlow";
+    const label = titleOf(pathname);
+    document.title = label ? `${label} · Quarvera` : "Quarvera";
     if (!shownBefore.current) {
       shownBefore.current = true;
       return;
@@ -192,7 +216,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   if (isPublic) return <>{children}</>;
   if (checking || !account) {
     return <main className="flex min-h-screen items-center justify-center bg-[#f4f5f6] text-sm text-slate-600" role="status">
-      Checking your TicketFlow session…
+      Checking your Quarvera session…
     </main>;
   }
 
@@ -201,17 +225,15 @@ export default function AuthShell({ children }: { children: ReactNode }) {
     {menuOpen && <button aria-label="Close navigation" className="tf-mobile-scrim" onClick={() => setMenuOpen(false)} />}
     <aside id="main-menu" className={`tf-sidebar ${menuOpen ? "tf-sidebar-open" : ""}`}>
       <button type="button" aria-label="Close menu" className="tf-sidebar-close" onClick={() => setMenuOpen(false)}><Icon name="close" size={18} /></button>
-      <Link href="/" className="tf-sidebar-brand" aria-label="TicketFlow home" onClick={(event) => { setMenuOpen(false); onInternalLink(event, "/"); }}>
+      <Link href="/" className="tf-sidebar-brand" aria-label="Quarvera home" onClick={(event) => { setMenuOpen(false); onInternalLink(event, "/"); }}>
         <span className="tf-brand-mark"><Icon name="layers" size={21} /></span>
-        <span className="tf-brand-type">TICKET<span>FLOW</span><small>FIELD OPERATIONS</small></span>
+        <span className="tf-brand-type">QUAR<span>VERA</span><small>DELIVERIES · TRUCKING · COSTS</small></span>
       </Link>
       <div className="tf-sidebar-divider" />
-      <nav aria-label="Main navigation">
+      <nav aria-label="Main navigation" className="flex flex-1 flex-col">
         {!mustChangePassword && <>
-          <p className="tf-sidebar-section">WORK</p>
-          <div className="tf-nav">{workLinks.filter(allowed).map(navLink)}</div>
-          <p className="tf-sidebar-section">SETUP</p>
-          <div className="tf-nav">{setupLinks.filter(allowed).map(navLink)}</div>
+          <div className="tf-nav mt-3">{sections.map(navLink)}</div>
+          <div className="tf-nav tf-nav-settings">{navLink(settings)}</div>
         </>}
       </nav>
       <Link href="/account" className="tf-sidebar-account" onClick={(event) => { setMenuOpen(false); onInternalLink(event, "/account"); }}>
@@ -229,10 +251,25 @@ export default function AuthShell({ children }: { children: ReactNode }) {
             <span className="tf-organization-name" title={account.organization_name ?? "Workspace"}>
               {account.organization_name ?? "Workspace"}
             </span>
-            <strong>{current?.label ?? pageTitles[pathname] ?? "TicketFlow"}</strong>
+            <strong>{section?.label ?? "Quarvera"}</strong>
           </div>
         </div>
+        {/* In the top bar, so the section's pages cost no height: review keeps its whole screen. */}
+        {section && section.tabs.filter((t) => can(t.requires)).length > 1 && <nav aria-label="In this section" className="tf-section-tabs tf-header-tabs">
+          {section.tabs.filter((t) => can(t.requires)).map((t) => <Link key={t.href} href={t.href} prefetch={false}
+            aria-current={pathname === t.href ? "page" : undefined} className={pathname === t.href ? "tf-section-tab-active" : ""}
+            onClick={(event) => onInternalLink(event, t.href)}>{t.label}</Link>)}
+        </nav>}
         <div className="tf-topbar-right">
+          {!mustChangePassword && uploads.some((u) => can(u.requires)) && <div className="relative">
+            <button type="button" className="tf-primary-button" aria-haspopup="menu" aria-expanded={uploadOpen} onClick={() => setUploadOpen((v) => !v)}>
+              <Icon name="upload" size={16} /> Upload</button>
+            {uploadOpen && <div role="menu" aria-label="Upload" className="tf-upload-menu">
+              {uploads.filter((u) => can(u.requires)).map((u) => <Link key={u.href} role="menuitem" href={u.href} prefetch={false}
+                onClick={(event) => { setUploadOpen(false); onInternalLink(event, u.href.split("?")[0]); }}>
+                <strong>{u.label}</strong><span>{u.hint}</span></Link>)}
+            </div>}
+          </div>}
           <Link href="/account" className="tf-account-link" title="Account settings" onClick={(event) => onInternalLink(event, "/account")}>
             <span className="tf-account-avatar" aria-hidden="true">{initial}</span>
             <span className="tf-account-name">{personName}<small>{account.role_label}</small></span>

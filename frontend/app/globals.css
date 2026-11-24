@@ -3,6 +3,7 @@
 :root {
   color-scheme: light;
   /* The brand orange marks things. Text and buttons use the deeper orange, which white text reads on. */
+  --tf-navy: #12233d;
   --tf-orange: #e66b2d;
   --tf-orange-action: #c2541c;
   --tf-orange-hover: #a64716;
@@ -41,7 +42,7 @@ a { text-underline-offset: 3px; }
 .tf-sidebar {
   width: 242px; min-width: 242px; min-height: 100vh; position: sticky; top: 0;
   height: 100vh; display: flex; flex-direction: column;
-  color: #c7d0d8; background: #17242f; z-index: 30;
+  color: #c7d0d8; background: var(--tf-navy); z-index: 30;
 }
 .tf-sidebar-brand { min-height: 68px; display: flex; align-items: center; gap: 12px; padding: 17px 21px; color: white; text-decoration: none; }
 .tf-brand-mark { width: 35px; height: 35px; display: grid; place-items: center; background: var(--tf-orange); color: white; border-radius: 4px; flex-shrink: 0; }
@@ -55,13 +56,29 @@ a { text-underline-offset: 3px; }
 .tf-sidebar-section { margin: 18px 23px 6px; font-family: var(--tf-mono); font-size: 11px; color: #a7b5c3; font-weight: 400; letter-spacing: .03em; }
 .tf-nav { display: flex; flex-direction: column; gap: 1px; padding: 0 12px; }
 .tf-nav-link { display: flex; position: relative; align-items: center; gap: 12px; min-height: 36px; padding: 0 11px; color: #c9d3dc; font-size: 13px; font-weight: 500; text-decoration: none; border-radius: 3px; }
-.tf-nav-link:hover { color: white; background: #263542; }
-.tf-nav-link-active, .tf-nav-link-active:hover { color: white; background: #2b3a48; font-weight: 600; }
+.tf-nav-link:hover { color: white; background: #1d3253; }
+.tf-nav-link-active, .tf-nav-link-active:hover { color: white; background: #22395d; font-weight: 600; }
+.tf-nav-badge { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 10px; background: var(--tf-orange); color: white; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.tf-nav-settings { margin-top: auto; padding-top: 10px; padding-bottom: 14px; border-top: 1px solid #2a3f60; }
+.tf-section-tabs { display: flex; gap: 2px; margin: -4px 0 16px; border-bottom: 1px solid var(--tf-border); overflow-x: auto; }
+.tf-section-tabs a, .tf-section-tabs button { padding: 8px 14px; color: var(--tf-muted); font-size: 13px; font-weight: 600; text-decoration: none; border: 0; border-bottom: 2px solid transparent; background: none; white-space: nowrap; }
+.tf-section-tabs a:hover, .tf-section-tabs button:hover { color: var(--tf-ink); }
+.tf-section-tabs .tf-section-tab-active { color: var(--tf-navy); border-bottom-color: var(--tf-orange); }
+.tf-upload-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 260px; padding: 6px; background: white; border: 1px solid var(--tf-border); border-radius: 4px; box-shadow: 0 8px 24px rgba(18, 35, 61, .14); }
+.tf-upload-menu a { display: block; padding: 8px 10px; border-radius: 3px; color: var(--tf-ink); text-decoration: none; }
+.tf-upload-menu a:hover, .tf-upload-menu a:focus-visible { background: #f3f5f8; }
+.tf-upload-menu strong { display: block; font-size: 13px; }
+.tf-upload-menu span { display: block; color: var(--tf-muted); font-size: 11.5px; }
 .tf-nav-link-active > svg { color: #ffab77; }
 .tf-nav-active-rule { position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--tf-orange); }
 
 .tf-shell-content { min-width: 0; flex: 1; }
-.tf-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 56px; padding: 0 28px; background: white; border-bottom: 1px solid var(--tf-border); }
+.tf-topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; column-gap: 16px; min-height: 56px; padding: 0 28px; background: white; border-bottom: 1px solid var(--tf-border); }
+.tf-header-tabs { order: 3; flex-basis: 100%; margin: 0 -4px; border-bottom: 0; }
+@media (min-width: 1024px) {
+  .tf-header-tabs { order: 0; flex: 1 1 auto; flex-basis: auto; align-self: stretch; align-items: stretch; margin: 0 8px; }
+  .tf-header-tabs a { display: flex; align-items: center; }
+}
 .tf-topbar-context { display: flex; flex-direction: column; gap: 2px; min-width: 0; white-space: nowrap; line-height: 1.2; }
 .tf-topbar-context strong { font-size: 14px; color: #1f2c39; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .tf-topbar-right { display: flex; align-items: center; gap: 11px; min-width: 0; }

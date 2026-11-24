@@ -84,7 +84,8 @@ export default function Home() {
   const canUpload = can("tickets.upload");
   const [batch, setBatch] = useState<Batch | null>(null);
   const [opening, setOpening] = useState(false);
-  const [showUpload, setShowUpload] = useState(false);
+  // The Upload menu's "Delivery tickets" opens here with ?new=1: the upload form, ready.
+  const [showUpload, setShowUpload] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("new") === "1");
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState(0);
   const [formDirty, setFormDirty] = useState(false);

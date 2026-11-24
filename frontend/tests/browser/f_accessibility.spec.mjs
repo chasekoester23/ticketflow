@@ -13,7 +13,7 @@ try {
 const heading = (name) => (page) => page.getByRole("heading", { name, exact: true }).first();
 const PAGES = [
   ["/login", heading("Sign in to TicketFlow")],
-  ["/", heading("Delivery operations")],
+  ["/", heading("Overview")],
   ["/upload", heading("Ticket intake & review")],
   ["/upload?batch=5&ticket=1001", (page) => page.getByRole("button", { name: "Accept & next" })],
   ["/records", heading("Delivery records")],

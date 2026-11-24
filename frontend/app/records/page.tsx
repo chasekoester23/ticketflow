@@ -217,10 +217,6 @@ export default function RecordsPage() {
     <div className="tf-page-heading">
       <div><h1 className="tf-page-title">Delivery records</h1>
         <p className="tf-page-description">Search, audit, and export material delivery tickets by project and status.</p></div>
-      <div className="flex flex-wrap gap-2">
-        {canEdit && <Link prefetch={false} href="/records/names" className="tf-secondary-button">Name cleanup</Link>}
-        {canUpload && <Link prefetch={false} href="/upload" className="tf-primary-button"><span aria-hidden="true">+</span> New ticket upload</Link>}
-      </div>
     </div>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
     {notice && <div role="status" className="rounded border border-[#cce4d2] bg-[#f3f9f4] p-3 text-sm text-[#216c43]">{notice}</div>}

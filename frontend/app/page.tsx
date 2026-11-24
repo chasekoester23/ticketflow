@@ -158,8 +158,8 @@ export default function DashboardPage() {
   return <div className="space-y-4">
     <div className="tf-page-heading">
       <div>
-        <h1 className="tf-page-title">Delivery operations</h1>
-        <p className="tf-page-description">Tickets, review status and approved quantities across your jobs.</p>
+        <h1 className="tf-page-title">Overview</h1>
+        <p className="tf-page-description">Quantities delivered, approved costs, and what&apos;s waiting for you.</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <label className="sr-only" htmlFor="dashboard-project">Filter overview by project</label>
@@ -167,7 +167,6 @@ export default function DashboardPage() {
           <option value="">All projects</option>
           {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
         </select>
-        {canUpload && <Link prefetch={false} href="/upload" className="tf-primary-button"><span aria-hidden="true" className="text-lg leading-none">+</span> New ticket upload</Link>}
       </div>
     </div>
 
@@ -177,38 +176,15 @@ export default function DashboardPage() {
     {data ? <>
       <section className="tf-panel" aria-label="Totals">
         <div className="grid grid-cols-2 lg:grid-cols-5">
-          <Metric label="Tickets received" value={data.tickets.toLocaleString()} note="All uploaded ticket records" />
-          <Metric label="Needs review" value={data.needs_review.toLocaleString()} note={`${data.flagged.toLocaleString()} flagged, ${failed.toLocaleString()} unreadable`} attention={data.needs_review > 0} />
-          <Metric label="Accepted tickets" value={data.verified.toLocaleString()} note="Individually approved records" />
-          <Metric label="Verified tonnage" value={tons(data.total_tons)} note={`${tons(data.pending_tons)} unverified tons excluded`} />
+          <Metric label="Verified tons" value={tons(data.total_tons)} note={Number(data.pending_tons) ? `${tons(data.pending_tons)} t more waiting for review` : "Approved deliveries"} />
           <Metric label="Material cost" value={money(data.total_cost)} attention={data.unpriced_tickets > 0}
-            note={data.unpriced_tickets ? `Incomplete: leaves out ${data.unpriced_tickets} approved ticket${data.unpriced_tickets === 1 ? "" : "s"} with no rate` : "Verified, priced deliveries only"} />
+            note={data.unpriced_tickets ? `Leaves out ${data.unpriced_tickets} approved ticket${data.unpriced_tickets === 1 ? "" : "s"} with no rate` : "Approved tickets × locked rates"} />
+          <Metric label="Trucking cost" value={money(data.hauling?.approved_cost ?? "0")} note={`${tons(data.hauling?.approved_hours ?? "0")} approved truck hours`} />
+          <Metric label="Total approved cost" value={money(data.hauling?.approved_with_material ?? data.total_cost)} note="Material + trucking, each counted once" />
+          <Metric label="To review" value={(data.needs_review + (data.hauling?.awaiting_approval ?? 0)).toLocaleString()}
+            note={`${data.needs_review.toLocaleString()} tickets · ${data.hauling?.awaiting_approval ?? 0} truck shifts`} attention={data.needs_review + (data.hauling?.awaiting_approval ?? 0) > 0} />
         </div>
       </section>
-
-      {data.hauling && Number(data.hauling.approved_cost) > 0 && <section className="tf-panel" aria-label="Approved costs">
-        <div className="grid grid-cols-2 lg:grid-cols-4">
-          <Metric label="Approved material" value={money(data.total_cost)} note="Verified tickets × locked rates" />
-          <Metric label="Approved hauling" value={money(data.hauling.approved_cost)} note={`${tons(data.hauling.approved_hours)} approved truck hours`} />
-          <Metric label="Approved, material + hauling" value={money(data.hauling.approved_with_material)} note="Each counted once; nothing estimated" />
-          <Metric label="Shifts awaiting approval" value={data.hauling.awaiting_approval} note="Not a cost until approved" attention={data.hauling.awaiting_approval > 0} />
-        </div>
-      </section>}
-
-      {exceptions && (exceptions.open > 0 || Number(exceptions.recovered) > 0 || (invoices?.lines ?? 0) > 0) &&
-        <section className="tf-panel" aria-label="Invoice check">
-          <div className="tf-panel-heading">
-            <h2 className="tf-panel-title">Invoice check</h2>
-            <Link prefetch={false} href={`/invoices/exceptions${projectId ? `?project_id=${projectId}` : ""}`} className="tf-link">Open exceptions →</Link>
-          </div>
-          <div className="grid grid-cols-2 border-t border-[#e1e5e9] lg:grid-cols-4">
-            {!projectId && invoices && <Metric label="Invoiced" value={money(invoices.billed)} note={`${invoices.lines} invoice line${invoices.lines === 1 ? "" : "s"} entered`} />}
-            <Metric label="Potential overcharge" value={money(exceptions.potential_overcharge)} attention={Number(exceptions.potential_overcharge) > 0}
-              note="Billed above approved, open, not yet confirmed" />
-            <Metric label="Disputed with supplier" value={money(exceptions.disputed_amount)} note="Part of the potential overcharge" />
-            <Metric label="Credits received" value={money(exceptions.recovered)} note="Recorded by a person" />
-          </div>
-        </section>}
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
         <AttentionList items={attention} />
@@ -230,7 +206,14 @@ export default function DashboardPage() {
         </section>
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+      <div className="grid items-start gap-4 xl:grid-cols-2">
+        <Breakdown title="Quantities by material" description="Approved tons and material cost" rows={data.by_material} />
+        <Breakdown title="Quantities by supplier" description="Approved tons and material cost" rows={data.by_supplier} />
+      </div>
+
+      <details className="tf-panel" data-testid="recent-work">
+        <summary className="cursor-pointer px-4 py-2.5 text-[13px] font-semibold text-[#263646]">Recent uploads and activity</summary>
+      <div className="grid items-start gap-4 border-t border-[#e3e7ec] p-3 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
         <section className="tf-panel" aria-labelledby="uploads-title">
           <div className="tf-panel-heading">
             <h2 id="uploads-title" className="tf-panel-title">Recent uploads</h2>
@@ -265,11 +248,8 @@ export default function DashboardPage() {
           </ul> : <p className="tf-empty !py-6">Approvals, flags and skips will appear here.</p>}
         </section>
       </div>
+      </details>
 
-      <div className="grid items-start gap-4 xl:grid-cols-2">
-        <Breakdown title="Deliveries by supplier" description="Tickets received, with verified quantities and costs" rows={data.by_supplier} />
-        <Breakdown title="Deliveries by material" description="Approved tonnage and material cost by type" rows={data.by_material} />
-      </div>
       <p className="text-[11px] leading-5 text-[#5f6c7b]">
         Quantity and cost summaries exclude unverified deliveries. Material cost excludes taxes and delivery charges.
         {data.pending_cost_tickets > 0 ? ` ${data.pending_cost_tickets} tickets are not yet eligible for cost reporting.` : ""}

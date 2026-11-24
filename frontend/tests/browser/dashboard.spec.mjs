@@ -39,6 +39,8 @@ test("the dashboard leads with what needs doing, by real counts, and links to ea
   await expect(projects.getByRole("row").nth(2)).toContainText("No uploads");
   await expect(projects.getByRole("link", { name: "24-115" })).toHaveAttribute("href", "/records?project_id=1");
   const activity = page.getByRole("region", { name: "Recent activity" });
+  await expect(activity).toBeHidden(); // tucked away until asked for
+  await page.getByText("Recent uploads and activity").click();
   await expect(activity.getByRole("listitem").first()).toContainText("Approved ticket 48213 · Dana Reyes");
   await expect(activity.getByRole("link", { name: "ticket 48213" })).toHaveAttribute("href", "/upload?batch=42&ticket=901");
   await expect(page.getByRole("region", { name: "Setup checklist" })).toHaveCount(0);
@@ -50,31 +52,36 @@ test("an older server without the new sections still shows a working dashboard",
   await page.goto("/");
   await expect(page.getByRole("region", { name: "Needs attention" })).toContainText("Awaiting verification");
   await expect(page.getByRole("region", { name: "Active projects" })).toContainText("No active projects");
+  await page.getByText("Recent uploads and activity").click();
   await expect(page.getByRole("region", { name: "Recent activity" })).toContainText("will appear here");
 });
 
-test("the invoice check shows exceptions money as potential, apart from credits a person recorded", async ({ page }) => {
+test("the totals lead with quantities and costs; invoice exceptions are one row that opens the invoice workflow", async ({ page }) => {
   const requested = [];
   const summary = { open: 7, by_category: {}, by_severity: { high: 2, medium: 3, low: 2 }, potential_overcharge: "1240.50",
     billed_below_approved: "0", disputed_amount: "310.00", recovered: "95.25", money_unknown: 0, unassigned: 4 };
+  const hauling = { approved_cost: "12500.00", approved_hours: "118.500", approved_with_material: "168126.63", awaiting_approval: 3, disputed: 1 };
   await mockWorkspace(page, { extra: (request, path) => {
     if (path === "/api/exceptions") { requested.push(new URL(request.url()).search); return (route) => json(route, { summary, items: [] }); }
     return {
-      "/api/dashboard": (route) => json(route, DASHBOARD),
+      "/api/dashboard": (route) => json(route, { ...DASHBOARD, hauling }),
       "/api/onboarding": (route) => json(route, { complete: true, steps: [] }),
       "/api/invoice-comparisons/overview": (route) => json(route, { lines: 9, by_status: {}, billed: "48210.00", verified: "0", lines_unresolved: 0, by_supplier: [], exceptions: [] }),
     }[path];
   } });
   await page.goto("/");
-  const check = page.getByRole("region", { name: "Invoice check" });
-  await expect(check).toContainText("$48,210.00");
-  await expect(check).toContainText("$1,240.50");
-  await expect(check).toContainText("not yet confirmed");
-  await expect(check).toContainText("$95.25");
-  const row = page.getByRole("region", { name: "Needs attention" }).getByRole("link", { name: /Invoice exceptions/ });
+  const totals = page.getByRole("region", { name: "Totals" });
+  await expect(totals).toContainText("8,412.25");
+  await expect(totals).toContainText("$155,626.63");
+  await expect(totals).toContainText("$12,500.00");
+  await expect(totals).toContainText("$168,126.63");
+  await expect(totals).toContainText("37 tickets · 3 truck shifts");
+  await expect(page.getByRole("region", { name: "Invoice check" })).toHaveCount(0);
+  const attention = page.getByRole("region", { name: "Needs attention" });
+  await expect(attention.getByRole("link", { name: /Truck shifts to approve/ })).toHaveAttribute("href", "/trucking?status=needs_review");
+  const row = attention.getByRole("link", { name: /Invoice exceptions/ });
   await expect(row).toContainText("7");
   await expect(row).toHaveAttribute("href", "/invoices/exceptions");
   await page.locator("#dashboard-project").selectOption("1");
   await expect.poll(() => requested.at(-1)).toBe("?project_id=1");
-  await expect(check).not.toContainText("$48,210.00"); // company-wide invoicing isn't shown as one project's
 });
