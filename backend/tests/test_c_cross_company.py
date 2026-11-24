@@ -19,8 +19,9 @@ from app import auth as auth_module
 from app.auth import current_user, password_hash
 from app.config import settings
 from app.main import app
-from app.models import (Batch, InvoiceComparison, InvoiceDocument, InvoiceDraftLine, InvoiceTicketLink, Material, NameAlias,
-                        ProcessingJob, Project, SavedView, ScanSlot, Supplier, SupplierRate, Ticket, UploadedFile, User)
+from app.models import (Batch, Hauler, HaulingRate, InvoiceComparison, InvoiceDocument, InvoiceDraftLine, InvoiceTicketLink, Material,
+                        NameAlias, ProcessingJob, Project, SavedView, ScanSlot, Supplier, SupplierRate, Ticket, Truck, TruckShift,
+                        UploadedFile, User)
 
 from .test_query_budgets import _session
 from .test_t_tenant_sweep import MARK, NOWHERE, _answer, _record, _routes, _send, _text_of, world  # noqa: F401
@@ -46,6 +47,10 @@ _OWNER = {
     "rate": lambda i: select(SupplierRate.organization_id).where(SupplierRate.id == i),
     "alias": lambda i: select(NameAlias.organization_id).where(NameAlias.id == i),
     "project": lambda i: select(Project.organization_id).where(Project.id == i),
+    "hauler": lambda i: select(Hauler.organization_id).where(Hauler.id == i),
+    "truck": lambda i: select(Truck.organization_id).where(Truck.id == i),
+    "hauling_rate": lambda i: select(HaulingRate.organization_id).where(HaulingRate.id == i),
+    "shift": lambda i: select(TruckShift.organization_id).where(TruckShift.id == i),
 }
 
 

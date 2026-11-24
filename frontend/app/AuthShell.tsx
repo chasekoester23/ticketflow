@@ -37,6 +37,7 @@ const workLinks: NavLink[] = [
   { href: "/upload", label: "Ticket intake", icon: "tickets" },
   { href: "/records", label: "Delivery records", icon: "records" },
   { href: "/invoices", label: "Invoice comparison", icon: "invoices" },
+  { href: "/trucking", label: "Hourly trucking", icon: "layers" },
   { href: "/invoices/exceptions", label: "Invoice exceptions", icon: "health" },
   { href: "/reports/project", label: "Project report", icon: "report" },
 ];

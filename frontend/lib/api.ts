@@ -24,7 +24,8 @@ export type Role = "owner" | "manager" | "clerk" | "viewer";
 export type Permission =
   | "records.read" | "tickets.upload" | "tickets.edit" | "tickets.flag" | "tickets.verify"
   | "tickets.skip" | "tickets.price_override" | "projects.manage" | "pricing.manage"
-  | "invoices.manage" | "team.manage" | "scans.resolve" | "scans.confirm_blank" | "system.read";
+  | "invoices.manage" | "team.manage" | "scans.resolve" | "scans.confirm_blank" | "system.read"
+  | "usage.read" | "trucking.edit" | "trucking.approve";
 export type Account = {
   id: number;
   username: string;
@@ -575,6 +576,8 @@ export type Dashboard = {
   failed?: number;
   projects?: { id: number; code: string; name: string; tickets: number; open: number; verified_tons: string; last_upload: string | null }[];
   activity?: { at: string; action: "approved" | "flagged" | "skipped"; ticket_id: number; ticket_number: string | null; batch_id: number; by: string | null }[];
+  // Approved hourly trucking, apart from material cost. Per project through each shift's allocations.
+  hauling?: { approved_cost: string; approved_hours: string; approved_with_material: string; awaiting_approval: number; disputed: number };
 };
 export async function getDashboard(projectId?: string): Promise<Dashboard> {
   return (await check(await apiFetch(`${API}/api/dashboard${projectId ? `?project_id=${projectId}` : ""}`))).json();
@@ -864,4 +867,88 @@ export type RatePreview = {
 };
 export async function previewRate(supplier_id: number, material_id: number, unit_price: string, scope: RateScope): Promise<RatePreview> {
   return (await check(await apiFetch(`${API}/api/rates/preview`, json("POST", { supplier_id, material_id, unit_price, ...scope })))).json();
+}
+
+// ---------------------------------------------------------------- hourly trucking
+// Hours and money are decimal strings from the server: shown, never added up here.
+export const EQUIPMENT_LABEL: Record<string, string> = {
+  tandem: "Tandem", tri_axle: "Tri-axle", quad_axle: "Quad-axle", semi_end_dump: "Semi end dump", belly_dump: "Belly dump", other: "Other",
+};
+export type HaulerRow = { id: number; name: string; contact: string | null; trucks: { id: number; identifier: string; equipment_type: string; active: boolean }[] };
+export type HaulingRate = {
+  id: number; hauler_id: number; project_id: number | null; equipment_type: string | null; hourly_rate: string;
+  minimum_hours: string | null; standby_rate: string | null; effective_from: string | null; effective_to: string | null;
+};
+export type TruckShift = {
+  id: number; revision: string; status: "needs_review" | "approved" | "disputed";
+  project_id: number; project: string | null; work_date: string; truck_id: number; truck: string; equipment_type: string;
+  hauler_id: number; hauler: string; driver_name: string | null; start_at: string; end_at: string;
+  unpaid_break_minutes: number; standby_hours: string; claimed_hours: string | null; loads: number | null;
+  field_signoff: string | null; cost_code: string | null; notes: string | null;
+  on_site_hours: string | null; work_hours: string | null;
+  rate: { id: number; hourly_rate: string; standby_rate: string | null; minimum_hours: string | null } | null;
+  cost_lines: { label: string; hours: string; rate: string; amount: string }[];
+  cost: string | null; cost_is_locked: boolean;
+  approved: { work_hours: string; standby_hours: string; billable_hours: string; hourly_rate: string; standby_rate: string | null;
+    minimum_hours: string | null; by: string | null; at: string } | null;
+  flags: string[];
+  deliveries: { count: number; tons: string | null; ticket_ids: number[]; cost_per_ton: string | null };
+};
+export type ShiftsPage = {
+  shifts: TruckShift[]; truncated: boolean;
+  summary: { shifts: number; awaiting_approval: number; disputed: number; approved_hours: string; approved_cost: string; loads: number; with_flags: number };
+};
+export type ShiftInput = {
+  project_id: number; truck_id: number; start_at: string; end_at: string; unpaid_break_minutes: number; standby_hours: string;
+  claimed_hours: string | null; loads: number | null; driver_name: string | null; field_signoff: string | null;
+  cost_code: string | null; notes: string | null;
+};
+export type ShiftFilters = { project_id?: string; hauler_id?: string; status?: string; date_from?: string; date_to?: string };
+
+const withRevision = (init: RequestInit, revision: string): RequestInit => {
+  (init.headers as Record<string, string>)["If-Match"] = revision;
+  return init;
+};
+export async function listHaulers(): Promise<HaulerRow[]> {
+  return (await check(await apiFetch(`${API}/api/haulers`))).json();
+}
+export async function createHauler(name: string): Promise<void> {
+  await check(await apiFetch(`${API}/api/haulers`, json("POST", { name })));
+}
+export async function createTruck(hauler_id: number, identifier: string, equipment_type: string): Promise<void> {
+  await check(await apiFetch(`${API}/api/trucks`, json("POST", { hauler_id, identifier, equipment_type })));
+}
+export async function listHaulingRates(): Promise<HaulingRate[]> {
+  return (await check(await apiFetch(`${API}/api/hauling-rates`))).json();
+}
+export async function createHaulingRate(body: Omit<HaulingRate, "id">): Promise<void> {
+  await check(await apiFetch(`${API}/api/hauling-rates`, json("POST", body)));
+}
+export async function deleteHaulingRate(id: number): Promise<void> {
+  await check(await apiFetch(`${API}/api/hauling-rates/${id}`, { method: "DELETE" }));
+}
+export async function listShifts(filters: ShiftFilters = {}): Promise<ShiftsPage> {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => v && params.set(k, v));
+  return (await check(await apiFetch(`${API}/api/truck-shifts${params.toString() ? "?" + params : ""}`))).json();
+}
+export async function createShift(body: ShiftInput): Promise<TruckShift> {
+  return (await check(await apiFetch(`${API}/api/truck-shifts`, json("POST", body)))).json();
+}
+export async function editShift(id: number, revision: string, body: ShiftInput): Promise<TruckShift> {
+  return (await check(await apiFetch(`${API}/api/truck-shifts/${id}`, withRevision(json("PUT", body), revision)))).json();
+}
+export async function approveShift(id: number, revision: string, body: {
+  work_hours: string; standby_hours: string; allocations?: { project_id: number; cost_code: string | null; hours: string }[];
+}): Promise<TruckShift> {
+  return (await check(await apiFetch(`${API}/api/truck-shifts/${id}/approve`, withRevision(json("POST", body), revision)))).json();
+}
+export async function reopenShift(id: number, revision: string, reason: string): Promise<TruckShift> {
+  return (await check(await apiFetch(`${API}/api/truck-shifts/${id}/reopen`, withRevision(json("POST", { reason }), revision)))).json();
+}
+export async function linkShiftDeliveries(id: number, ticket_ids: number[]): Promise<TruckShift> {
+  return (await check(await apiFetch(`${API}/api/truck-shifts/${id}/deliveries`, json("PUT", { ticket_ids })))).json();
+}
+export async function shiftHistory(id: number): Promise<{ field: string; old: string | null; new: string | null; at: string; actor: string | null }[]> {
+  return (await check(await apiFetch(`${API}/api/truck-shifts/${id}/history`))).json();
 }

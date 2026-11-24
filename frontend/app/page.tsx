@@ -150,6 +150,7 @@ export default function DashboardPage() {
     { label: "Flagged for follow-up", hint: "Set aside with a question", count: data.flagged, href: "/records?status=flagged" },
     { label: "Couldn't be read", hint: "Enter by hand, or retry the batch", count: failed, href: "/records?status=failed", tone: "bad" },
     { label: "Approved without a rate", hint: "No cost until a rate is set", count: data.unpriced_tickets, href: "/pricing" },
+    ...(data.hauling ? [{ label: "Truck shifts to approve", hint: "Hourly trucking from the time sheets", count: data.hauling.awaiting_approval, href: "/trucking?status=needs_review" }] : []),
     ...(exceptions ? [{ label: "Invoice exceptions", hint: `${exceptions.by_severity.high} high · ${exceptions.unassigned} without an owner`, count: exceptions.open, href: "/invoices/exceptions", tone: "bad" as const }]
       : invoices ? [{ label: "Invoice lines with differences", hint: "Billed differently from approved tickets", count: invoices.by_status.discrepancy ?? 0, href: "/invoices", tone: "bad" as const }] : []),
   ] : [];
@@ -184,6 +185,15 @@ export default function DashboardPage() {
             note={data.unpriced_tickets ? `Incomplete: leaves out ${data.unpriced_tickets} approved ticket${data.unpriced_tickets === 1 ? "" : "s"} with no rate` : "Verified, priced deliveries only"} />
         </div>
       </section>
+
+      {data.hauling && Number(data.hauling.approved_cost) > 0 && <section className="tf-panel" aria-label="Approved costs">
+        <div className="grid grid-cols-2 lg:grid-cols-4">
+          <Metric label="Approved material" value={money(data.total_cost)} note="Verified tickets × locked rates" />
+          <Metric label="Approved hauling" value={money(data.hauling.approved_cost)} note={`${tons(data.hauling.approved_hours)} approved truck hours`} />
+          <Metric label="Approved, material + hauling" value={money(data.hauling.approved_with_material)} note="Each counted once; nothing estimated" />
+          <Metric label="Shifts awaiting approval" value={data.hauling.awaiting_approval} note="Not a cost until approved" attention={data.hauling.awaiting_approval > 0} />
+        </div>
+      </section>}
 
       {exceptions && (exceptions.open > 0 || Number(exceptions.recovered) > 0 || (invoices?.lines ?? 0) > 0) &&
         <section className="tf-panel" aria-label="Invoice check">
