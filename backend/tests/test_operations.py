@@ -90,6 +90,8 @@ def test_a_recent_heartbeat_means_running_and_an_old_one_doesnt(client):
 
 
 def test_worker_run_beats_and_clears_its_heartbeat(client, monkeypatch):
+    # The heartbeat file is the single-machine worker's; on either database it's what's tested here.
+    monkeypatch.setattr(settings, "worker_coordination", "local")
     from app.routers import api as api_module
     from scripts import run_worker
     from .conftest import FixtureExtractor

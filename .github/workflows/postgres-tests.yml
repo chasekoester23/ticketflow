@@ -21,7 +21,8 @@ permissions:
 jobs:
   postgres:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # The critical checks (up to 8 minutes) run first, then the full suite (up to 21).
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: backend
@@ -52,7 +53,16 @@ jobs:
             backend/constraints.txt
       - name: Install dependencies
         run: python -m pip install -r requirements-dev.txt -r requirements-postgres.txt -c constraints.txt
+      - name: Critical checks on PostgreSQL first (migrations, guards, row security, isolation, locked money)
+        # Run on their own, with their own limit, so they report even if an unrelated test later hangs.
+        run: |
+          set -o pipefail
+          timeout 8m python -m pytest -q -o faulthandler_timeout=240 -p no:cacheprovider \
+            tests/test_schema.py tests/test_db_guards.py tests/test_row_security.py tests/test_t_tenant_sweep.py \
+            tests/test_c_cross_company.py tests/test_price_snapshots.py tests/test_verification_integrity.py \
+            tests/test_b_migrate_sqlite_to_postgres.py 2>&1 | tee critical.log
       - name: Run the backend suite on PostgreSQL
+        if: ${{ !cancelled() }}
         # A test stuck for 4 minutes has every thread's stack dumped, and the run stops before
         # the job's own limit, so the next step can name it where logs need no sign-in.
         run: |
