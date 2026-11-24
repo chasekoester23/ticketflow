@@ -89,6 +89,8 @@ function Detail({ item, page, onSaved }: { item: BillingException; page: Excepti
       <div className="flex flex-wrap gap-2 text-[12px]">
         {item.line_ids.map((id, n) => <Link key={id} prefetch={false} className="tf-secondary-button" href={`/invoices?line=${id}`}>
           Invoice {item.invoice_numbers[n] ?? item.invoice_numbers[0]} <span aria-hidden="true">→</span></Link>)}
+        {item.shift_id && <Link prefetch={false} className="tf-secondary-button" href={`/trucking?shift_id=${item.shift_id}`}>
+          Truck shift <span aria-hidden="true">→</span></Link>}
         {item.ticket_number && <Link prefetch={false} className="tf-secondary-button" href={`/records?q=${encodeURIComponent(item.ticket_number)}`}>
           Ticket {item.ticket_number} in records <span aria-hidden="true">→</span></Link>}
         {item.category === "not_invoiced" && item.project_id !== null && <Link prefetch={false} className="tf-secondary-button" href="/reports/project">

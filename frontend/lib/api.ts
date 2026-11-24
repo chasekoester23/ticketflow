@@ -818,7 +818,7 @@ export type BillingException = {
   supplier: string; material: string | null; invoice_numbers: string[]; line_ids: number[];
   ticket_number: string | null; ticket_ids: number[]; billed_tons: string | null; approved_tons: string | null;
   amount: string | null; line_billed: string | null; line_approved: string | null;
-  unbilled_tickets: number | null; detected: boolean;
+  unbilled_tickets: number | null; detected: boolean; shift_id?: number | null; hauling_invoice_id?: number | null;
   status: ExceptionStatus; assignee_user_id: number | null; assignee: string | null;
   recovered_amount: string | null; note: string | null; revision: string; updated_at: string | null; updated_by: string | null;
   // Closed by a person, then its figures changed: it needs a person again. Their status is kept.
@@ -878,6 +878,7 @@ export type HaulerRow = { id: number; name: string; contact: string | null; truc
 export type HaulingRate = {
   id: number; hauler_id: number; project_id: number | null; equipment_type: string | null; hourly_rate: string;
   minimum_hours: string | null; standby_rate: string | null; effective_from: string | null; effective_to: string | null;
+  billing_increment: string | null; increment_rounding: "up" | "nearest" | null;
 };
 export type TruckShift = {
   id: number; revision: string; status: "needs_review" | "approved" | "disputed";
@@ -885,7 +886,8 @@ export type TruckShift = {
   hauler_id: number; hauler: string; driver_name: string | null; start_at: string; end_at: string;
   unpaid_break_minutes: number; standby_hours: string; claimed_hours: string | null; loads: number | null;
   field_signoff: string | null; cost_code: string | null; notes: string | null;
-  on_site_hours: string | null; work_hours: string | null;
+  on_site_hours: string | null; billed_time_hours?: string | null; work_hours: string | null;
+  source?: "manual" | "extracted"; timesheet?: { name: string } | null;
   rate: { id: number; hourly_rate: string; standby_rate: string | null; minimum_hours: string | null } | null;
   cost_lines: { label: string; hours: string; rate: string; amount: string }[];
   cost: string | null; cost_is_locked: boolean;
@@ -952,3 +954,38 @@ export async function linkShiftDeliveries(id: number, ticket_ids: number[]): Pro
 export async function shiftHistory(id: number): Promise<{ field: string; old: string | null; new: string | null; at: string; actor: string | null }[]> {
   return (await check(await apiFetch(`${API}/api/truck-shifts/${id}/history`))).json();
 }
+
+export async function disputeShift(id: number, revision: string, status: "disputed" | "needs_review", reason: string): Promise<TruckShift> {
+  return (await check(await apiFetch(`${API}/api/truck-shifts/${id}/dispute`, withRevision(json("POST", { status, reason }), revision)))).json();
+}
+async function upload(url: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return (await check(await apiFetch(url, { method: "POST", body: form }))).json();
+}
+export const attachTimesheet = (id: number, file: File): Promise<TruckShift> => upload(`${API}/api/truck-shifts/${id}/timesheet`, file);
+export const timesheetUrl = (id: number) => `${API}/api/truck-shifts/${id}/timesheet`;
+
+export type HaulingInvoiceLine = {
+  line_no?: number; kind: "hours" | "standby" | "minimum" | "fee"; truck_identifier: string | null; work_date: string | null;
+  hours: string | null; rate: string | null; amount: string; description: string | null;
+  result?: "matched" | "differs" | "repeat" | "no_shift" | "not_approved" | "ambiguous" | "fee" | null;
+  shift_id?: number | null; supported?: string | null; difference?: string | null;
+};
+export type HaulingInvoice = {
+  id: number; revision: string; hauler_id: number; hauler: string | null; project_id: number | null; project: string | null;
+  invoice_number: string; invoice_date: string | null; period_from: string; period_to: string; document: { name: string } | null;
+  billed: string; supported: string | null; difference: string | null; exceptions: number; lines: HaulingInvoiceLine[];
+};
+export type HaulingInvoiceInput = Pick<HaulingInvoice, "hauler_id" | "project_id" | "invoice_number" | "invoice_date" | "period_from" | "period_to"> & {
+  lines: HaulingInvoiceLine[];
+};
+export async function listHaulingInvoices(): Promise<HaulingInvoice[]> {
+  return (await check(await apiFetch(`${API}/api/hauling-invoices`))).json();
+}
+export async function saveHaulingInvoice(body: HaulingInvoiceInput, existing?: { id: number; revision: string }): Promise<HaulingInvoice> {
+  const init = json(existing ? "PUT" : "POST", body);
+  return (await check(await apiFetch(`${API}/api/hauling-invoices${existing ? "/" + existing.id : ""}`, existing ? withRevision(init, existing.revision) : init))).json();
+}
+export const attachHaulingInvoice = (id: number, file: File): Promise<HaulingInvoice> => upload(`${API}/api/hauling-invoices/${id}/document`, file);
+export const haulingInvoiceUrl = (id: number) => `${API}/api/hauling-invoices/${id}/document`;

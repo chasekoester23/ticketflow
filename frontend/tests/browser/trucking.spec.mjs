@@ -22,7 +22,14 @@ const SHIFT = {
 const PAGE = (shifts) => ({ shifts, truncated: false, summary: { shifts: shifts.length, awaiting_approval: 1, disputed: 0, approved_hours: "18.00",
   approved_cost: "1980.00", loads: 7, with_flags: 1 } });
 
-async function mock(page, role, { onApprove, requests = [] } = {}) {
+const INVOICE = { id: 9, revision: "1", hauler_id: 2, hauler: "Fictional Hauling LLC", project_id: 7, project: "P1", invoice_number: "FH-1001",
+  invoice_date: null, period_from: "2026-11-01", period_to: "2026-11-30", document: null, billed: "1455.00", supported: "990.00", difference: "465.00", exceptions: 2,
+  lines: [{ line_no: 1, kind: "hours", truck_identifier: "T-12", work_date: "2026-11-03", hours: "10.00", rate: "115.0000", amount: "1150.00", description: null,
+    result: "differs", shift_id: 5, supported: "990.00", difference: "160.00" },
+    { line_no: 2, kind: "fee", truck_identifier: null, work_date: null, hours: null, rate: null, amount: "305.00", description: "Fuel surcharge",
+      result: "fee", shift_id: null, supported: "0.00", difference: "305.00" }] };
+
+async function mock(page, role, { onApprove, requests = [], posted = [] } = {}) {
   let current = SHIFT;  // what the server holds, so a reload after approving shows it approved
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -32,6 +39,10 @@ async function mock(page, role, { onApprove, requests = [] } = {}) {
     if (url.pathname === "/api/projects") return json(route, [{ id: 7, code: "P1", name: "Fictional Sitework", status: "active", job_location: null, description: null }]);
     if (url.pathname === "/api/haulers") return json(route, [{ id: 2, name: "Fictional Hauling LLC", contact: null, trucks: [{ id: 3, identifier: "T-12", equipment_type: "quad_axle", active: true }] }]);
     if (url.pathname === "/api/hauling-rates") return json(route, []);
+    if (url.pathname === "/api/hauling-invoices" && request.method() === "POST") { posted.push(request.postDataJSON()); return json(route, INVOICE, 201); }
+    if (url.pathname === "/api/hauling-invoices") return json(route, [INVOICE]);
+    if (url.pathname === "/api/truck-shifts/5/dispute") { posted.push({ dispute: request.postDataJSON(), ifMatch: request.headers()["if-match"] });
+      return json(route, { ...current, status: "disputed", revision: "2" }); }
     if (url.pathname === "/api/truck-shifts") { requests.push(url.search); return json(route, PAGE([current])); }
     if (url.pathname === "/api/truck-shifts/5/history") return json(route, []);
     if (url.pathname === "/api/truck-shifts/5/approve") { current = onApprove(request); return json(route, current); }
@@ -73,4 +84,46 @@ test("a viewer can't approve, and the overview's link opens shifts awaiting appr
   await expect(page.getByTestId("shift-detail")).toBeVisible();
   await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "+ Enter a shift" })).toHaveCount(0);
+});
+
+test("a hauling invoice shows billed against supported, line by line, and a new one is entered with its lines", async ({ page }) => {
+  const posted = [];
+  await mock(page, "manager", { posted });
+  await page.goto("/trucking");
+  const invoices = page.getByRole("region", { name: "Hauling invoices" });
+  const row = invoices.getByRole("table", { name: "Hauling invoice list" }).getByRole("row").nth(1);
+  await expect(row).toContainText("$1,455.00");
+  await expect(row).toContainText("$465.00");
+  await row.getByRole("button", { name: "FH-1001" }).click();
+  const lines = invoices.getByRole("table", { name: "Lines of FH-1001" });
+  await expect(lines.getByRole("row").nth(0)).toContainText("Differs");
+  await expect(lines.getByRole("row").nth(0)).toContainText("+$160.00");
+  await expect(lines.getByRole("row").nth(1)).toContainText("Fee: not in an agreement");
+
+  await invoices.getByRole("button", { name: "+ Enter an invoice" }).click();
+  const form = page.getByRole("form", { name: "Enter hauling invoice" });
+  await form.getByLabel("Hauler").selectOption("2");
+  await form.getByLabel("Invoice number").fill("FH-1002");
+  await form.getByLabel("Period from").fill("2026-11-01");
+  await form.getByLabel("Period to").fill("2026-11-30");
+  await form.getByLabel("Truck").fill("T-12");
+  await form.getByLabel("Date worked").fill("2026-11-04");
+  await form.getByLabel("Hours", { exact: true }).fill("9");
+  await form.getByLabel("Rate", { exact: true }).fill("110");
+  await form.getByLabel("Amount").fill("990.00");
+  await form.getByRole("button", { name: "Save and check" }).click();
+  await expect.poll(() => posted.length).toBe(1);
+  expect(posted[0]).toMatchObject({ hauler_id: 2, invoice_number: "FH-1002", period_from: "2026-11-01",
+    lines: [{ kind: "hours", truck_identifier: "T-12", work_date: "2026-11-04", hours: "9", rate: "110", amount: "990.00" }] });
+});
+
+test("a manager disputes a shift with a reason, and approval waits until it's settled", async ({ page }) => {
+  const posted = [];
+  await mock(page, "manager", { posted, onApprove: () => SHIFT });
+  await page.goto("/trucking?shift_id=5");
+  const detail = page.getByTestId("shift-detail");
+  await detail.getByLabel("Reason to dispute with the hauler").fill("Hauler bills 7 h; the sheet shows 6.5");
+  await detail.getByRole("button", { name: "Dispute" }).click();
+  await expect.poll(() => posted.length).toBe(1);
+  expect(posted[0]).toEqual({ dispute: { status: "disputed", reason: "Hauler bills 7 h; the sheet shows 6.5" }, ifMatch: "1" });
 });
