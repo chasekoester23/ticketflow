@@ -192,3 +192,31 @@ def test_an_approved_shifts_deliveries_are_locked_with_it(client, yard):
         assert client.put(f"/api/truck-shifts/{shift['id']}/deliveries", json={"ticket_ids": change}).status_code == 409
     again = next(s for s in client.get("/api/truck-shifts").json()["shifts"] if s["id"] == shift["id"])
     assert again["deliveries"]["ticket_ids"] == [first] and again["cost"] == approved["cost"]
+
+
+def test_quarter_hour_billing_rounds_the_time_and_approval_takes_whole_steps(client, yard):
+    client.post("/api/hauling-rates", json={"hauler_id": yard["hauler"], "project_id": yard["project"], "hourly_rate": "100.00",
+                                            "billing_increment": "0.25", "increment_rounding": "up"})
+    shift = _shift(client, yard, start_at="2026-11-03T07:00", end_at="2026-11-03T14:50", unpaid_break_minutes=0)  # 7 h 50 m
+    assert (shift["on_site_hours"], shift["billed_time_hours"], shift["work_hours"], shift["cost"]) == ("7.83", "8.00", "8.00", "800.00")
+    assert any("0.25 h steps" in flag for flag in shift["flags"])
+    assert _approve(client, shift, work_hours="7.90", standby_hours="0").status_code == 422  # not a whole step
+    assert _approve(client, shift, work_hours="8.25", standby_hours="0").status_code == 422  # more than the rounded time
+    approved = _approve(client, shift, work_hours="8.00", standby_hours="0").json()
+    assert approved["cost"] == "800.00" and approved["approved"]["billing_increment"] == "0.25"
+    half = client.post("/api/hauling-rates", json={"hauler_id": yard["hauler"], "hourly_rate": "1", "billing_increment": "0.25"})
+    assert half.status_code == 422  # an increment needs its rounding rule
+
+
+def test_a_dispute_is_raised_and_settled_with_reasons_and_blocks_approval_meanwhile(client, yard):
+    shift = _shift(client, yard, claimed_hours="11.00")
+    raised = client.post(f"/api/truck-shifts/{shift['id']}/dispute", json={"status": "disputed", "reason": "Hauler bills 11 h; sheet shows 9"},
+                         headers={"If-Match": shift["revision"]})
+    assert raised.status_code == 200 and raised.json()["status"] == "disputed"
+    disputed = raised.json()
+    assert _approve(client, disputed, work_hours="9", standby_hours="0").status_code == 409
+    settled = client.post(f"/api/truck-shifts/{shift['id']}/dispute", json={"status": "needs_review", "reason": "Hauler accepted 9 h"},
+                          headers={"If-Match": disputed["revision"]}).json()
+    assert _approve(client, settled, work_hours="9", standby_hours="0").status_code == 200
+    fields = [e["field"] for e in client.get(f"/api/truck-shifts/{shift['id']}/history").json()]
+    assert fields[1:6] == ["status", "dispute", "status", "dispute_settled", "status"]

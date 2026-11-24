@@ -26,12 +26,16 @@ Price (explicit; nothing is assumed)
 - Minimum hours: if working + standby is below the minimum, the difference is charged
   at the hourly rate, as its own line.
 - Each line is rounded to the cent; the total is their sum, as an invoice adds lines.
+
+Billing increments (the agreement's, e.g. quarter hours): time on site is rounded to
+the step, "up" or to the "nearest" (half a step rounds up), before standby is taken
+off. Approved hours must be whole steps, and may be up to the rounded time on site.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
 from .pricing import to_cents
 
@@ -69,6 +73,25 @@ class HaulRate:
     standby_rate: Decimal | None = None
     effective_from: date | None = None
     effective_to: date | None = None
+    billing_increment: Decimal | None = None
+    increment_rounding: str | None = None  # "up" | "nearest"
+
+
+ROUNDINGS = ("up", "nearest")
+
+
+def to_increment(hours: Decimal, increment: Decimal | None, rounding: str | None) -> Decimal:
+    """Hours in the agreement's billing steps. No increment: unchanged."""
+    if increment is None:
+        return hours
+    if increment <= 0 or rounding not in ROUNDINGS:
+        raise ShiftError("A billing increment needs a positive step and a rounding rule (up or nearest).")
+    steps = (hours / increment).to_integral_value(rounding=ROUND_CEILING if rounding == "up" else ROUND_HALF_UP)
+    return (steps * increment).quantize(HOURS)
+
+
+def in_steps(hours: Decimal, increment: Decimal | None) -> bool:
+    return increment is None or (hours / increment) == (hours / increment).to_integral_value()
 
 
 @dataclass(frozen=True)

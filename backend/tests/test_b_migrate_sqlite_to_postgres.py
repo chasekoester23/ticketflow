@@ -678,6 +678,15 @@ def build_fictional_business(url: str, storage: Path, monkeypatch) -> dict:
             "work_hours": "7.25", "standby_hours": "0.75", "allocations": [{"project_id": project, "hours": "5.33", "cost_code": "31-2300"},
                                                                            {"project_id": other_project, "hours": "2.67"}]})
         assert approved.status_code == 200, approved.text
+        hauling = client.post("/api/hauling-invoices", json={
+            "hauler_id": hauler, "project_id": project, "invoice_number": "FH-77", "period_from": "2026-09-01", "period_to": "2026-09-30",
+            "lines": [{"kind": "hours", "truck_identifier": "T-7", "work_date": "2026-09-10", "hours": "7.25", "rate": "110.00", "amount": "797.50"},
+                      {"kind": "fee", "amount": "41.17", "description": "Fuel surcharge"}]})
+        assert hauling.status_code == 201, hauling.text
+        assert client.post(f"/api/hauling-invoices/{hauling.json()['id']}/document",
+                           files={"file": ("FH-77.pdf", make_invoice_pdf(), "application/pdf")}).status_code == 200
+        assert client.post(f"/api/truck-shifts/{shift['id']}/timesheet",
+                           files={"file": ("sheet.pdf", make_invoice_pdf(), "application/pdf")}).status_code == 200
         exception = client.get("/api/exceptions").json()["items"][0]
         owned = client.post("/api/exceptions/review", headers={"If-Match": exception["revision"]}, json={
             "key": exception["key"], "status": "disputed", "assignee_user_id": ids["first_owner"], "note": "Sent to the supplier."})
@@ -719,6 +728,7 @@ def company_answers(client, ids: dict) -> dict:
             "invoice_overview": client.get("/api/invoice-comparisons/overview").json(),
             "exceptions": client.get("/api/exceptions", params={"status": "all"}).json(),
             "truck_shifts": client.get("/api/truck-shifts").json(),
+            "hauling_invoices": client.get("/api/hauling-invoices").json(),
             "records": records,
             "audit": {row["id"]: client.get(f"/api/tickets/{row['id']}/audit").json() for row in records["rows"]},
             "pricing_history": client.get("/api/pricing/history").json(),

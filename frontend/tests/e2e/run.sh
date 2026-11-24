@@ -37,7 +37,7 @@ trap cleanup EXIT
 step() { STEP="$1"; LOG="${2:-}"; echo "== $STEP"; }
 
 # An explicit environment overrides any backend/.env. No key means no AI, by construction.
-export DATABASE_URL="sqlite:///$WORK/demo.db" STORAGE_DIR="$WORK/storage"
+export DATABASE_URL="sqlite:///$WORK/demo.db" STORAGE_DIR="$WORK/storage" BACKUP_DIR="$WORK/backups"
 export EXTRACTION_PROVIDER=gemini GEMINI_API_KEY="" ANTHROPIC_API_KEY="" OPENAI_API_KEY=""
 export CORS_ORIGINS="[\"http://127.0.0.1:$WEB_PORT\"]" TRUSTED_HOSTS='["127.0.0.1","localhost"]'
 export NEXT_PUBLIC_API_URL="http://127.0.0.1:$API_PORT" DEMO_WEB_URL="http://127.0.0.1:$WEB_PORT"

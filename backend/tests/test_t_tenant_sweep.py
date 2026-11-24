@@ -37,7 +37,8 @@ SELF = SELF_SERVICE | {"/api/auth/me"}
 # Path parameter -> which record it names. A new parameter must be added here.
 PATH_PARAMS = {"batch_id": "batch", "ticket_id": "ticket", "link_id": "link", "document_id": "document", "file_id": "file",
                "slot_id": "slot", "view_id": "view", "member_id": "member", "sid": "supplier", "mid": "material", "rid": "rate",
-               "pid": "project", "alias_id": "alias", "project_id": "project", "rate_id": "hauling_rate", "shift_id": "shift"}
+               "pid": "project", "alias_id": "alias", "project_id": "project", "rate_id": "hauling_rate", "shift_id": "shift",
+               "invoice_id": "hauling_invoice"}
 # Query, body and form fields that name a record. Anything else ending in _id or _ids must be added.
 FIELDS = {"project_id": "project", "ticket_id": "ticket", "ticket_ids": "ticket", "supplier_id": "supplier",
           "material_id": "material", "target_id": "supplier", "view_id": "view", "assignee_user_id": "member",
@@ -125,6 +126,12 @@ def _company(client, org: int) -> dict:
     ids["hauling_rate"] = client.post("/api/hauling-rates", json={"hauler_id": ids["hauler"], "hourly_rate": "100"}).json()["id"]
     ids["shift"] = client.post("/api/truck-shifts", json={"project_id": ids["project"], "truck_id": ids["truck"], "notes": MARK[org],
                                                           "start_at": "2026-09-15T07:00", "end_at": "2026-09-15T15:00"}).json()["id"]
+    ids["hauling_invoice"] = client.post("/api/hauling-invoices", json={
+        "hauler_id": ids["hauler"], "invoice_number": f"H-{MARK[org]}", "period_from": "2026-09-01", "period_to": "2026-09-30",
+        "lines": [{"kind": "hours", "truck_identifier": f"T-{MARK[org]}", "work_date": "2026-09-15", "hours": "8", "rate": "100",
+                   "amount": "800.00", "description": MARK[org]}]}).json()["id"]
+    client.post(f"/api/truck-shifts/{ids['shift']}/timesheet", files={"file": ("sheet.pdf", INVOICE, "application/pdf")})
+    client.post(f"/api/hauling-invoices/{ids['hauling_invoice']}/document", files={"file": ("h.pdf", INVOICE, "application/pdf")})
     return ids
 
 
@@ -179,6 +186,13 @@ def _body(method: str, path: str, ids: dict):
         ("POST", "/api/truck-shifts/{shift_id}/approve"): {"work_hours": "8", "standby_hours": "0"},
         ("POST", "/api/truck-shifts/{shift_id}/reopen"): {"reason": "swept"},
         ("PUT", "/api/truck-shifts/{shift_id}/deliveries"): {"ticket_ids": [ids["ticket2"]]},
+        ("POST", "/api/truck-shifts/{shift_id}/dispute"): {"status": "disputed", "reason": "swept"},
+        ("POST", "/api/truck-shifts/{shift_id}/timesheet"): (None, None, {"file": ("t.pdf", INVOICE, "application/pdf")}, None),
+        ("POST", "/api/hauling-invoices"): {"hauler_id": ids["hauler"], "invoice_number": "H-SWEEP", "period_from": "2026-09-01",
+                                            "period_to": "2026-09-30", "lines": [{"kind": "fee", "amount": "1.00"}]},
+        ("PUT", "/api/hauling-invoices/{invoice_id}"): {"hauler_id": ids["hauler"], "invoice_number": "H-SWEPT", "period_from": "2026-09-01",
+                                                        "period_to": "2026-09-30", "lines": [{"kind": "fee", "amount": "1.00"}]},
+        ("POST", "/api/hauling-invoices/{invoice_id}/document"): (None, None, {"file": ("i.pdf", INVOICE, "application/pdf")}, None),
         ("POST", "/api/rates/preview"): {"supplier_id": ids["supplier"], "material_id": ids["material"], "unit_price": "12"},
         ("POST", "/api/exceptions/review"): {"key": "sweep", "status": "investigating", "assignee_user_id": ids["member"]},
         ("POST", "/api/invoice-comparisons"): line,
@@ -361,7 +375,7 @@ NOT_SHOWING_MARKS = {"/api/batches", "/api/batches/queue", "/api/batches/{batch_
                      "/api/invoice-documents/{document_id}", "/api/invoice-documents/{document_id}/history",
                      "/api/invoice-comparisons/overview", "/api/reports/pilot", "/api/reports/pilot.csv", "/api/records/name-variants",
                      "/api/dashboard", "/api/setup/status", "/api/exceptions/history", "/api/rates/timeline",
-                     "/api/hauling-rates",
+                     "/api/hauling-rates", "/api/hauling-invoices/{invoice_id}/history",
                      # Counts of reads and tokens, never a record.
                      "/api/system/usage",
                      "/api/invoice-comparisons/discrepancies.csv",

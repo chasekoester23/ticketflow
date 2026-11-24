@@ -19,7 +19,7 @@ from app import auth as auth_module
 from app.auth import current_user, password_hash
 from app.config import settings
 from app.main import app
-from app.models import (Batch, Hauler, HaulingRate, InvoiceComparison, InvoiceDocument, InvoiceDraftLine, InvoiceTicketLink, Material,
+from app.models import (Batch, Hauler, HaulingInvoice, HaulingRate, InvoiceComparison, InvoiceDocument, InvoiceDraftLine, InvoiceTicketLink, Material,
                         NameAlias, ProcessingJob, Project, SavedView, ScanSlot, Supplier, SupplierRate, Ticket, Truck, TruckShift,
                         UploadedFile, User)
 
@@ -51,6 +51,7 @@ _OWNER = {
     "truck": lambda i: select(Truck.organization_id).where(Truck.id == i),
     "hauling_rate": lambda i: select(HaulingRate.organization_id).where(HaulingRate.id == i),
     "shift": lambda i: select(TruckShift.organization_id).where(TruckShift.id == i),
+    "hauling_invoice": lambda i: select(HaulingInvoice.organization_id).where(HaulingInvoice.id == i),
 }
 
 
