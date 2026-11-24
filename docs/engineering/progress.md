@@ -11,7 +11,8 @@ contractor's documents yet.
 | Material tickets | Upload (PDF, scans, phone photos, EXIF orientation), Gemini extraction with retries and usage metering, review with keyboard flow, approval that locks price, duplicate protection | `services/pipeline.py`, `upload/` |
 | Material pricing | Company and project agreements, start dates, expiry dates, pricing timeline (gaps, overlaps, expiry), preview of a rate change on waiting tickets | `services/pricing.py`, `routers/pricing.py` |
 | Invoice reconciliation | Per-line comparison with exact money bridge; exceptions center (owner, status, disputes, credits recorded, append-only history, stable identity, reopens when figures change after closing) | `routers/invoices.py`, `services/exceptions.py` |
-| **Hourly trucking (new)** | Haulers, trucks, hourly agreements (project / truck type / dates / minimum / standby), truck shifts from time sheets, approval that locks hours, rates and cost, split across projects and cost codes to the cent, reopen with reason, delivery linking with no per-delivery charge, Overview totals | `services/trucking.py`, `routers/trucking.py`, `app/trucking/` |
+| Trucking reconciliation (branch `feature/trucking-reconciliation`) | Billing increments (quarter hours, up or nearest), shift disputes with reasons, original time sheets and hauling-invoice files (stored, served per company, audited), hauling invoices checked line by line against approved shifts (hours, rate and arithmetic effects that add to each line's difference; repeats; unsupported fees; missing shifts; unapproved/unclear shifts; unbilled approved shifts), all in the exceptions center | `services/hauling_invoices.py`, `app/trucking/HaulingInvoices.tsx` |
+| **Hourly trucking (PR #37)** | Haulers, trucks, hourly agreements (project / truck type / dates / minimum / standby), truck shifts from time sheets, approval that locks hours, rates and cost, split across projects and cost codes to the cent, reopen with reason, delivery linking with no per-delivery charge, Overview totals | `services/trucking.py`, `routers/trucking.py`, `app/trucking/` |
 | Cloud foundation (main, PR #35) | Object storage, worker leases, PostgreSQL row-level security policies, backup drills, deploy validation | `docs/engineering/postgres.md` |
 
 ## Hourly trucking: decisions
@@ -40,14 +41,33 @@ six new tables and `tickets.truck_shift_id`, no table rebuilt. Rollback: restore
 pre-upgrade backup (downgrades are refused by design). PostgreSQL: runs in CI only;
 not run on this machine.
 
+## Verification status (2026-11-24)
+
+- SQLite backend suite, browser suite (production build) and real-stack suite pass locally.
+- **PostgreSQL: not verified anywhere end to end.** No PostgreSQL or Docker on the dev
+  machine, and the CI "PostgreSQL tests" job has failed on `main` since at least
+  2026-11-12 (`d33de3f`, before PR #36): the worker-kill tests in
+  `tests/test_t_failures.py` time out on PostgreSQL (90-120 s each) and the job hits its
+  time limit (exit 124) before the suite finishes. Fix that first; until then, trigger,
+  row-level-security and migration behaviour on PostgreSQL is unproven.
+- Linking deliveries after a shift is approved is refused (it would rewrite cost per
+  ton); approved money, hours, rates and allocations are trigger-locked.
+
 ## Not done (in priority order)
 
-1. Hauling invoices: entering a hauler's invoice and checking billed hours and rates
-   against approved shifts, as an exceptions-center category.
-2. Trucking time-sheet extraction: reading time sheets with the AI reader into
-   unapproved shifts (today shifts are entered by hand from the sheet).
-3. Attaching the time-sheet image to a shift (document storage exists; not wired).
-4. Shift dispute workflow beyond the status (the `disputed` status exists; no UI to set it).
+1. Fix the PostgreSQL CI job (see above).
+2. Trucking time-sheet extraction (AI). Plan: a `timesheet` intake mode on batches so
+   uploads reuse validation, storage and the job queue; in the worker, a time-sheet
+   prompt and schema (truck, driver, date, start, end, break, standby, total hours
+   claimed, loads, signed by; null when unreadable, never inferred) via a generic
+   `extract_json(image, prompt)` on the Gemini extractor with the same retries and
+   usage metering; a `timesheet_drafts` table holding the read, its file and provenance
+   when it can't yet be a shift (unknown truck, missing times), and a shift created
+   with `source="extracted"` and `extraction` set when it can, always `needs_review`.
+   Tests with a fixture extractor; no real model calls without authorization.
+3. Drafting hauling-invoice lines from the PDF's text layer (manual entry works today).
+4. Fee agreements (fuel surcharge, mobilization, standby rules per contract), so
+   agreed fees stop showing as unsupported.
 5. Units other than tons for material (cubic yards, loads), delivery dispositions
    (rejected, returned, partial), purchase orders and three-way matching.
 6. Multi-ticket photo boundary detection and a crop editor.
