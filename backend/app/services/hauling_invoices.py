@@ -26,7 +26,7 @@ from decimal import Decimal
 
 from .pricing import to_cents
 
-KIND_LABEL = {"hours": "working hours", "standby": "standby", "minimum": "minimum charge", "fee": "fee"}
+KIND_LABEL = {"hours": "working hours", "standby": "standby", "minimum": "minimum charge", "fee": "fee", "credit": "credit"}
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,7 @@ class Finding:
 class LineResult:
     invoice_id: int
     line_no: int
-    result: str  # matched | differs | repeat | no_shift | not_approved | ambiguous | fee
+    result: str  # matched | differs | repeat | no_shift | not_approved | ambiguous | fee | credit
     shift_id: int | None
     expected: Decimal | None
     difference: Decimal | None
@@ -114,6 +114,10 @@ def reconcile(lines: list[LineFacts], shifts: list[ShiftFacts]) -> tuple[list[Li
         base = dict(project_id=line.project_id, hauler=line.hauler, invoice_id=line.invoice_id, invoice_number=line.invoice_number,
                     line_no=line.line_no, billed=line.amount)
         where = f"invoice {line.invoice_number}, line {line.line_no}"
+        if line.kind == "credit":
+            # A credit the hauler gives back: it lowers what's billed, and is nothing to dispute.
+            results.append(LineResult(line.invoice_id, line.line_no, "credit", None, line.amount, Decimal(0)))
+            continue
         if line.kind == "fee":
             what = line.description or "a fee"
             findings.append(Finding(key=f"H{line.invoice_id}:{line.line_no}:fee", category="unsupported_fee",

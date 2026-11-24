@@ -375,7 +375,7 @@ NOT_SHOWING_MARKS = {"/api/batches", "/api/batches/queue", "/api/batches/{batch_
                      "/api/invoice-documents/{document_id}", "/api/invoice-documents/{document_id}/history",
                      "/api/invoice-comparisons/overview", "/api/reports/pilot", "/api/reports/pilot.csv", "/api/records/name-variants",
                      "/api/dashboard", "/api/setup/status", "/api/exceptions/history", "/api/rates/timeline",
-                     "/api/hauling-rates",
+                     "/api/hauling-rates", "/api/hauling-invoices/{invoice_id}/history",
                      # Counts of reads and tokens, never a record.
                      "/api/system/usage",
                      "/api/invoice-comparisons/discrepancies.csv",

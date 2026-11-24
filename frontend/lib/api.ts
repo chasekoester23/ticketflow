@@ -967,9 +967,9 @@ export const attachTimesheet = (id: number, file: File): Promise<TruckShift> => 
 export const timesheetUrl = (id: number) => `${API}/api/truck-shifts/${id}/timesheet`;
 
 export type HaulingInvoiceLine = {
-  line_no?: number; kind: "hours" | "standby" | "minimum" | "fee"; truck_identifier: string | null; work_date: string | null;
+  line_no?: number; kind: "hours" | "standby" | "minimum" | "fee" | "credit"; truck_identifier: string | null; work_date: string | null;
   hours: string | null; rate: string | null; amount: string; description: string | null;
-  result?: "matched" | "differs" | "repeat" | "no_shift" | "not_approved" | "ambiguous" | "fee" | null;
+  result?: "matched" | "differs" | "repeat" | "no_shift" | "not_approved" | "ambiguous" | "fee" | "credit" | null;
   shift_id?: number | null; supported?: string | null; difference?: string | null;
 };
 export type HaulingInvoice = {

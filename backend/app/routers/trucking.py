@@ -7,6 +7,7 @@ evidence beside them. Nothing here changes a material ticket's quantity or price
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -618,7 +619,7 @@ def timesheet_file(shift_id: int, db: Session = Depends(get_db), organization_id
 
 class InvoiceLineIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: str = Field(pattern="^(hours|standby|minimum|fee)$")
+    kind: str = Field(pattern="^(hours|standby|minimum|fee|credit)$")
     truck_identifier: str | None = Field(default=None, max_length=50)
     work_date: date | None = None
     hours: Decimal | None = Field(default=None, ge=0, le=24, max_digits=6, decimal_places=2)
@@ -628,8 +629,10 @@ class InvoiceLineIn(BaseModel):
 
     @model_validator(mode="after")
     def _complete(self):
-        if self.kind != "fee" and self.work_date is None:
+        if self.kind in ("hours", "standby", "minimum") and self.work_date is None:
             raise ValueError("A time line needs the date worked.")
+        if self.kind == "credit" and self.amount >= 0:
+            raise ValueError("A credit is entered as a negative amount.")
         return self
 
 
@@ -747,8 +750,11 @@ def correct_hauling_invoice(invoice_id: int, body: HaulingInvoiceIn, db: Session
     before = _invoices_out(db, user.organization_id, invoice.id)[0]
     _write_invoice(db, invoice, body)
     invoice.lock_version += 1
+    # The invoice as it was, in full, so a correction never loses what was first billed.
     db.add(HaulingInvoiceEvent(invoice_id=invoice.id, actor_user_id=user.id, field="corrected",
-                               old_value=f"{len(before['lines'])} line(s), ${before['billed']}", new_value=f"{len(body.lines)} line(s)"))
+                               old_value=json.dumps({k: before[k] for k in ("invoice_number", "period_from", "period_to", "billed", "lines")},
+                                                    default=str),
+                               new_value=f"{len(body.lines)} line(s)"))
     try:
         db.commit()
     except IntegrityError:
@@ -774,6 +780,15 @@ def attach_invoice_document(invoice_id: int, file: UploadFile = File(...), db: S
         store.delete(key)
         raise
     return _invoices_out(db, user.organization_id, invoice.id)[0]
+
+
+@router.get("/hauling-invoices/{invoice_id}/history")
+def hauling_invoice_history(invoice_id: int, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    invoice = _invoice_or_404(db, organization_id, invoice_id)
+    people = names_by_id(db, organization_id)
+    events = db.scalars(select(HaulingInvoiceEvent).where(HaulingInvoiceEvent.invoice_id == invoice.id).order_by(HaulingInvoiceEvent.id))
+    return [{"field": e.field, "old": e.old_value, "new": e.new_value, "at": as_utc(e.created_at),
+             "actor": people.get(e.actor_user_id) if e.actor_user_id else None} for e in events]
 
 
 @router.get("/hauling-invoices/{invoice_id}/document")

@@ -10,8 +10,9 @@ const RESULT: Record<string, [string, string]> = {
   matched: ["Matches approved shift", "tf-status-open"], differs: ["Differs", "tf-status-attention"], repeat: ["Billed again", "tf-status-error"],
   no_shift: ["No shift recorded", "tf-status-error"], not_approved: ["Shift not approved", "tf-status-attention"],
   ambiguous: ["Which truck?", "tf-status-attention"], fee: ["Fee: not in an agreement", "tf-status-attention"],
+  credit: ["Credit", "tf-status-open"],
 };
-const KIND = { hours: "Working hours", standby: "Standby", minimum: "Minimum charge", fee: "Fee" } as const;
+const KIND = { hours: "Working hours", standby: "Standby", minimum: "Minimum charge", fee: "Fee", credit: "Credit (negative)" } as const;
 // Display only: server decimals are shown, never added up here.
 const money = (v: string | null | undefined) => v == null ? "—" : (v.startsWith("-") ? "−$" + Number(v.slice(1)).toLocaleString(undefined, { minimumFractionDigits: 2 })
   : "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -58,7 +59,7 @@ function InvoiceForm({ haulers, projects, start, onSaved, onCancel }: {
         <td><select aria-label="Charge" className="tf-field" value={l.kind} onChange={(e) => set(n, { kind: e.target.value as HaulingInvoiceLine["kind"] })}>
           {Object.entries(KIND).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></td>
         <td><input aria-label="Truck" className="tf-field w-24" value={l.truck_identifier ?? ""} onChange={(e) => set(n, { truck_identifier: e.target.value })} /></td>
-        <td><input aria-label="Date worked" type="date" className="tf-field" value={l.work_date ?? ""} required={l.kind !== "fee"} onChange={(e) => set(n, { work_date: e.target.value })} /></td>
+        <td><input aria-label="Date worked" type="date" className="tf-field" value={l.work_date ?? ""} required={l.kind !== "fee" && l.kind !== "credit"} onChange={(e) => set(n, { work_date: e.target.value })} /></td>
         <td><input aria-label="Hours" inputMode="decimal" className="tf-field w-20 text-right" value={l.hours ?? ""} onChange={(e) => set(n, { hours: e.target.value })} /></td>
         <td><input aria-label="Rate" inputMode="decimal" className="tf-field w-24 text-right" value={l.rate ?? ""} onChange={(e) => set(n, { rate: e.target.value })} /></td>
         <td><input aria-label="Amount" required inputMode="decimal" className="tf-field w-28 text-right" value={l.amount} onChange={(e) => set(n, { amount: e.target.value })} /></td>
