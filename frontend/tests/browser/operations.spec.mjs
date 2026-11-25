@@ -93,7 +93,7 @@ test("a company that has approved tickets doesn't see the setup checklist", asyn
   ] };
   await mock(page, "owner", { "/api/onboarding": (route) => json(route, state) });
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Needs attention" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Setup checklist" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Show the setup checklist" })).toHaveCount(0);
 });

@@ -451,7 +451,9 @@ export async function getReviewQueue(projectId?: string, kind?: QueueKind): Prom
   return (await check(await apiFetch(`${API}/api/review-queue${query ? `?${query}` : ""}`))).json();
 }
 export type CostRow = { name: string; tickets: number; tons: string; cost: string; unpriced: number };
-export type HaulerCost = { name: string; shifts: number; hours: string; cost: string; loads: number };
+export type HaulerCost = { name: string; shifts: number; hours: string; cost: string; loads: number; per_hour: string | null };
+export type ProjectCost = { id: number; code: string; name: string; status: string; tickets: number; tons: string; material: string; unpriced: number; hours: string; trucking: string; total: string };
+export type UnitPrice = { supplier: string; material: string; tons: string; cost: string; average: string; low: string | null; high: string | null };
 export type PeriodRow = { period: string; tickets: number; tons: string; material: string; unpriced: number; hours: string; trucking: string; loads: number; total: string };
 /** Approved figures only. `unpriced` counts approved tickets with no rate: their cost is missing, not zero. */
 export type CostReport = {
@@ -460,7 +462,7 @@ export type CostReport = {
     by_material: CostRow[]; by_supplier: CostRow[] };
   trucking: { shifts: number; hours: string; cost: string; loads: number; by_hauler: HaulerCost[]; billing_methods: { method: string; cost: string }[] };
   costs: { material: string; trucking: string; total: string; complete: boolean; unpriced: number };
-  by_period: PeriodRow[];
+  by_period: PeriodRow[]; by_project: ProjectCost[]; unit_prices: UnitPrice[];
   invoices: { invoices: number; billed: string; matched: number; with_differences: number; incomplete: number; difference: string; totals_only: number; rows: RegisterInvoice[] };
 };
 export type CostReportQuery = { project_id?: string; date_from?: string; date_to?: string; period: "day" | "week" | "month" };

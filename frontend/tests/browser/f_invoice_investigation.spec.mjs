@@ -64,20 +64,21 @@ test("nothing unbilled says so plainly", async ({ page }) => {
 test("a server without the unbilled check yet leaves the rest of the report working", async ({ page }) => {
   await mockWorkspace(page);
   await page.route("**/api/reports/project/1/unbilled", (route) => json(route, { detail: "Not Found" }, 404));
-  await page.goto("/reports/project?project_id=1");
+  await page.goto("/projects/1");
   await expect(page.getByRole("region", { name: "Unbilled deliveries" })).toContainText("doesn't offer the unbilled check yet");
-  await expect(page.getByRole("region", { name: "Project totals" })).toContainText("41.00");
+  await expect(page.getByRole("region", { name: "Approved costs" })).toContainText("$1,845.00");
   await expect(page.locator("[role=alert]:not(#__next-route-announcer__)").filter({ hasText: /\S/ })).toHaveCount(0);
 });
 
 test("report figures lead to the tickets and invoice lines behind them", async ({ page }) => {
   await mockWorkspace(page);
-  await page.goto("/reports/project?project_id=1");
-  const pair = page.getByRole("region", { name: "By supplier and material" }).getByRole("row").filter({ hasText: "Example Aggregates" });
-  await expect(pair.getByRole("link", { name: /approved tickets/ })).toHaveAttribute("href", "/records?project_id=1&status=verified&supplier=Example+Aggregates&material=No.+57+Stone");
-  const month = page.getByRole("region", { name: "By delivery month" }).getByRole("row").filter({ hasText: "2026-10" });
-  await expect(month.getByRole("link", { name: /approved tickets/ })).toHaveAttribute("href", "/records?project_id=1&status=verified&date_from=2026-10-01&date_to=2026-10-31");
-  const line = page.getByRole("region", { name: "Invoice lines" }).getByRole("link", { name: /EA-2026-1107/ });
+  await page.goto("/projects/1");
+  const materials = page.getByRole("table", { name: "Materials by supplier" });
+  await expect(materials.getByRole("link", { name: "No. 57 Stone" })).toHaveAttribute("href", "/records?status=verified&project_id=1&material=No.+57+Stone&supplier=Example+Aggregates");
+  await expect(page.getByRole("list", { name: "Material cost by supplier" }).getByRole("link", { name: "Example Aggregates" }))
+    .toHaveAttribute("href", "/records?status=verified&project_id=1&supplier=Example+Aggregates");
+  await page.getByRole("link", { name: "This project's invoices →" }).click();
+  const line = page.getByRole("table", { name: "Invoice register" }).getByRole("link", { name: "INV-4401" });
   await expect(line).toHaveAttribute("href", "/invoices/lines?line=9");
   await line.click();
   await expect(page.getByRole("region", { name: "Why this result" })).toBeVisible();

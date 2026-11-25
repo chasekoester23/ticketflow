@@ -9,6 +9,7 @@ import { beginSignOut, clearAllDrafts, clearOtherAccountsDrafts, hasDrafts } fro
 import { AccountContext } from "./account-context";
 import { ProjectProvider } from "./project-context";
 import ProjectPicker from "./ProjectPicker";
+import ProjectBar from "./ProjectBar";
 
 type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "team" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers" | "report" | "health" | "truck" | "settings" | "upload" | "building";
 
@@ -44,21 +45,20 @@ type Section = { href: string; label: string; icon: IconName; match: string[]; t
 const groups: { label: string; items: Section[] }[] = [
   { label: "Workspace", items: [
     { href: "/", label: "Overview", icon: "overview", match: ["/"], tabs: [] },
-    { href: "/projects", label: "Projects", icon: "projects", match: ["/projects"], tabs: [] },
+    { href: "/projects", label: "Projects", icon: "projects", match: ["/projects", "/reports/project"], tabs: [] },
   ] },
   { label: "Operations", items: [
-    { href: "/review", label: "Review Queue", icon: "tickets", match: ["/review", "/upload"], badge: "review", tabs: [
-      { href: "/review", label: "Everything waiting" }, { href: "/upload", label: "Ticket review" }] },
+    // What came in and whether it was read; then what a person still has to check.
+    { href: "/upload", label: "Document Intake", icon: "upload", match: ["/upload"], tabs: [] },
+    { href: "/review", label: "Review Queue", icon: "tickets", match: ["/review"], badge: "review", tabs: [] },
     { href: "/records", label: "Delivery Records", icon: "records", match: ["/records"], tabs: [] },
     { href: "/trucking", label: "Trucking", icon: "truck", match: ["/trucking"], tabs: [] },
   ] },
   { label: "Financials", items: [
     { href: "/invoices", label: "Invoices", icon: "invoices", match: ["/invoices"], tabs: [
-      { href: "/invoices", label: "Register" }, { href: "/invoices/lines", label: "Supplier lines" }, { href: "/invoices/documents", label: "Invoice PDFs" },
-      { href: "/invoices/exceptions", label: "Exceptions & disputes" }] },
-    { href: "/reports", label: "Reports", icon: "report", match: ["/reports"], tabs: [
-      { href: "/reports", label: "Cost reports" }, { href: "/reports/project", label: "Project report" },
-      { href: "/reports/pilot", label: "Pilot measurement", requires: "system.read" }] },
+      { href: "/invoices", label: "All invoices" }, { href: "/invoices/exceptions", label: "Exceptions" },
+      { href: "/invoices/unbilled", label: "Unbilled activity" }] },
+    { href: "/analytics", label: "Analytics", icon: "report", match: ["/analytics", "/reports"], tabs: [] },
   ] },
   { label: "Management", items: [
     { href: "/suppliers", label: "Suppliers & Haulers", icon: "building", match: ["/suppliers", "/records/names"], tabs: [
@@ -68,8 +68,8 @@ const groups: { label: string; items: Section[] }[] = [
 ];
 const settingsTabs: Tab[] = [
   { href: "/team", label: "Team", requires: "team.manage" }, { href: "/system", label: "System health", requires: "system.read" },
-  { href: "/account", label: "Account" }];
-const settings: Section = { href: "/account", label: "Settings", icon: "settings", match: ["/team", "/system", "/account"], tabs: settingsTabs };
+  { href: "/reports/pilot", label: "Pilot measurement", requires: "system.read" }, { href: "/account", label: "Account" }];
+const settings: Section = { href: "/account", label: "Settings", icon: "settings", match: ["/team", "/system", "/account", "/reports/pilot"], tabs: settingsTabs };
 const allSections = [...groups.flatMap((g) => g.items), settings];
 // The longest matching address wins, so /records/names is Name cleanup, not Delivery Records.
 function sectionOf(path: string): Section | null {
@@ -307,7 +307,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
             }}><Icon name="logout" size={18} /><span>Sign out</span></button>
         </div>
       </header>
-      <main id="main-content" tabIndex={-1} className="tf-main focus:outline-none">{children}</main>
+      <main id="main-content" tabIndex={-1} className="tf-main focus:outline-none">{!pathname.startsWith("/projects/") && <ProjectBar />}{children}</main>
     </div>
   </div></ProjectProvider></AccountContext.Provider>;
 }

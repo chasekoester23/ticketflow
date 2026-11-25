@@ -39,7 +39,7 @@ export default function ReportsPage() {
         <p className="tf-page-description">Counts of what's on record and what still needs a person. Not a claim that every paper ticket was captured.</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <a className="tf-secondary-button" href={project ? `/reports/project?project_id=${project}` : "/reports/project"}>Project report</a>
+        <a className="tf-secondary-button" href={project ? `/projects/${project}` : "/projects"}>Project report</a>
         <a className="tf-secondary-button" href={pilotReportCsvUrl(project || undefined)}>Download CSV</a>
       </div>
     </div>

@@ -94,7 +94,7 @@ export default function ProjectsPage() {
 
   function open(row: ProjectSummary) {
     setProjectId(String(row.id));
-    router.push("/");
+    router.push(`/projects/${row.id}`);
   }
   async function changeStatus(row: ProjectSummary) {
     const next = row.status === "active" ? "archived" : "active";
@@ -136,7 +136,7 @@ export default function ProjectsPage() {
             const open_ = r.open_tickets + r.open_shifts;
             return <tr key={r.id}>
               <td className="min-w-[200px]">
-                <button type="button" className="text-left" onClick={() => open(r)} title="Open this project's overview">
+                <button type="button" className="text-left" onClick={() => open(r)} title="Open this project's workspace">
                   <span className="block font-mono text-[12px] font-semibold text-[#a24b0a]">{r.code}</span>
                   <span className="block font-semibold text-[#041d2f] hover:underline">{r.name}</span>
                 </button>
@@ -153,7 +153,7 @@ export default function ProjectsPage() {
               <td className="text-right whitespace-nowrap font-semibold">{money(r.verified_cost)}{r.unpriced_tickets > 0 && <span className="block text-[11px] font-normal text-[#995a18]">incomplete</span>}</td>
               <td><div className="flex justify-end gap-3 whitespace-nowrap text-[12px]">
                 <Link prefetch={false} href={`/records?project_id=${r.id}`}>Records</Link>
-                <Link prefetch={false} href={`/reports/project?project_id=${r.id}`}>Report</Link>
+                <Link prefetch={false} href={`/projects/${r.id}`}>Report</Link>
                 {canManage && <button type="button" className="font-semibold text-[#4b5a69] hover:underline" onClick={() => setEditing(r)}>Edit</button>}
                 {canManage && <button type="button" className="font-semibold text-[#4b5a69] hover:underline" onClick={() => void changeStatus(r)}>
                   {r.status === "active" ? "Archive" : "Restore"}</button>}

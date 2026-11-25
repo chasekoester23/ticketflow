@@ -275,3 +275,45 @@ a { text-underline-offset: 3px; }
 .tf-queue-tile:hover { background: #f7f8f9; }
 .tf-queue-tile-on, .tf-queue-tile-on:hover { background: var(--tf-orange-tint); box-shadow: inset 0 -3px 0 var(--tf-orange); }
 .tf-queue-count { font-family: var(--tf-display); font-size: 26px; font-weight: 600; line-height: 1.05; color: var(--tf-navy); }
+
+/* Figures and reports: shared by Overview, project reports and Analytics. */
+.tf-num, .tf-table td, .tf-figure { font-variant-numeric: tabular-nums; }
+.tf-filterbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 14px; background: white; border: 1px solid var(--tf-border); border-radius: 3px; }
+.tf-inline-field { display: inline-flex; align-items: center; gap: 6px; color: #49586a; font-size: 12px; font-weight: 500; }
+.tf-inline-field .tf-field { min-height: 30px; padding: 3px 8px; }
+.tf-figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); background: white; border: 1px solid var(--tf-border); border-radius: 3px; }
+.tf-figures > div { padding: 14px 18px; border-right: 1px solid var(--tf-border); border-bottom: 1px solid var(--tf-border); }
+.tf-figures > div > span { display: block; margin-top: 3px; color: #5f6c7b; font-size: 11.5px; }
+@media (min-width: 1024px) { .tf-figures { grid-template-columns: repeat(4, minmax(0, 1fr)); } .tf-figures > div { border-bottom: 0; } .tf-figures > div:last-child { border-right: 0; } }
+.tf-figure { margin-top: 2px; color: var(--tf-navy); font-family: var(--tf-display); font-size: 27px; font-weight: 600; line-height: 1.1; }
+.tf-chart { margin: 0; padding: 10px 14px 6px; }
+.tf-legend { display: flex; gap: 14px; margin-bottom: 4px; color: #3b4a59; font-size: 12px; }
+.tf-legend span, .tf-chart-tip span { display: inline-flex; align-items: center; gap: 6px; }
+.tf-legend i, .tf-chart-tip i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.tf-chart-axis { fill: #5f6c7b; font-size: 11px; font-family: var(--tf-text); }
+.tf-chart-tip { position: absolute; top: 0; transform: translateX(-50%); z-index: 5; display: flex; flex-direction: column; gap: 2px; min-width: 190px; padding: 8px 10px; background: white; border: 1px solid var(--tf-border); border-radius: 4px; box-shadow: 0 6px 18px rgba(4, 29, 47, .14); color: #263442; font-size: 12px; pointer-events: none; white-space: nowrap; }
+.tf-share { list-style: none; margin: 0; padding: 6px 14px 10px; }
+.tf-share li { padding: 7px 0; border-bottom: 1px solid #eef0f2; }
+.tf-share li:last-child { border-bottom: 0; }
+.tf-share-line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.tf-share-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #041d2f; font-weight: 600; text-decoration: none; }
+a.tf-share-name:hover { text-decoration: underline; }
+.tf-share-bar { height: 6px; margin-top: 4px; background: #eef1f4; border-radius: 3px; overflow: hidden; }
+.tf-share-bar span { display: block; height: 100%; background: #2563a8; border-radius: 3px; }
+.tf-share-note { margin-top: 2px; color: #5f6c7b; font-size: 11px; }
+/* A project's own pages: the same company screens, filtered to it. */
+.tf-project-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: -2px 0 12px; padding: 0 2px; border-bottom: 1px solid var(--tf-border); }
+.tf-project-bar-name { padding: 6px 0; color: var(--tf-navy); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.tf-project-bar-name small { margin-right: 6px; color: #a24b0a; font-family: var(--tf-mono); font-size: 12px; }
+.tf-project-bar nav { display: flex; overflow-x: auto; }
+.tf-project-bar nav a { padding: 8px 12px; color: var(--tf-muted); font-size: 13px; font-weight: 600; text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; }
+.tf-project-bar nav a:hover { color: var(--tf-ink); }
+.tf-project-bar nav a[aria-current="page"] { color: var(--tf-navy); border-bottom-color: var(--tf-orange); }
+.tf-facts { margin: 0; padding: 6px 16px; }
+.tf-facts > div { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid #eef0f2; font-size: 13px; }
+.tf-facts > div:last-child { border-bottom: 0; }
+.tf-facts dt { color: #4b5a69; }
+.tf-facts dd { margin: 0; color: var(--tf-navy); font-weight: 600; font-variant-numeric: tabular-nums; }
+.tf-waiting { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 7px 12px; background: white; border: 1px solid var(--tf-border); border-radius: 3px; color: #5f6c7b; font-size: 12.5px; }
+.tf-waiting a { color: #a24b0a; font-weight: 600; text-decoration: none; }
+.tf-waiting a:hover { text-decoration: underline; }

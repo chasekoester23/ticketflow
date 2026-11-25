@@ -92,7 +92,7 @@ test("every planted invoice mistake gets the right result on screen", async ({ p
 });
 
 const PAGES = ["/", "/projects", "/upload", "/records", "/records/names", "/invoices", "/invoices/lines", "/invoices/documents", "/pricing", "/review", "/suppliers",
-  "/reports", "/reports/pilot", "/reports/project", "/team", "/system", "/account"];
+  "/analytics", "/reports/pilot", "/projects/1", "/team", "/system", "/account"];
 
 test("no page scrolls sideways on a phone, with real data", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });

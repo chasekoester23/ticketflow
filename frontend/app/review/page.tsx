@@ -53,7 +53,10 @@ export default function ReviewQueuePage() {
     <div className="tf-page-heading">
       <div><h1 className="tf-page-title">Review Queue</h1>
         <p className="tf-page-description">Everything waiting for a person{project ? ` on ${project.code}` : ""}, oldest first. Nothing counts toward quantities or costs until it&apos;s approved.</p></div>
-      {can("tickets.upload") && <Link prefetch={false} href="/upload?new=1" className="tf-secondary-button">Upload delivery tickets</Link>}
+      <div className="flex flex-wrap gap-2">
+        <Link prefetch={false} href="/records?status=needs_review" className="tf-secondary-button">Waiting tickets as a list</Link>
+        {can("tickets.upload") && <Link prefetch={false} href="/upload?new=1" className="tf-secondary-button">Upload delivery tickets</Link>}
+      </div>
     </div>
     {error && <div role="alert" className="tf-alert tf-alert-bad">{error}</div>}
 

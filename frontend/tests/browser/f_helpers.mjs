@@ -162,6 +162,8 @@ export async function mockWorkspace(page, { role = "owner", empty = false, extra
         trucking: { shifts: 0, hours: "0.00", cost: "0.00", loads: 0, by_hauler: [], billing_methods: [{ method: "hourly", cost: "0.00" }] },
         costs: { material: "1845.00", trucking: "0.00", total: "1845.00", complete: true, unpriced: 0 },
         by_period: [{ period: "2026-10-12", tickets: 3, tons: "61.500", material: "1845.00", unpriced: 0, hours: "0.00", trucking: "0.00", loads: 0, total: "1845.00" }],
+        by_project: [{ id: 1, code: "24-115", name: "Fictional Road Job", status: "active", tickets: 3, tons: "61.500", material: "1845.00", unpriced: 0, hours: "0.00", trucking: "0.00", total: "1845.00" }],
+        unit_prices: [{ supplier: "Example Aggregates", material: "No. 57 Stone", tons: "61.500", cost: "1845.00", average: "30.00", low: "30.00", high: "30.00" }],
         invoices: { invoices: 1, billed: "1845.00", matched: 0, with_differences: 1, incomplete: 0, difference: "615.00", totals_only: 0, rows: [] } },
       "/api/haulers": [],
       "/api/hauling-rates": [],

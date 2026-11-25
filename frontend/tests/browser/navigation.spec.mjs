@@ -36,10 +36,10 @@ test("the new page is announced and focused the way a reload would have done", a
 
 test("a link inside a page opens its filters without a reload", async ({ page }) => {
   await mockWorkspace(page);
-  await page.goto("/");
+  await page.goto("/review");
   await expect(page.locator(".tf-page-title")).toBeVisible();
   await mark(page);
-  await page.getByRole("link", { name: /Awaiting verification/ }).click();
+  await page.getByRole("link", { name: "Waiting tickets as a list" }).click();
   await expect(page).toHaveURL(/\/records\?status=needs_review/);
   await expect(page.getByLabel("Review status")).toHaveValue("needs_review");
   expect(await marked(page)).toBe(true);

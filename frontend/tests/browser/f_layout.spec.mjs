@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mockWorkspace } from "./f_helpers.mjs";
 
 const PAGES = ["/login", "/", "/upload", "/upload?batch=5&ticket=1001", "/records", "/records/names", "/invoices", "/invoices/lines", "/invoices/lines?line=9", "/review", "/suppliers",
-  "/invoices/documents", "/reports/project?project_id=1", "/reports", "/reports/pilot", "/projects", "/pricing", "/team", "/account", "/system"];
+  "/invoices/documents", "/reports/project?project_id=1", "/analytics", "/reports/pilot", "/projects", "/projects/1", "/invoices/unbilled", "/pricing", "/team", "/account", "/system"];
 const SIZES = [[390, 844, "phone"], [1366, 768, "laptop"]];
 
 for (const [width, height, size] of SIZES) {

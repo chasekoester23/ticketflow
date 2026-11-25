@@ -7,6 +7,7 @@ import {
   invoicePageUrl, listInvoiceDocuments, listProjects, rejectDraftLine, saveDraftLine, uploadInvoiceDocument, voidInvoiceDocument,
 } from "../../../lib/api";
 import { useAccount } from "../../account-context";
+import { useProject } from "../../project-context";
 
 const STATUS: Record<InvoiceDocument["status"], string> = {
   needs_review: "Draft lines to review", unsupported: "Not read automatically", failed: "Could not be read", voided: "Voided",
@@ -114,7 +115,9 @@ export default function InvoiceDocumentsPage() {
   const [current, setCurrent] = useState<InvoiceDocument | null>(null);
   const [page, setPage] = useState(1);
   const [file, setFile] = useState<File | null>(null);
-  const [project, setProject] = useState("");
+  const chosen = useProject();
+  // A new invoice starts on the project being worked on.
+  const [project, setProject] = useState(chosen.project?.status === "active" ? chosen.projectId : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);

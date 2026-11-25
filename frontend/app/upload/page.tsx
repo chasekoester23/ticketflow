@@ -503,8 +503,8 @@ export default function Home() {
     <div className="space-y-3 pb-6">
       {!batch && !opening && <div className="tf-page-heading">
         <div>
-          <h1 className="tf-page-title">Ticket intake & review</h1>
-          <p className="tf-page-description">Upload delivery scans, compare extracted information with the original, and approve each ticket.</p>
+          <h1 className="tf-page-title">Document Intake</h1>
+          <p className="tf-page-description">Every document received: originals, processing status and anything that failed. Tickets ready to check also appear in the <a className="tf-link" href="/review">Review Queue</a>.</p>
         </div>
         <div className="tf-status tf-status-attention">Human verification required</div>
       </div>}

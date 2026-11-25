@@ -6,10 +6,10 @@ const nav = (page) => page.getByRole("navigation", { name: "Main navigation" });
 test("the chosen project follows a person across pages and a reload, and every request carries it", async ({ page }) => {
   const log = await mockWorkspace(page);
   await page.goto("/");
-  await expect(page.getByTestId("overview-scope")).toHaveText("All projects");
+  await expect(page.getByTestId("overview-scope")).toContainText("All projects");
   await chooseProject(page, "24-115");
-  await expect(page.getByTestId("overview-scope")).toHaveText("24-115 · Fictional Road Job");
-  await expect.poll(() => log.some((line) => line.startsWith("GET /api/dashboard?project_id=1"))).toBe(true);
+  await expect(page.getByTestId("overview-scope")).toContainText("24-115 · Fictional Road Job");
+  await expect.poll(() => log.some((line) => line.startsWith("GET /api/reports/summary?project_id=1"))).toBe(true);
 
   await nav(page).getByRole("link", { name: "Delivery Records", exact: true }).click();
   await expect(page).toHaveURL(/\/records\?project_id=1$/);
@@ -52,15 +52,34 @@ test("the invoice register shows billed against approved records, and old line l
   await expect(page).toHaveURL(/\/invoices\/lines\?line=9$/);
 });
 
-test("reports show approved costs from the server and download as Excel for the same dates", async ({ page }) => {
+test("analytics compares across projects from the server's figures and downloads for the same dates", async ({ page }) => {
   const log = await mockWorkspace(page);
-  await page.goto("/reports");
-  await expect(page.getByRole("region", { name: "Verified costs" })).toContainText("$1,845.00");
+  await page.goto("/reports");  // the old address still lands here
+  await expect(page).toHaveURL(/\/analytics$/);
+  await expect(page.getByRole("table", { name: "Cost by project" })).toContainText("$1,845.00");
+  await page.getByRole("button", { name: "Custom" }).click();
   await page.getByLabel("From").fill("2026-10-01");
-  await expect.poll(() => log.some((line) => line.includes("/api/reports/summary?date_from=2026-10-01&period=week"))).toBe(true);
-  await expect(page.getByRole("link", { name: "Download Excel" })).toHaveAttribute("href", /summary\.xlsx\?date_from=2026-10-01&period=week/);
-  await page.getByRole("tab", { name: "Material" }).click();
-  await expect(page.getByRole("table", { name: "Quantity by supplier" })).toContainText("Example Aggregates");
+  await expect.poll(() => log.some((line) => line.includes("/api/reports/summary?date_from=2026-10-01"))).toBe(true);
+  await expect(page.getByRole("link", { name: "Download Excel" })).toHaveAttribute("href", /summary\.xlsx\?date_from=2026-10-01/);
+  await page.getByRole("tab", { name: "Materials" }).click();
+  await expect(page.getByRole("table", { name: "Unit prices by material" })).toContainText("Example Aggregates");
+  await expect(page.getByRole("table", { name: "Unit prices by material" })).toContainText("$30.00");
+});
+
+test("a project opens on its report, and its tabs are the company screens filtered to it", async ({ page }) => {
+  const log = await mockWorkspace(page);
+  await page.goto("/projects");
+  await page.getByRole("button", { name: /Fictional Road Job/ }).click();
+  await expect(page).toHaveURL(/\/projects\/1$/);
+  await expect(page.getByRole("heading", { name: "24-115 · Fictional Road Job" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Approved costs" })).toContainText("$1,845.00");
+  await expect.poll(() => log.some((line) => line.startsWith("GET /api/reports/summary?project_id=1"))).toBe(true);
+  const tabs = page.getByRole("navigation", { name: "Project" });
+  await tabs.getByRole("link", { name: "Deliveries" }).click();
+  await expect(page).toHaveURL(/\/records\?project_id=1$/);
+  await expect(page.getByTestId("project-bar")).toContainText("24-115");
+  await page.goto("/reports/project?project_id=1");  // the old project report address
+  await expect(page).toHaveURL(/\/projects\/1$/);
 });
 
 test("the project directory shows open work and costs, and marks a missing rate as incomplete", async ({ page }) => {
