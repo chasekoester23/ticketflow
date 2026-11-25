@@ -196,7 +196,7 @@ QUEUE_LIMIT = 200
 QUEUE_KINDS = ("tickets", "failed_files", "truck_shifts", "invoice_lines")
 
 
-@router.get("/review-queue")
+@router.get("/review-queue", dependencies=[Depends(limited("reports"))])
 def review_queue(project_id: int | None = None, kind: str | None = None, db: Session = Depends(get_db),
                  organization_id: int = Depends(current_organization_id)):
     """Everything waiting for a person, in one list: ticket batches with tickets to check,

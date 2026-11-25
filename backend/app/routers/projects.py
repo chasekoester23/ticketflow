@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
+from ..rate_limit import limited
 from ..models import Batch, Project, ShiftAllocation, Ticket, TruckShift, User, as_utc
 from ..services import aggregates
 
@@ -49,7 +50,7 @@ def list_projects(include_archived: bool = False, db: Session = Depends(get_db),
 OPEN_STATUSES = ("needs_review", "flagged", "failed")
 
 
-@router.get("/directory")
+@router.get("/directory", dependencies=[Depends(limited("reports"))])
 def project_directory(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     """Every project of the company, archived ones too, with what it holds.
 

@@ -1,5 +1,7 @@
 # Proposal: from one local machine to a hosted service
 
+> **Superseded status (2026-11-26):** the "Where things stand" table below predates object storage, worker leases, row-level security and PostgreSQL backups, which now exist. The current, code-checked status is `docs/deploy/readiness.md`.
+
 **Status: plan for review. Nothing here has been provisioned, priced with a provider, or signed up for.** Several steps cost money or send customer documents off your machine, so each needs your approval first. Every cost below is a rough engineering estimate, not a quote.
 
 **Recommendation, unchanged: don't start hosting until real, permissioned tickets have saved a pilot customer time locally.** If they don't, hosting is wasted. When a customer needs it, do the stages below in order.
