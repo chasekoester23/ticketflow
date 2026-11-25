@@ -32,7 +32,7 @@ test("the report states what needs a person, links to it, and makes no completen
     if (url.pathname === "/api/reports/pilot") { asked.push(url.search); return json(route, REPORT); }
     return json(route, { detail: "Not found" }, 404);
   });
-  await page.goto("/reports");
+  await page.goto("/reports/pilot");
   await expect(page.getByTestId("unresolved")).toContainText("3 items need a person");
   await expect(page.getByRole("link", { name: "Open scan check" })).toHaveAttribute("href", "/upload?batch=7");
   await expect(page.getByRole("region", { name: "Review" }).getByRole("row").filter({ hasText: "Needs review" }).getByRole("link", { name: "Show" }))

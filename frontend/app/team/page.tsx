@@ -107,7 +107,7 @@ export default function TeamPage() {
 
     <section className="tf-panel">
       <div className="tf-panel-heading"><div><h2 className="tf-panel-title">Add a person</h2>
-        <p className="tf-panel-description">TicketFlow creates a one-time password for them. No email is sent.</p></div></div>
+        <p className="tf-panel-description">Quarvera creates a one-time password for them. No email is sent.</p></div></div>
       <form className="grid items-end gap-4 p-5 md:grid-cols-2 xl:grid-cols-[1.2fr_1fr_170px_auto]" onSubmit={add}>
         <label className="tf-field-label">Full name
           <input className="tf-field w-full" placeholder="Maria Lopez" maxLength={100} value={form.display_name}

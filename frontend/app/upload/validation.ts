@@ -33,7 +33,7 @@ export function tonsMessage(raw: string): FieldMessage | null {
   if (over) {
     return {
       tone: "warning",
-      text: `This is above ${PLAUSIBLE_TONS} tons, more than one truck usually carries. Check whether the ticket's figure is pounds rather than tons. TicketFlow doesn't convert units: enter the tons printed on the ticket.`,
+      text: `This is above ${PLAUSIBLE_TONS} tons, more than one truck usually carries. Check whether the ticket's figure is pounds rather than tons. Quarvera doesn't convert units: enter the tons printed on the ticket.`,
     };
   }
   return null;

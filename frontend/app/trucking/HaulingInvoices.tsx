@@ -76,12 +76,12 @@ function InvoiceForm({ haulers, projects, start, onSaved, onCancel }: {
   </form>;
 }
 
-export function HaulingInvoices({ invoices, haulers, projects, canManage, onChanged, onOpenShift, startNew = false }: {
+export function HaulingInvoices({ invoices, haulers, projects, canManage, onChanged, onOpenShift, startNew = false, openId = null }: {
   invoices: HaulingInvoice[]; haulers: HaulerRow[]; projects: Project[]; canManage: boolean;
-  onChanged: () => Promise<void>; onOpenShift: (id: number) => void; startNew?: boolean;
+  onChanged: () => Promise<void>; onOpenShift: (id: number) => void; startNew?: boolean; openId?: number | null;
 }) {
   const [editing, setEditing] = useState<HaulingInvoice | "new" | null>(startNew && canManage ? "new" : null);
-  const [open, setOpen] = useState<number | null>(null);
+  const [open, setOpen] = useState<number | null>(openId);
   const [error, setError] = useState<string | null>(null);
   return <section className="tf-panel" aria-label="Hauling invoices">
     <div className="tf-panel-heading">

@@ -7,8 +7,10 @@ import { ApiError, getAuthMe, getDashboard, logOut, type Account, type Permissio
 import { mayNavigate } from "../lib/navigation-guard";
 import { beginSignOut, clearAllDrafts, clearOtherAccountsDrafts, hasDrafts } from "../lib/drafts";
 import { AccountContext } from "./account-context";
+import { ProjectProvider } from "./project-context";
+import ProjectPicker from "./ProjectPicker";
 
-type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "team" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers" | "report" | "health" | "truck" | "settings" | "upload";
+type IconName = "overview" | "projects" | "tickets" | "records" | "rates" | "invoices" | "team" | "menu" | "close" | "arrow" | "chevron" | "logout" | "layers" | "report" | "health" | "truck" | "settings" | "upload" | "building";
 
 function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
@@ -30,39 +32,62 @@ function Icon({ name, size = 19 }: { name: IconName; size?: number }) {
     truck: <><path d="M3 6h11v10H3zM14 9h4l3 3v4h-7" /><circle cx="7" cy="18" r="2" /><circle cx="17" cy="18" r="2" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" /></>,
     upload: <path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4" />,
+    building: <><path d="M4 21V5l8-3v19M12 9h8v12M4 21h17M7 8h2M7 12h2M7 16h2M15 13h2M15 17h2" /></>,
   };
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
 type Tab = { href: string; label: string; requires?: Permission };
-type Section = { href: string; label: string; icon: IconName; match: string[]; tabs: Tab[]; badge?: "tickets" | "trucking" };
-// Five places for everyday work, and Settings. Every page keeps its address; related
-// pages are tabs of one section instead of separate sidebar entries.
-const sections: Section[] = [
-  { href: "/", label: "Overview", icon: "overview", match: [], tabs: [] },
-  { href: "/projects", label: "Projects", icon: "projects", match: ["/projects", "/reports"], tabs: [
-    { href: "/projects", label: "Projects" }, { href: "/reports/project", label: "Project report" }, { href: "/reports", label: "Pilot measurement" }] },
-  { href: "/upload", label: "Tickets", icon: "tickets", match: ["/upload", "/records"], badge: "tickets", tabs: [
-    { href: "/upload", label: "Upload & review" }, { href: "/records", label: "Delivery records" },
-    { href: "/records/names", label: "Name cleanup", requires: "tickets.edit" }] },
-  { href: "/trucking", label: "Trucking", icon: "truck", match: ["/trucking"], badge: "trucking", tabs: [] },
-  { href: "/invoices", label: "Invoices", icon: "invoices", match: ["/invoices"], tabs: [
-    { href: "/invoices", label: "Comparison" }, { href: "/invoices/documents", label: "Invoice PDFs" },
-    { href: "/invoices/exceptions", label: "Exceptions & disputes" }] },
+type Section = { href: string; label: string; icon: IconName; match: string[]; tabs: Tab[]; badge?: "review"; requires?: Permission };
+// Every daily workflow has its own place. Tabs only join views of the same thing.
+// Old addresses keep working: each belongs to the section that now holds it.
+const groups: { label: string; items: Section[] }[] = [
+  { label: "Workspace", items: [
+    { href: "/", label: "Overview", icon: "overview", match: ["/"], tabs: [] },
+    { href: "/projects", label: "Projects", icon: "projects", match: ["/projects"], tabs: [] },
+  ] },
+  { label: "Operations", items: [
+    { href: "/review", label: "Review Queue", icon: "tickets", match: ["/review", "/upload"], badge: "review", tabs: [
+      { href: "/review", label: "Everything waiting" }, { href: "/upload", label: "Ticket review" }] },
+    { href: "/records", label: "Delivery Records", icon: "records", match: ["/records"], tabs: [] },
+    { href: "/trucking", label: "Trucking", icon: "truck", match: ["/trucking"], tabs: [] },
+  ] },
+  { label: "Financials", items: [
+    { href: "/invoices", label: "Invoices", icon: "invoices", match: ["/invoices"], tabs: [
+      { href: "/invoices", label: "Register" }, { href: "/invoices/lines", label: "Supplier lines" }, { href: "/invoices/documents", label: "Invoice PDFs" },
+      { href: "/invoices/exceptions", label: "Exceptions & disputes" }] },
+    { href: "/reports", label: "Reports", icon: "report", match: ["/reports"], tabs: [
+      { href: "/reports", label: "Cost reports" }, { href: "/reports/project", label: "Project report" },
+      { href: "/reports/pilot", label: "Pilot measurement", requires: "system.read" }] },
+  ] },
+  { label: "Management", items: [
+    { href: "/suppliers", label: "Suppliers & Haulers", icon: "building", match: ["/suppliers", "/records/names"], tabs: [
+      { href: "/suppliers", label: "Directory" }, { href: "/records/names", label: "Name cleanup", requires: "tickets.edit" }] },
+    { href: "/pricing", label: "Rates & Pricing", icon: "rates", match: ["/pricing"], tabs: [] },
+  ] },
 ];
-const settings: Section = { href: "/pricing", label: "Settings", icon: "settings", match: ["/pricing", "/team", "/system", "/account"], tabs: [
-  { href: "/pricing", label: "Suppliers & pricing" }, { href: "/team", label: "Team", requires: "team.manage" },
-  { href: "/system", label: "System health", requires: "system.read" }, { href: "/account", label: "Account" }] };
-const allSections = [...sections, settings];
-const sectionOf = (path: string) => path === "/" ? sections[0]
-  : allSections.find((s) => s.match.some((m) => path === m || path.startsWith(m + "/"))) ?? null;
+const settingsTabs: Tab[] = [
+  { href: "/team", label: "Team", requires: "team.manage" }, { href: "/system", label: "System health", requires: "system.read" },
+  { href: "/account", label: "Account" }];
+const settings: Section = { href: "/account", label: "Settings", icon: "settings", match: ["/team", "/system", "/account"], tabs: settingsTabs };
+const allSections = [...groups.flatMap((g) => g.items), settings];
+// The longest matching address wins, so /records/names is Name cleanup, not Delivery Records.
+function sectionOf(path: string): Section | null {
+  let best: Section | null = null;
+  let length = -1;
+  for (const s of allSections) for (const m of s.match) {
+    const hit = m === "/" ? path === "/" : path === m || path.startsWith(m + "/");
+    if (hit && m.length > length) { best = s; length = m.length; }
+  }
+  return best;
+}
 const titleOf = (path: string) => allSections.flatMap((s) => s.tabs).find((t) => t.href === path)?.label ?? sectionOf(path)?.label;
 // One place to start any document: where each kind goes, and the page opens ready for it.
 const uploads: { href: string; label: string; hint: string; requires: Permission }[] = [
-  { href: "/upload?new=1", label: "Delivery tickets", hint: "Scans or phone photos", requires: "tickets.upload" },
-  { href: "/trucking?new=1", label: "Truck time sheet", hint: "Enter a shift, attach the sheet", requires: "trucking.edit" },
+  { href: "/upload?new=1", label: "Delivery tickets", hint: "Scans or phone photos, read automatically", requires: "tickets.upload" },
+  { href: "/trucking?new=1", label: "Trucking time sheet", hint: "Enter the shift, attach the sheet", requires: "trucking.edit" },
   { href: "/invoices/documents", label: "Supplier invoice", hint: "PDF, checked against deliveries", requires: "invoices.manage" },
-  { href: "/trucking?tab=invoices&new=1", label: "Hauling invoice", hint: "Checked against approved shifts", requires: "invoices.manage" },
+  { href: "/trucking?tab=invoices&new=1", label: "Trucking invoice", hint: "Checked against approved shifts", requires: "invoices.manage" },
 ];
 const PUBLIC_PATHS = ["/welcome", "/login", "/signup"];
 // Pages change without reloading, so the session is re-checked in the background, at most this often.
@@ -89,11 +114,11 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isPublic = PUBLIC_PATHS.includes(pathname);
   const section = sectionOf(pathname);
-  const [pending, setPending] = useState<{ tickets: number; trucking: number } | null>(null);
+  const [pending, setPending] = useState<{ review: number } | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const can = (p?: Permission) => !p || Boolean(account?.permissions?.includes(p));
   const navLink = ({ href, label, icon, badge }: Section) => {
-    const active = sectionOf(pathname)?.href === href;
+    const active = section?.label === label;
     const count = badge && pending ? pending[badge] : 0;
     return <Link key={href} href={href} aria-current={active ? "page" : undefined}
       className={`tf-nav-link ${active ? "tf-nav-link-active" : ""}`}
@@ -139,7 +164,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isPublic || checking || Date.now() - pendingAt.current < 60_000) return;
     pendingAt.current = Date.now();
-    getDashboard().then((d) => setPending({ tickets: d.needs_review, trucking: d.hauling?.awaiting_approval ?? 0 }))
+    getDashboard().then((d) => setPending({ review: d.needs_review + (d.hauling?.awaiting_approval ?? 0) }))
       .catch(() => setPending(null));
   }, [pathname, isPublic, checking]);
 
@@ -220,20 +245,23 @@ export default function AuthShell({ children }: { children: ReactNode }) {
     </main>;
   }
 
-  return <div className="tf-app-shell">
+  return <AccountContext.Provider value={account}><ProjectProvider accountId={account.id}><div className="tf-app-shell">
     <a href="#main-content" className="tf-skip-link">Skip to main content</a>
     {menuOpen && <button aria-label="Close navigation" className="tf-mobile-scrim" onClick={() => setMenuOpen(false)} />}
     <aside id="main-menu" className={`tf-sidebar ${menuOpen ? "tf-sidebar-open" : ""}`}>
       <button type="button" aria-label="Close menu" className="tf-sidebar-close" onClick={() => setMenuOpen(false)}><Icon name="close" size={18} /></button>
       <Link href="/" className="tf-sidebar-brand" aria-label="Quarvera home" onClick={(event) => { setMenuOpen(false); onInternalLink(event, "/"); }}>
-        <span className="tf-brand-mark"><Icon name="layers" size={21} /></span>
-        <span className="tf-brand-type">QUAR<span>VERA</span><small>DELIVERIES · TRUCKING · COSTS</small></span>
+        {/* The approved artwork, unaltered. */}
+        <img src="/brand/quarvera-horizontal-640.png" alt="Quarvera" width={640} height={222} className="tf-brand-logo" />
       </Link>
-      <div className="tf-sidebar-divider" />
+      <p className="tf-sidebar-workspace" title={account.organization_name ?? "Workspace"}>{account.organization_name ?? "Workspace"}</p>
       <nav aria-label="Main navigation" className="flex flex-1 flex-col">
         {!mustChangePassword && <>
-          <div className="tf-nav mt-3">{sections.map(navLink)}</div>
-          <div className="tf-nav tf-nav-settings">{navLink(settings)}</div>
+          {groups.map((group) => <div key={group.label} className="tf-nav" role="group" aria-labelledby={`nav-${group.label}`}>
+            <p id={`nav-${group.label}`} className="tf-nav-group">{group.label}</p>
+            {group.items.filter((item) => can(item.requires)).map(navLink)}
+          </div>)}
+          <div className="tf-nav tf-nav-settings">{navLink({ ...settings, href: settingsTabs.find((t) => can(t.requires))?.href ?? "/account" })}</div>
         </>}
       </nav>
       <Link href="/account" className="tf-sidebar-account" onClick={(event) => { setMenuOpen(false); onInternalLink(event, "/account"); }}>
@@ -247,12 +275,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
         <div className="flex min-w-0 items-center gap-3">
           <button type="button" aria-label="Open navigation" aria-expanded={menuOpen} aria-controls="main-menu" className="tf-menu-toggle"
             onClick={() => setMenuOpen(true)}><Icon name="menu" /></button>
-          <div className="tf-topbar-context">
-            <span className="tf-organization-name" title={account.organization_name ?? "Workspace"}>
-              {account.organization_name ?? "Workspace"}
-            </span>
-            <strong>{section?.label ?? "Quarvera"}</strong>
-          </div>
+          {!mustChangePassword && <ProjectPicker canCreate={can("projects.manage")} />}
         </div>
         {/* In the top bar, so the section's pages cost no height: review keeps its whole screen. */}
         {section && section.tabs.filter((t) => can(t.requires)).length > 1 && <nav aria-label="In this section" className="tf-section-tabs tf-header-tabs">
@@ -262,9 +285,9 @@ export default function AuthShell({ children }: { children: ReactNode }) {
         </nav>}
         <div className="tf-topbar-right">
           {!mustChangePassword && uploads.some((u) => can(u.requires)) && <div className="relative">
-            <button type="button" className="tf-primary-button" aria-haspopup="menu" aria-expanded={uploadOpen} onClick={() => setUploadOpen((v) => !v)}>
-              <Icon name="upload" size={16} /> Upload</button>
-            {uploadOpen && <div role="menu" aria-label="Upload" className="tf-upload-menu">
+            <button type="button" className="tf-primary-button" aria-label="Upload documents" aria-haspopup="menu" aria-expanded={uploadOpen} onClick={() => setUploadOpen((v) => !v)}>
+              <Icon name="upload" size={16} /> <span className="tf-upload-label">Upload documents</span></button>
+            {uploadOpen && <div role="menu" aria-label="Upload documents" className="tf-upload-menu">
               {uploads.filter((u) => can(u.requires)).map((u) => <Link key={u.href} role="menuitem" href={u.href} prefetch={false}
                 onClick={(event) => { setUploadOpen(false); onInternalLink(event, u.href.split("?")[0]); }}>
                 <strong>{u.label}</strong><span>{u.hint}</span></Link>)}
@@ -283,9 +306,7 @@ export default function AuthShell({ children }: { children: ReactNode }) {
             }}><Icon name="logout" size={18} /><span>Sign out</span></button>
         </div>
       </header>
-      <AccountContext.Provider value={account}>
-        <main id="main-content" tabIndex={-1} className="tf-main focus:outline-none">{children}</main>
-      </AccountContext.Provider>
+      <main id="main-content" tabIndex={-1} className="tf-main focus:outline-none">{children}</main>
     </div>
-  </div>;
+  </div></ProjectProvider></AccountContext.Provider>;
 }

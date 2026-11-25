@@ -4,11 +4,9 @@ import Link from "next/link";
 import { useState, type ReactNode, type Ref } from "react";
 
 export function Brand({ tone = "light" }: { tone?: "light" | "dark" }) {
-  return <Link href="/welcome" className={`tf-pub-brand tf-pub-brand-${tone}`} aria-label="TicketFlow home">
-    <span className="tf-pub-mark" aria-hidden="true">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5" /></svg>
-    </span>
-    <span>TICKET<b>FLOW</b></span>
+  // The approved logo, unaltered. On a dark ground it sits on a white plate rather than being recoloured.
+  return <Link href="/welcome" className={`tf-pub-brand tf-pub-brand-${tone}`} aria-label="Quarvera home">
+    <img src="/brand/quarvera-horizontal-640.png" alt="Quarvera" width={640} height={222} className="tf-pub-logo" />
   </Link>;
 }
 

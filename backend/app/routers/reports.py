@@ -192,6 +192,197 @@ OPEN_STATUSES = ("needs_review", "flagged", "failed")
 ACTIVITY = {"verified": "approved", "flagged": "flagged", "skipped": "skipped"}
 
 
+QUEUE_LIMIT = 200
+QUEUE_KINDS = ("tickets", "failed_files", "truck_shifts", "invoice_lines")
+
+
+@router.get("/review-queue")
+def review_queue(project_id: int | None = None, kind: str | None = None, db: Session = Depends(get_db),
+                 organization_id: int = Depends(current_organization_id)):
+    """Everything waiting for a person, in one list: ticket batches with tickets to check,
+    files that couldn't be read, truck shifts to approve and invoice lines drafted from a
+    PDF. Each item links to the screen where the work is done; nothing is approved here.
+
+    Oldest first, because a queue is worked from the front. A fixed number of grouped
+    queries; at most QUEUE_LIMIT items of each kind, with the true totals in ``summary``.
+    """
+    from ..models import Hauler, InvoiceDocument, InvoiceDraftLine, Truck, TruckShift
+    if kind is not None and kind not in QUEUE_KINDS:
+        raise HTTPException(422, f"kind must be one of: {', '.join(QUEUE_KINDS)}")
+    names = {p.id: (p.code, p.name) for p in db.scalars(select(Project).where(Project.organization_id == organization_id))}
+    if project_id is not None and project_id not in names:
+        raise HTTPException(404, "Project not found")
+
+    def project(pid):
+        return {"id": pid, "code": names[pid][0], "name": names[pid][1]} if pid in names else None
+
+    items: list[dict] = []
+    summary = {k: 0 for k in QUEUE_KINDS}
+
+    if kind in (None, "tickets"):
+        open_by_batch = (select(Batch.id, Batch.project_id, Batch.created_at, Batch.intake_mode,
+                                func.sum(case((Ticket.status == "needs_review", 1), else_=0)).label("to_check"),
+                                func.sum(case((Ticket.status == "flagged", 1), else_=0)).label("flagged"),
+                                func.sum(case((Ticket.status == "failed", 1), else_=0)).label("failed"),
+                                func.min(Ticket.created_at).label("oldest"))
+                         .join(Ticket, Ticket.batch_id == Batch.id)
+                         .where(Batch.organization_id == organization_id, Ticket.organization_id == organization_id,
+                                Ticket.status.in_(OPEN_STATUSES))
+                         .group_by(Batch.id, Batch.project_id, Batch.created_at, Batch.intake_mode))
+        if project_id is not None:
+            open_by_batch = open_by_batch.where(Batch.project_id == project_id)
+        rows = sorted(db.execute(open_by_batch).all(), key=lambda r: (as_utc(r.created_at), r.id))
+        summary["tickets"] = sum(int(r.to_check) + int(r.flagged) + int(r.failed) for r in rows)
+        for r in rows[:QUEUE_LIMIT]:
+            parts = [f"{int(r.to_check)} to check" if r.to_check else None, f"{int(r.flagged)} flagged" if r.flagged else None,
+                     f"{int(r.failed)} couldn't be read" if r.failed else None]
+            items.append({"kind": "tickets", "id": r.id, "title": f"Delivery tickets · batch #{r.id}",
+                          "detail": " · ".join(p for p in parts if p), "count": int(r.to_check) + int(r.flagged) + int(r.failed),
+                          "attention": bool(r.flagged or r.failed), "project": project(r.project_id),
+                          "created_at": as_utc(r.created_at), "href": f"/upload?batch={r.id}"})
+
+    if kind in (None, "failed_files"):
+        failed = (select(UploadedFile.id, UploadedFile.original_name, UploadedFile.error, Batch.id.label("batch_id"),
+                         Batch.project_id, Batch.created_at)
+                  .join(Batch, Batch.id == UploadedFile.batch_id)
+                  .where(Batch.organization_id == organization_id, UploadedFile.status == "failed")
+                  .order_by(Batch.created_at, UploadedFile.id))
+        if project_id is not None:
+            failed = failed.where(Batch.project_id == project_id)
+        rows = db.execute(failed).all()
+        summary["failed_files"] = len(rows)
+        for r in rows[:QUEUE_LIMIT]:
+            items.append({"kind": "failed_files", "id": r.id, "title": f"{r.original_name} couldn't be processed",
+                          "detail": (r.error or "The file couldn't be read.")[:240], "count": 1, "attention": True,
+                          "project": project(r.project_id), "created_at": as_utc(r.created_at),
+                          "href": f"/upload?batch={r.batch_id}"})
+
+    if kind in (None, "truck_shifts"):
+        shifts = (select(TruckShift.id, TruckShift.project_id, TruckShift.work_date, TruckShift.created_at, TruckShift.driver_name,
+                         TruckShift.start_at, TruckShift.end_at, Truck.identifier, Hauler.name.label("hauler"))
+                  .join(Truck, Truck.id == TruckShift.truck_id).join(Hauler, Hauler.id == TruckShift.hauler_id)
+                  .where(TruckShift.organization_id == organization_id, TruckShift.status == "needs_review")
+                  .order_by(TruckShift.work_date, TruckShift.id))
+        if project_id is not None:
+            shifts = shifts.where(TruckShift.project_id == project_id)
+        rows = db.execute(shifts).all()
+        summary["truck_shifts"] = len(rows)
+        for r in rows[:QUEUE_LIMIT]:
+            on_site = (r.end_at - r.start_at).total_seconds() / 3600
+            items.append({"kind": "truck_shifts", "id": r.id, "title": f"Truck {r.identifier} · {r.hauler} · {r.work_date.isoformat()}",
+                          "detail": f"{on_site:.2f} h on site" + (f" · {r.driver_name}" if r.driver_name else ""), "count": 1,
+                          "attention": False, "project": project(r.project_id), "created_at": as_utc(r.created_at),
+                          "href": f"/trucking?shift_id={r.id}"})
+
+    if kind in (None, "invoice_lines"):
+        drafts = (select(InvoiceDocument.id, InvoiceDocument.original_name, InvoiceDocument.project_id, InvoiceDocument.created_at,
+                         func.count(InvoiceDraftLine.id).label("lines"))
+                  .join(InvoiceDraftLine, InvoiceDraftLine.document_id == InvoiceDocument.id)
+                  .where(InvoiceDocument.organization_id == organization_id, InvoiceDraftLine.state == "pending_review")
+                  .group_by(InvoiceDocument.id, InvoiceDocument.original_name, InvoiceDocument.project_id, InvoiceDocument.created_at)
+                  .order_by(InvoiceDocument.created_at, InvoiceDocument.id))
+        if project_id is not None:
+            drafts = drafts.where(InvoiceDocument.project_id == project_id)
+        rows = db.execute(drafts).all()
+        summary["invoice_lines"] = sum(int(r.lines) for r in rows)
+        for r in rows[:QUEUE_LIMIT]:
+            items.append({"kind": "invoice_lines", "id": r.id, "title": f"Supplier invoice · {r.original_name}",
+                          "detail": f"{int(r.lines)} drafted line{'s' if r.lines != 1 else ''} to confirm", "count": int(r.lines),
+                          "attention": False, "project": project(r.project_id), "created_at": as_utc(r.created_at),
+                          "href": f"/invoices/documents?id={r.id}"})
+
+    items.sort(key=lambda i: (i["created_at"].timestamp() if i["created_at"] else 0, i["kind"], i["id"]))
+    return {"summary": {**summary, "total": sum(summary.values())}, "items": items}
+
+
+def _summary(db: Session, organization_id: int, project_id: int | None, date_from: date | None, date_to: date | None, period: str) -> dict:
+    from ..services import cost_reports
+    from .invoices import invoice_register
+    if project_id is not None and not db.scalar(select(Project.id).where(Project.id == project_id, Project.organization_id == organization_id)):
+        raise HTTPException(404, "Project not found")
+    if period not in cost_reports.PERIODS:
+        raise HTTPException(422, "period must be day, week or month")
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(422, "The start date is after the end date.")
+    report = cost_reports.build(db, organization_id, project_id, date_from, date_to, period)
+    # Invoices whose billing period overlaps the dates asked for.
+    rows = [r for r in invoice_register(project_id, db, organization_id)["invoices"]
+            if (not date_from or r["period_to"] >= date_from.isoformat()) and (not date_to or r["period_from"] <= date_to.isoformat())]
+    report["invoices"] = {
+        "invoices": len(rows), "billed": str(sum((Decimal(r["billed"]) for r in rows), Decimal(0))),
+        "matched": sum(1 for r in rows if r["status"] == "matched"), "with_differences": sum(1 for r in rows if r["status"] == "discrepancy"),
+        "incomplete": sum(1 for r in rows if r["status"] == "incomplete"),
+        "difference": str(sum((Decimal(r["difference"]) for r in rows if r["difference"] is not None and r["status"] == "discrepancy"), Decimal(0))),
+        "totals_only": sum(1 for r in rows if not r["ticket_level"]),
+        "rows": rows,
+    }
+    return report
+
+
+@router.get("/reports/summary", dependencies=[Depends(limited("reports"))])
+def report_summary(project_id: int | None = None, date_from: date | None = None, date_to: date | None = None, period: str = "week",
+                   db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    """Material, trucking, project cost and invoice reports for one project or all, over a date range.
+    Approved figures only; a missing price is counted, never shown as $0. Not a payment approval."""
+    return _summary(db, organization_id, project_id, date_from, date_to, period)
+
+
+@router.get("/reports/summary.xlsx", dependencies=[Depends(limited("exports"))])
+def report_summary_xlsx(project_id: int | None = None, date_from: date | None = None, date_to: date | None = None, period: str = "week",
+                        db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    report = _summary(db, organization_id, project_id, date_from, date_to, period)
+    safe = export_svc._safe_excel_text
+    num = lambda v: float(v) if v is not None else None  # noqa: E731  (cells; the JSON keeps exact strings)
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Summary"
+    scope = "All projects"
+    if project_id is not None:
+        p = db.get(Project, project_id)
+        scope = f"{p.code} · {p.name}"
+    for row in [["Quarvera cost report: approved figures only. Not an approval for payment."], ["Project", safe(scope)],
+                ["Dates", f"{report['date_from'] or 'start'} to {report['date_to'] or 'today'}"], [],
+                ["Verified tons", num(report["material"]["tons"])], ["Material cost", num(report["material"]["cost"])],
+                ["Approved tickets without a rate (cost incomplete)", report["material"]["unpriced"]],
+                ["Tickets waiting for review (not included)", report["material"]["waiting"]],
+                ["Approved trucking hours", num(report["trucking"]["hours"])], ["Trucking cost", num(report["trucking"]["cost"])],
+                ["Total verified cost", num(report["costs"]["total"])],
+                ["Invoices in these dates", report["invoices"]["invoices"]], ["Invoices with differences", report["invoices"]["with_differences"]]]:
+        sheet.append(row)
+    sheet["A1"].font = Font(bold=True)
+
+    def table(title, headers, rows):
+        ws = wb.create_sheet(title)
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        for r in rows:
+            ws.append(r)
+
+    m = report["material"]
+    table("Material by material", ["Material", "Tickets", "Verified tons", "Material cost", "Approved without a rate"],
+          [[safe(r["name"]), r["tickets"], num(r["tons"]), num(r["cost"]), r["unpriced"]] for r in m["by_material"]])
+    table("Material by supplier", ["Supplier", "Tickets", "Verified tons", "Material cost", "Approved without a rate"],
+          [[safe(r["name"]), r["tickets"], num(r["tons"]), num(r["cost"]), r["unpriced"]] for r in m["by_supplier"]])
+    table("Trucking by hauler", ["Hauler", "Approved shifts", "Approved hours", "Loads", "Trucking cost"],
+          [[safe(r["name"]), r["shifts"], num(r["hours"]), r["loads"], num(r["cost"])] for r in report["trucking"]["by_hauler"]])
+    table(f"By {period}", [period.capitalize(), "Tickets", "Verified tons", "Material cost", "Without a rate", "Truck hours", "Loads",
+                            "Trucking cost", "Total"],
+          [[r["period"], r["tickets"], num(r["tons"]), num(r["material"]), r["unpriced"], num(r["hours"]), r["loads"], num(r["trucking"]),
+            num(r["total"])] for r in report["by_period"]])
+    table("Invoices", ["Type", "Invoice", "Company", "Project", "From", "To", "Billed", "Approved records", "Difference", "Result", "Compared"],
+          [[r["kind"], safe(r["invoice_number"]), safe(r["company"]), safe(r["project"]["code"]) if r["project"] else None, r["period_from"],
+            r["period_to"], num(r["billed"]), num(r["compared"]), num(r["difference"]), r["status"],
+            "Ticket by ticket" if r["ticket_level"] else "Totals only"] for r in report["invoices"]["rows"]])
+    out = BytesIO()
+    wb.save(out)
+    return Response(out.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={
+        "Content-Disposition": 'attachment; filename="quarvera-cost-report.xlsx"', "Cache-Control": "no-store"})
+
+
 def _hauling(db: Session, organization_id: int, project_id: int | None, material: Decimal) -> dict:
     """Approved hourly trucking, kept apart from material cost: different work, often a
     different company. Per project through each shift's allocations, so a shift split
@@ -358,7 +549,7 @@ def pilot_csv(project_id: int | None = None, db: Session = Depends(get_db),
     report = _pilot(db, organization_id, project_id)
     output = StringIO(newline="")
     writer = csv.writer(output)
-    writer.writerow(["TicketFlow pilot report - counts of records, not an approval or a completeness claim"])
+    writer.writerow(["Quarvera pilot report - counts of records, not an approval or a completeness claim"])
     writer.writerow(["Unresolved items", report["unresolved_items"]])
     for section in ("intake", "review", "reconciliation"):
         writer.writerow([])
@@ -374,7 +565,7 @@ def pilot_csv(project_id: int | None = None, db: Session = Depends(get_db),
     for row in report["batches_needing_attention"]:
         writer.writerow([f"Batch {row['batch_id']}", "; ".join(row["reasons"])])
     return Response(output.getvalue(), media_type="text/csv; charset=utf-8", headers={
-        "Content-Disposition": 'attachment; filename="ticketflow-pilot-report.csv"', "Cache-Control": "no-store"})
+        "Content-Disposition": 'attachment; filename="quarvera-pilot-report.csv"', "Cache-Control": "no-store"})
 
 
 class TimingIn(BaseModel):

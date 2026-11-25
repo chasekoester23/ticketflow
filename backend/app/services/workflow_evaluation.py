@@ -56,7 +56,7 @@ def load_truth(path: Path) -> dict[str, Any]:
         raise DatasetError(f"Can't read the ground-truth file: {exc}") from None
     if not isinstance(data, dict) or data.get("labelled_independently") is not True:
         raise DatasetError("The ground-truth file must say \"labelled_independently\": true, meaning a person "
-                           "read each paper ticket without looking at TicketFlow's values.")
+                           "read each paper ticket without looking at Quarvera's values.")
     if not str(data.get("labelled_by") or "").strip():
         raise DatasetError("Say who labelled the tickets (\"labelled_by\"), so the labels can be checked.")
     slots, seen = [], set()
@@ -343,7 +343,7 @@ def _limitations(truth: dict, detection: Counter, timings: list, cost) -> list[s
         notes.append("Review timings are opt-in and per ticket screen; they leave out sorting paper, scanning and setup.")
     notes.append("Batch completion runs from upload to the last approval, idle time included.")
     if cost is None:
-        notes.append("No API cost was entered. TicketFlow doesn't record model calls or tokens, so cost must come from the provider's bill.")
+        notes.append("No API cost was entered. Quarvera doesn't record model calls or tokens, so cost must come from the provider's bill.")
     else:
         notes.append("API cost is the figure a person entered from the bill, divided by approved tickets; it isn't measured.")
     notes.append("Retries are counted per processing job, not per model call.")

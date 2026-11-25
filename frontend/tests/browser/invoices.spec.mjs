@@ -44,7 +44,7 @@ const ITEMIZED = line({
       tons_difference: "0.000", flags: [], notes: [] },
     { result: "not_found", line: 2, invoice_ticket_number: "10490", billed_tons: "22.100",
       ticket: null, candidates: [], verified_tons: null, tons_difference: null, flags: [],
-      notes: ["No delivery record in TicketFlow has this ticket number."] },
+      notes: ["No delivery record in Quarvera has this ticket number."] },
     { result: "not_on_invoice", line: null, invoice_ticket_number: null, billed_tons: null,
       ticket: record(12, "10483", "22.100"), candidates: [], verified_tons: "22.100",
       tons_difference: null, flags: [], notes: [] },
@@ -74,7 +74,7 @@ async function mockInvoices(page, role, saved, posted = []) {
 test("a manager pastes invoice tickets and sees each one checked with links to the scan", async ({ page }) => {
   const posted = [];
   await mockInvoices(page, "manager", [], posted);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await page.getByLabel("Project").selectOption("1");
   await page.getByLabel("Invoice number").fill("EA-2026-1107");
   await page.getByLabel("Supplier name (match ticket supplier)").fill("Example Aggregates");
@@ -101,7 +101,7 @@ test("a manager pastes invoice tickets and sees each one checked with links to t
     .toHaveAttribute("href", /\/api\/tickets\/11\/image$/);
   await expect(matched.getByRole("link", { name: "Review & history" }))
     .toHaveAttribute("href", "/upload?batch=3&ticket=11");
-  await expect(table.getByRole("row").filter({ hasText: "10490" })).toContainText("Not in TicketFlow");
+  await expect(table.getByRole("row").filter({ hasText: "10490" })).toContainText("Not in Quarvera");
   const missing = table.getByRole("row").filter({ hasText: "Delivered, not on invoice" });
   await expect(missing).toContainText("10483");
   await expect(missing.getByRole("link", { name: "Review & history" }))
@@ -111,7 +111,7 @@ test("a manager pastes invoice tickets and sees each one checked with links to t
 
 test("a totals-only line is labelled as not checking individual tickets", async ({ page }) => {
   await mockInvoices(page, "viewer", [line()]);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   const row = page.getByRole("row").filter({ hasText: "EA-2026-1107" });
   await expect(row).toContainText("Totals match");
   await expect(row).not.toContainText("Figures match");
@@ -146,7 +146,7 @@ test("a manager confirms clean matches; people's confirmation is reported separa
     }
     return json(route, { detail: "Not found" }, 404);
   });
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await page.getByRole("button", { name: "Details" }).click();
   const summary = page.getByTestId("evidence-summary");
   await expect(summary).toContainText("0 of 2 invoice tickets confirmed by a person");
@@ -163,7 +163,7 @@ test("a manager confirms clean matches; people's confirmation is reported separa
 
 test("correcting an itemized line puts its ticket list back in the paste box", async ({ page }) => {
   await mockInvoices(page, "owner", [ITEMIZED]);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await page.getByRole("row").filter({ hasText: "EA-2026-1107" }).getByRole("button", { name: "Correct" }).click();
   await expect(page.getByLabel("Ticket numbers listed on this invoice (optional)"))
     .toHaveValue("010482\t24.500\n10490\t22.100");
@@ -216,7 +216,7 @@ async function mockDiagnosis(page, role = "viewer") {
 
 test("details lead with why, in figures that land exactly on the bill", async ({ page }) => {
   await mockDiagnosis(page);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await page.getByRole("row").filter({ hasText: "EA-2026-1107" }).getByRole("button", { name: "Details" }).click();
   await expect(page.getByTestId("diagnosis-headline")).toHaveText("The totals agree, but individual tickets don't.");
   const bridge = page.getByRole("table", { name: "From approved tons to billed tons" });
@@ -233,7 +233,7 @@ test("details lead with why, in figures that land exactly on the bill", async ({
 
 test("the overview totals what's known, says what's left out, and links billing patterns to their line", async ({ page }) => {
   await mockDiagnosis(page);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   const overview = page.getByRole("region", { name: "Invoice overview" });
   await expect(overview).toContainText("$2,796.00");
   await expect(overview).toContainText("1 line(s) unresolved and left out");
@@ -246,7 +246,7 @@ test("the overview totals what's known, says what's left out, and links billing 
 
 test("the line list filters by result and searches, without losing the count", async ({ page }) => {
   await mockDiagnosis(page);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await expect(page.getByText("2 material lines")).toBeVisible();
   await page.getByRole("button", { name: "Differences" }).click();
   await expect(page.getByText("1 of 2 material lines")).toBeVisible();
@@ -259,7 +259,7 @@ test("the line list filters by result and searches, without losing the count", a
 
 test("the entry form stays out of the way once lines exist, for managers only", async ({ page }) => {
   await mockDiagnosis(page, "manager");
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await expect(page.getByRole("row").filter({ hasText: "EA-2026-1107" })).toBeVisible();
   await expect(page.getByLabel("Invoice number")).toHaveCount(0);
   await page.getByRole("button", { name: "Record an invoice line" }).click();

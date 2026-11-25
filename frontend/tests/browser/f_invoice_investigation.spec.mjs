@@ -78,7 +78,7 @@ test("report figures lead to the tickets and invoice lines behind them", async (
   const month = page.getByRole("region", { name: "By delivery month" }).getByRole("row").filter({ hasText: "2026-10" });
   await expect(month.getByRole("link", { name: /approved tickets/ })).toHaveAttribute("href", "/records?project_id=1&status=verified&date_from=2026-10-01&date_to=2026-10-31");
   const line = page.getByRole("region", { name: "Invoice lines" }).getByRole("link", { name: /EA-2026-1107/ });
-  await expect(line).toHaveAttribute("href", "/invoices?line=9");
+  await expect(line).toHaveAttribute("href", "/invoices/lines?line=9");
   await line.click();
   await expect(page.getByRole("region", { name: "Why this result" })).toBeVisible();
   await expect(page.getByRole("heading", { name: /Invoice EA-2026-1107/ })).toBeVisible();
@@ -91,27 +91,27 @@ test("the differences CSV goes out for the chosen project and supplier", async (
     asked.push(url.search);
     return (route) => csv(route, "invoice,supplier,kind\nEA-2026-1107,Example Aggregates,not_found\n");
   } });
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   const group = page.getByRole("group", { name: "Differences to send to a supplier" });
   await expect(group).toContainText("not approval for payment");
   await group.getByLabel("Project").selectOption("1");
   await group.getByLabel("Supplier").selectOption("Example Aggregates");
   const download = page.waitForEvent("download");
   await group.getByRole("button", { name: "Download discrepancy list (CSV)" }).click();
-  expect((await download).suggestedFilename()).toBe("ticketflow-invoice-differences-24-115-Example_Aggregates.csv");
+  expect((await download).suggestedFilename()).toBe("quarvera-invoice-differences-24-115-Example_Aggregates.csv");
   expect(asked).toEqual(["?project_id=1&supplier=Example+Aggregates"]);
 });
 
 test("a server without the differences CSV yet says so instead of breaking", async ({ page }) => {
   await mockWorkspace(page);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await page.getByRole("button", { name: "Download discrepancy list (CSV)" }).click();
   await expect(page.getByRole("group", { name: "Differences to send to a supplier" }).getByRole("alert")).toContainText("doesn't offer that download yet");
 });
 
 test("the overview's counts open the lines they count", async ({ page }) => {
   await mockWorkspace(page);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await page.getByRole("region", { name: "Invoice overview" }).getByRole("button", { name: "Show them" }).click();
   await expect(page.getByRole("button", { name: "Differences", exact: true })).toHaveAttribute("aria-pressed", "true");
 });

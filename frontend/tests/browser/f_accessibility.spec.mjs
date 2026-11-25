@@ -12,18 +12,22 @@ try {
 
 const heading = (name) => (page) => page.getByRole("heading", { name, exact: true }).first();
 const PAGES = [
-  ["/login", heading("Sign in to TicketFlow")],
+  ["/login", heading("Sign in to Quarvera")],
   ["/", heading("Overview")],
   ["/upload", heading("Ticket intake & review")],
   ["/upload?batch=5&ticket=1001", (page) => page.getByRole("button", { name: "Accept & next" })],
   ["/records", heading("Delivery records")],
   ["/records/names", (page) => page.getByRole("heading", { level: 1 })],
-  ["/invoices", heading("Invoice comparison")],
+  ["/invoices", heading("Invoices")],
+  ["/invoices/lines", heading("Supplier invoice lines")],
+  ["/review", heading("Review Queue")],
+  ["/suppliers", heading("Suppliers & Haulers")],
   ["/invoices/documents", heading("Invoice PDFs")],
   ["/reports/project", heading("Project report")],
-  ["/reports", (page) => page.getByRole("heading", { level: 1 })],
+  ["/reports", heading("Reports")],
+  ["/reports/pilot", (page) => page.getByRole("heading", { level: 1 })],
   ["/projects", heading("Projects")],
-  ["/pricing", heading("Suppliers & rates")],
+  ["/pricing", heading("Rates & Pricing")],
   ["/team", (page) => page.getByRole("heading", { level: 1 })],
   ["/account", (page) => page.getByRole("heading", { level: 1 })],
   ["/system", (page) => page.getByRole("heading", { level: 1 })],
@@ -33,7 +37,7 @@ const STATES = [
     await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
   }],
-  ["an invoice line's details", "/invoices", async (page) => {
+  ["an invoice line's details", "/invoices/lines", async (page) => {
     await page.getByRole("button", { name: "Details" }).first().click();
     await expect(page.getByRole("region", { name: "Why this result" })).toBeVisible();
   }],

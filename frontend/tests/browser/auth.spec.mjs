@@ -15,7 +15,7 @@ test("signed-out visitor cannot reach ticket review workspace", async ({ page })
   await page.route("**/api/auth/me", (route) => json(route, { detail: "Sign in" }, 401));
   await page.goto("/upload");
   await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole("heading", { name: "Sign in to TicketFlow" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in to Quarvera" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Original scanned ticket" })).toHaveCount(0);
 });
 

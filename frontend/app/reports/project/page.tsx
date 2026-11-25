@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Project, ProjectReport, ReportGroup, getProjectReport, listProjects, projectReportUrl } from "../../../lib/api";
+import { ProjectReport, ReportGroup, getProjectReport, projectReportUrl } from "../../../lib/api";
+import { useProject } from "../../project-context";
 import { Unbilled } from "./Unbilled";
 
 const money = (v: string | null) => v === null ? "Unresolved" : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -51,21 +52,17 @@ function Tile({ label, value, note, attention }: { label: string; value: string;
 }
 
 export default function ProjectReportPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [project, setProject] = useState("");
+  // The report is for the project chosen in the top bar; a link naming one chooses it there.
+  const { projectId: project, setProjectId, projects, loaded } = useProject();
   const [report, setReport] = useState<ProjectReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    listProjects(true).then((found) => {
-      setProjects(found);
-      const wanted = new URLSearchParams(window.location.search).get("project_id");
-      const first = wanted ?? (found[0] ? String(found[0].id) : "");
-      setProject(first);
-    }).catch((e) => setError(e.message));
-  }, []);
+    const wanted = new URLSearchParams(window.location.search).get("project_id");
+    if (wanted) setProjectId(wanted);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!project) return;
+    if (!project) { setReport(null); window.history.replaceState(null, "", "/reports/project"); return; }
     let active = true;
     setReport(null);
     getProjectReport(project).then((found) => { if (active) { setReport(found); setError(null); } })
@@ -81,16 +78,15 @@ export default function ProjectReportPage() {
         <h1 className="tf-page-title">Project report</h1>
         <p className="tf-page-description">Approved material by supplier and month, the invoice lines against it, and approved deliveries no invoice covers. Not an approval for payment.</p>
       </div>
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="tf-field-label">Project
-          <select className="tf-field min-w-[220px]" value={project} onChange={(e) => setProject(e.target.value)}>
-            {!project && <option value="">No projects yet</option>}
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
-          </select>
-        </label>
-        {project && <a className="tf-secondary-button" href={projectReportUrl(project)}>Download Excel</a>}
-      </div>
+      {project && <a className="tf-secondary-button" href={projectReportUrl(project)}>Download Excel</a>}
     </div>
+    {!project && loaded && <section className="tf-panel" aria-labelledby="choose-title">
+      <div className="tf-panel-heading"><div><h2 id="choose-title" className="tf-panel-title">Choose a project</h2>
+        <p className="tf-panel-description">This report covers one project. Pick it here or in the project selector at the top.</p></div></div>
+      {projects.length ? <div className="flex flex-wrap gap-2 p-4">{projects.filter((p) => p.status === "active").slice(0, 12).map((p) =>
+        <button key={p.id} type="button" className="tf-secondary-button" onClick={() => setProjectId(String(p.id))}>{p.code} · {p.name}</button>)}</div>
+        : <p className="tf-empty">No projects yet. <Link prefetch={false} className="tf-link" href="/projects">Create one</Link> first.</p>}
+    </section>}
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
     {report && totals && <>
       <section className="tf-panel grid divide-y divide-[#e7eaee] sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4" aria-label="Project totals">
@@ -131,7 +127,7 @@ export default function ProjectReportPage() {
         {report.invoices.lines.length ? <div className="tf-table-wrap"><table className="tf-table">
           <thead><tr><th>Invoice</th><th>Supplier</th><th>Material</th><th>Result</th><th className="text-right">Billed tons</th><th className="text-right">Approved tons</th><th className="text-right">Billed</th><th className="text-right">Approved cost</th><th className="text-right">Difference</th></tr></thead>
           <tbody>{report.invoices.lines.map((line) => <tr key={line.id}>
-            <td className="font-semibold tabular-nums"><Link prefetch={false} href={`/invoices?line=${line.id}`}>{line.invoice_number}<span className="sr-only">, open this invoice line</span></Link></td><td>{line.supplier}</td><td>{line.material}</td>
+            <td className="font-semibold tabular-nums"><Link prefetch={false} href={`/invoices/lines?line=${line.id}`}>{line.invoice_number}<span className="sr-only">, open this invoice line</span></Link></td><td>{line.supplier}</td><td>{line.material}</td>
             <td><span className={`tf-status ${RESULT[line.status]?.tone ?? ""}`}>{RESULT[line.status]?.label ?? line.status}</span></td>
             <td className="text-right tabular-nums">{tons(line.billed_tons)}</td><td className="text-right tabular-nums">{tons(line.verified_tons)}</td>
             <td className="text-right tabular-nums">{money(line.billed_subtotal)}</td><td className="text-right tabular-nums">{money(line.verified_subtotal)}</td>

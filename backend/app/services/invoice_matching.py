@@ -354,7 +354,7 @@ def check_tickets(
                                  + ", ".join("ticket " + (t.ticket_number or "") for t, _ in near)
                                  + " differs only in leading zeros. Compare both documents.")
             else:
-                row.notes.append("No delivery record in TicketFlow has this ticket number.")
+                row.notes.append("No delivery record in Quarvera has this ticket number.")
         if repeats[key] > 1:
             row.flags.append("duplicate_on_invoice")
             row.notes.append(f"This ticket number appears {repeats[key]} times on this invoice line.")

@@ -286,7 +286,7 @@ def test_report_csv_includes_review_state_and_sanitizes_spreadsheet_text(client)
     response = client.get(f"/api/invoice-comparisons/{invoice_id}/report.csv")
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("text/csv")
-    assert f"ticketflow-invoice-{invoice_id}.csv" in response.headers["content-disposition"]
+    assert f"quarvera-invoice-{invoice_id}.csv" in response.headers["content-disposition"]
     assert "no-store" in response.headers["cache-control"]
     rows = list(csv.reader(StringIO(response.text)))
     assert ["Invoice number", "'=1+1"] in rows

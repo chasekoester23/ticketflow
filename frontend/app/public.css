@@ -15,12 +15,9 @@
 }
 
 /* Brand */
-.tf-pub-brand { display: inline-flex; align-items: center; gap: 11px; font-family: var(--tf-display); font-size: 21px; font-weight: 600; letter-spacing: .06em; text-decoration: none; }
-.tf-pub-brand-light { color: white; }
-.tf-pub-brand-light b { color: #f49862; font-weight: 600; }
-.tf-pub-brand-dark { color: var(--tf-pub-ink); }
-.tf-pub-brand-dark b { color: var(--tf-orange-action); font-weight: 600; }
-.tf-pub-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 4px; background: var(--tf-orange); }
+.tf-pub-brand { display: inline-flex; align-items: center; text-decoration: none; }
+.tf-pub-logo { display: block; width: 150px; height: auto; }
+.tf-pub-brand-light { padding: 5px 10px; border-radius: 4px; background: white; }
 .tf-pub-kicker { margin: 0; color: #f0a274; font-family: var(--tf-mono); font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; }
 
 /* Buttons */
@@ -253,7 +250,7 @@
   .tf-s-pen { right: 12px; bottom: 7px; font-size: 28px; }
   .tf-s-nav nav a.tf-s-nav-cta { padding: 8px 11px; font-size: 14px; }
   .tf-s-nav nav a { font-size: 14px; }
-  .tf-s-nav .tf-pub-brand { font-size: 19px; gap: 8px; }
+  .tf-s-nav .tf-pub-logo { width: 128px; }
   .tf-r dt { flex-basis: 112px; }
   .tf-r dd { font-size: 18px; }
   .tf-s-roles > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }

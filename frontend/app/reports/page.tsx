@@ -2,109 +2,137 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { PilotReport, Project, getPilotReport, listProjects, pilotReportCsvUrl } from "../../lib/api";
+import { CostReport, CostReportQuery, CostRow, costReportXlsxUrl, getCostReport } from "../../lib/api";
+import { useProject } from "../project-context";
 
-const num = (v: number | string | undefined) => v ?? 0;
+// Display only: the server adds every amount up exactly.
+const money = (v: string) => `${Number(v) < 0 ? "-" : ""}$${Math.abs(Number(v)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const tons = (v: string) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const hours = (v: string) => `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })} h`;
+const TABS = [["costs", "Project costs"], ["material", "Material"], ["trucking", "Trucking"], ["invoices", "Invoices"]] as const;
+type Tab = typeof TABS[number][0];
+const periodLabel = (key: string, period: string) => period === "month"
+  ? new Date(`${key}-01T00:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" })
+  : `${period === "week" ? "Week of " : ""}${new Date(`${key}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
 
-function Row({ label, value, href, attention }: { label: string; value: number | string; href?: string; attention?: boolean }) {
-  return <tr>
-    <td>{label}</td>
-    <td className={"text-right tabular-nums " + (attention && Number(value) > 0 ? "font-bold text-[#a14a1b]" : "font-semibold")}>{value}</td>
-    <td className="text-right">{href && Number(value) > 0 && <Link prefetch={false} className="tf-link" href={href}>Show</Link>}</td>
-  </tr>;
+function Tile({ label, value, note, warn = false }: { label: string; value: string; note: string; warn?: boolean }) {
+  return <div className="border-b border-r border-[#dce1e6] px-5 py-4">
+    <p className="tf-stat-label">{label}</p><p className={warn ? "text-[#995a18]" : "text-[#041d2f]"}>{value}</p>
+    <span className={`text-[11.5px] ${warn ? "font-semibold text-[#995a18]" : "text-[#5f6c7b]"}`}>{note}</span>
+  </div>;
 }
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="tf-panel" aria-label={title}>
-    <div className="tf-panel-heading"><h2 className="tf-panel-title">{title}</h2></div>
-    <div className="tf-table-wrap"><table className="tf-table"><tbody>{children}</tbody></table></div>
+
+function Breakdown({ title, label, rows }: { title: string; label: string; rows: CostRow[] }) {
+  return <section className="tf-panel" aria-labelledby={`${label}-title`}>
+    <div className="tf-panel-heading"><h2 id={`${label}-title`} className="tf-panel-title">{title}</h2></div>
+    {rows.length ? <div className="tf-table-wrap"><table className="tf-table" aria-label={title}>
+      <thead><tr><th>{label}</th><th className="text-right">Tickets</th><th className="text-right">Verified tons</th><th className="text-right">Material cost</th></tr></thead>
+      <tbody>{rows.map((r) => <tr key={r.name}><td className="font-semibold text-[#041d2f]">{r.name}</td><td className="text-right">{r.tickets.toLocaleString()}</td>
+        <td className="text-right">{tons(r.tons)}</td>
+        <td className="text-right whitespace-nowrap">{money(r.cost)}{r.unpriced > 0 && <span className="block text-[11px] font-semibold text-[#995a18]">+ {r.unpriced} without a rate</span>}</td></tr>)}</tbody>
+    </table></div> : <p className="tf-empty">No approved deliveries in these dates.</p>}
   </section>;
 }
 
+/**
+ * Cost reports for the chosen project (or all), over a date range: approved material,
+ * approved trucking, the two together, and how invoices compare. Approved figures only;
+ * a missing price is counted, never shown as $0.
+ */
 export default function ReportsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [project, setProject] = useState("");
-  const [report, setReport] = useState<PilotReport | null>(null);
+  const { projectId, project } = useProject();
+  const [tab, setTab] = useState<Tab>("costs");
+  const [range, setRange] = useState<{ date_from: string; date_to: string; period: CostReportQuery["period"] }>({ date_from: "", date_to: "", period: "week" });
+  const [report, setReport] = useState<CostReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { listProjects(true).then(setProjects).catch(() => undefined); }, []);
   useEffect(() => {
-    getPilotReport(project || undefined).then((r) => { setReport(r); setError(null); }).catch((e) => setError((e as Error).message));
-  }, [project]);
-  const suffix = project ? "&project_id=" + project : "";
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    if (TABS.some(([key]) => key === wanted)) setTab(wanted as Tab);
+  }, []);
+  const query: CostReportQuery = { project_id: projectId || undefined, date_from: range.date_from || undefined, date_to: range.date_to || undefined, period: range.period };
+  const key = JSON.stringify(query);
+  useEffect(() => {
+    let live = true;
+    getCostReport(JSON.parse(key)).then((r) => { if (live) { setReport(r); setError(null); } }).catch((e) => { if (live) setError(e.message); });
+    return () => { live = false; };
+  }, [key]);
 
-  return <div className="space-y-5">
+  const r = report;
+  return <div className="space-y-4">
     <div className="tf-page-heading">
-      <div>
-        <h1 className="tf-page-title">Pilot report</h1>
-        <p className="tf-page-description">Counts of what's on record and what still needs a person. Not a claim that every paper ticket was captured.</p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <a className="tf-secondary-button" href={project ? `/reports/project?project_id=${project}` : "/reports/project"}>Project report</a>
-        <a className="tf-secondary-button" href={pilotReportCsvUrl(project || undefined)}>Download CSV</a>
-      </div>
+      <div><h1 className="tf-page-title">Reports</h1>
+        <p className="tf-page-description">Approved material and trucking costs for {project ? `${project.code} · ${project.name}` : "all projects"}. Not an approval for payment.</p></div>
+      <a className="tf-secondary-button" href={costReportXlsxUrl(query)}>Download Excel</a>
     </div>
-    <label className="tf-field-label block max-w-sm">Project
-      <select className="tf-field w-full" value={project} onChange={(e) => setProject(e.target.value)}>
-        <option value="">All projects</option>
-        {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
-      </select>
-    </label>
-    {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
-    {report && <>
-      <p className={"rounded border px-4 py-3 text-[13px] font-semibold " + (report.unresolved_items ? "border-[#f0d8ad] bg-[#fff9ed] text-[#754e20]" : "border-[#e2e7ec] bg-white text-[#344352]")} data-testid="unresolved">
-        {report.unresolved_items} item{report.unresolved_items === 1 ? "" : "s"} need{report.unresolved_items === 1 ? "s" : ""} a person.
-        {!report.unresolved_items && " Totals can still miss paper that was never scanned: compare your paper counts."}
-      </p>
-      {report.batches_needing_attention.length > 0 && <section className="tf-panel" aria-label="Batches needing attention">
-        <div className="tf-panel-heading"><h2 className="tf-panel-title">Batches needing attention</h2></div>
-        <ul className="divide-y divide-[#edf0f2]">{report.batches_needing_attention.map((b) => <li key={b.batch_id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-[12px]">
-          <span><strong>Batch #{b.batch_id}</strong> · {b.reasons.join(" · ")}</span>
-          <Link prefetch={false} className="tf-link" href={"/upload?batch=" + b.batch_id}>Open scan check</Link>
-        </li>)}</ul>
-      </section>}
-      <div className="grid items-start gap-5 lg:grid-cols-3">
-        <Panel title="Intake">
-          <Row label="Batches" value={num(report.intake.batches)}/>
-          <Row label="Files" value={num(report.intake.files)}/>
-          <Row label="Pages" value={num(report.intake.pages)}/>
-          <Row label="Physical slots" value={num(report.intake.slots)}/>
-          <Row label="Faint, not classified" value={num(report.intake.faint_unclassified)} attention/>
-          <Row label="Empty" value={num(report.intake.empty)}/>
-          <Row label="Confirmed blank" value={num(report.intake.confirmed_blank)}/>
-          <Row label="Failed files" value={num(report.intake.failed_files)} attention/>
-          <Row label="Older files without a scan check" value={num(report.intake.files_without_scan_check)} attention/>
-          <Row label="Batches with a paper count" value={num(report.intake.batches_with_paper_count)}/>
-          <Row label="Paper count mismatches" value={num(report.intake.paper_count_mismatches)} attention/>
-        </Panel>
-        <Panel title="Review">
-          <Row label="Records" value={num(report.review.records)} href={"/records?x=1" + suffix}/>
-          <Row label="Needs review" value={num(report.review.needs_review)} attention href={"/records?status=needs_review" + suffix}/>
-          <Row label="Flagged" value={num(report.review.flagged)} attention href={"/records?status=flagged" + suffix}/>
-          <Row label="Could not be read" value={num(report.review.failed)} attention href={"/records?status=failed" + suffix}/>
-          <Row label="With unreadable fields" value={num(report.review.with_unreadable_fields)}/>
-          <Row label="Verified" value={num(report.review.verified)} href={"/records?status=verified" + suffix}/>
-          <Row label="Verified, no price" value={num(report.review.verified_unpriced)} attention/>
-          <Row label="Skipped" value={num(report.review.skipped)} href={"/records?status=skipped" + suffix}/>
-          <Row label="Verified tons" value={num(report.review.verified_tons)}/>
-        </Panel>
-        <Panel title="Invoice reconciliation">
-          <Row label="Invoice lines" value={num(report.reconciliation.invoice_lines as number)} href="/invoices"/>
-          <Row label="Lines needing attention" value={num(report.reconciliation.lines_needing_attention as number)} attention href="/invoices"/>
-          <Row label="Tickets checked" value={num(report.reconciliation.itemized_lines as number)}/>
-          <Row label="Totals only, tickets not checked" value={num(report.reconciliation.totals_only_lines as number)} attention/>
-          {Object.entries(report.reconciliation.lines_by_status as Record<string, number>).map(([status, count]) =>
-            <Row key={status} label={"Lines: " + status.replaceAll("_", " ")} value={count}/>)}
-          <Row label="Verified tickets linked to an invoice" value={num(report.reconciliation.verified_tickets_linked as number)}/>
-          <Row label="Verified tickets not linked" value={num(report.reconciliation.verified_tickets_not_linked as number)}/>
-          <Row label="Tons linked" value={num(report.reconciliation.tons_linked as string)}/>
-          <Row label="Tons not linked" value={num(report.reconciliation.tons_not_linked as string)}/>
-        </Panel>
+
+    <section className="tf-panel" aria-label="Report dates">
+      <div className="flex flex-wrap items-end gap-3 p-4">
+        <label className="tf-field-label">From<input type="date" className="tf-field" value={range.date_from} onChange={(e) => setRange({ ...range, date_from: e.target.value })} /></label>
+        <label className="tf-field-label">To<input type="date" className="tf-field" value={range.date_to} onChange={(e) => setRange({ ...range, date_to: e.target.value })} /></label>
+        <div className="tf-field-label">Group by
+          <div className="tf-segmented" role="group" aria-label="Group by">
+            {(["day", "week", "month"] as const).map((p) => <button key={p} type="button" aria-pressed={range.period === p} onClick={() => setRange({ ...range, period: p })}>{p[0].toUpperCase() + p.slice(1)}</button>)}
+          </div>
+        </div>
+        {(range.date_from || range.date_to) && <button type="button" className="tf-link" onClick={() => setRange({ ...range, date_from: "", date_to: "" })}>All dates</button>}
       </div>
-      {report.review_timing.enabled && <Panel title="Review time (opt-in)">
-        {(["manual", "extract"] as const).map((mode) => <Row key={mode}
-          label={(mode === "manual" ? "Manual entry" : "AI extraction") + ": median seconds per ticket, " + report.review_timing[mode].samples + " tickets, " + report.review_timing[mode].with_corrections + " corrected"}
-          value={report.review_timing[mode].median_seconds ?? "—"}/>)}
-      </Panel>}
+    </section>
+    {error && <div role="alert" className="tf-alert tf-alert-bad">{error}</div>}
+
+    <div role="tablist" aria-label="Reports" className="tf-section-tabs">
+      {TABS.map(([k, label]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "tf-section-tab-active" : ""}
+        onClick={() => { setTab(k); window.history.replaceState(null, "", k === "costs" ? "/reports" : `/reports?tab=${k}`); }}>{label}</button>)}
+    </div>
+
+    {!r ? <p className="tf-empty" role="status">Loading the report…</p> : <>
+      {tab === "costs" && <>
+        <section className="tf-panel" aria-label="Verified costs"><div className="grid grid-cols-2 lg:grid-cols-4">
+          <Tile label="Material cost" value={money(r.costs.material)} note={r.costs.unpriced ? `Incomplete: ${r.costs.unpriced} approved ticket${r.costs.unpriced === 1 ? "" : "s"} without a rate` : `${tons(r.material.tons)} t approved`} warn={r.costs.unpriced > 0} />
+          <Tile label="Trucking cost" value={money(r.costs.trucking)} note={`${hours(r.trucking.hours)} approved, hourly`} />
+          <Tile label="Total verified cost" value={money(r.costs.total)} note={r.costs.complete ? "Material + trucking, each counted once" : "Incomplete until every approved ticket has a rate"} warn={!r.costs.complete} />
+          <Tile label="Not yet counted" value={r.material.waiting.toLocaleString()} note="Tickets waiting for review, left out of every figure" />
+        </div></section>
+        {r.costs.unpriced > 0 && <p className="tf-alert tf-alert-warn">Some approved deliveries have no rate, so their cost is missing, not zero. Add the rate in <Link prefetch={false} className="tf-link" href="/pricing">Rates &amp; Pricing</Link>; approved costs never change on their own.</p>}
+        <section className="tf-panel" aria-labelledby="period-title">
+          <div className="tf-panel-heading"><h2 id="period-title" className="tf-panel-title">By {r.period}</h2></div>
+          {r.by_period.length ? <div className="tf-table-wrap"><table className="tf-table" aria-label={`Costs by ${r.period}`}>
+            <thead><tr><th>{r.period[0].toUpperCase() + r.period.slice(1)}</th><th className="text-right">Tickets</th><th className="text-right">Verified tons</th>
+              <th className="text-right">Material cost</th><th className="text-right">Truck hours</th><th className="text-right">Trucking cost</th><th className="text-right">Total</th></tr></thead>
+            <tbody>{r.by_period.map((p) => <tr key={p.period}><td className="whitespace-nowrap font-semibold text-[#041d2f]">{periodLabel(p.period, r.period)}</td>
+              <td className="text-right">{p.tickets.toLocaleString()}</td><td className="text-right">{tons(p.tons)}</td>
+              <td className="text-right whitespace-nowrap">{money(p.material)}{p.unpriced > 0 && <span className="block text-[11px] font-semibold text-[#995a18]">+ {p.unpriced} without a rate</span>}</td>
+              <td className="text-right">{hours(p.hours)}</td><td className="text-right">{money(p.trucking)}</td><td className="text-right font-semibold">{money(p.total)}</td></tr>)}</tbody>
+          </table></div> : <p className="tf-empty">No approved deliveries or shifts in these dates.</p>}
+          {r.material.undated.tickets > 0 && <p className="border-t border-[#dce1e6] px-4 py-2 text-[12px] text-[#5f6c7b]">{r.material.undated.tickets} approved ticket(s) have no delivery date, so they&apos;re in the totals but in no {r.period}.</p>}
+        </section>
+      </>}
+
+      {tab === "material" && <div className="grid items-start gap-4 xl:grid-cols-2">
+        <Breakdown title="Quantity by material" label="Material" rows={r.material.by_material} />
+        <Breakdown title="Quantity by supplier" label="Supplier" rows={r.material.by_supplier} />
+      </div>}
+
+      {tab === "trucking" && <section className="tf-panel" aria-labelledby="haulers-title">
+        <div className="tf-panel-heading"><div><h2 id="haulers-title" className="tf-panel-title">Trucking by hauler</h2>
+          <p className="tf-panel-description">Approved hourly trucking. Per-load and per-ton hauling aren&apos;t tracked yet.</p></div></div>
+        {r.trucking.by_hauler.length ? <div className="tf-table-wrap"><table className="tf-table" aria-label="Trucking by hauler">
+          <thead><tr><th>Hauler</th><th className="text-right">Approved shifts</th><th className="text-right">Approved hours</th><th className="text-right">Loads</th><th className="text-right">Trucking cost</th></tr></thead>
+          <tbody>{r.trucking.by_hauler.map((h) => <tr key={h.name}><td className="font-semibold text-[#041d2f]">{h.name}</td><td className="text-right">{h.shifts}</td>
+            <td className="text-right">{hours(h.hours)}</td><td className="text-right">{h.loads}</td><td className="text-right">{money(h.cost)}</td></tr>)}</tbody>
+        </table></div> : <p className="tf-empty">No approved truck shifts in these dates.</p>}
+      </section>}
+
+      {tab === "invoices" && <>
+        <section className="tf-panel" aria-label="Invoice results"><div className="grid grid-cols-2 lg:grid-cols-4">
+          <Tile label="Invoices" value={r.invoices.invoices.toLocaleString()} note={`${money(r.invoices.billed)} billed`} />
+          <Tile label="Match approved records" value={r.invoices.matched.toLocaleString()} note="Billed as approved" />
+          <Tile label="With differences" value={r.invoices.with_differences.toLocaleString()} note={`${money(r.invoices.difference)} billed above approved, net`} warn={r.invoices.with_differences > 0} />
+          <Tile label="Can't compare yet" value={r.invoices.incomplete.toLocaleString()} note={r.invoices.totals_only ? `${r.invoices.totals_only} compared in total only` : "Waiting on approvals or a rate"} />
+        </div></section>
+        <p className="text-[12px] text-[#5f6c7b]">Invoices whose billing period overlaps these dates. Open the <Link prefetch={false} className="tf-link" href="/invoices">invoice register</Link> or <Link prefetch={false} className="tf-link" href="/invoices/exceptions">exceptions</Link> to work through them.</p>
+      </>}
     </>}
+    <p className="text-[11.5px] text-[#5f6c7b]">One project in detail, with invoice lines and unbilled deliveries: <Link prefetch={false} className="tf-link" href="/reports/project">Project report</Link>.</p>
   </div>;
 }

@@ -79,10 +79,10 @@ def _clean(value: str, label: str, limit: int) -> str:
 @router.post("")
 def first_setup(body: SetupIn, request: Request, response: Response, db: Session = Depends(get_db)):
     if not settings.allow_remote_setup and not from_this_machine(request):
-        raise HTTPException(403, {"code": "setup_local_only", "message": "First-time setup only works from the computer TicketFlow runs on. "
+        raise HTTPException(403, {"code": "setup_local_only", "message": "First-time setup only works from the computer Quarvera runs on. "
                                   "Open it there, or set ALLOW_REMOTE_SETUP=true for this one step."})
     if not _needed(db):
-        raise HTTPException(409, {"code": "already_set_up", "message": "TicketFlow is already set up. Sign in, or ask an owner to add you."})
+        raise HTTPException(409, {"code": "already_set_up", "message": "Quarvera is already set up. Sign in, or ask an owner to add you."})
     company = _clean(body.company_name, "company name", 200)
     display = _clean(body.display_name, "name", 100)
     try:
@@ -96,7 +96,7 @@ def first_setup(body: SetupIn, request: Request, response: Response, db: Session
     take_turn(db, "first-setup")
     if not _needed(db):
         db.rollback()
-        raise HTTPException(409, {"code": "already_set_up", "message": "TicketFlow was just set up by someone else. Sign in, or ask them to add you."})
+        raise HTTPException(409, {"code": "already_set_up", "message": "Quarvera was just set up by someone else. Sign in, or ask them to add you."})
     # The migrations create one placeholder company. With no users yet, it's this one.
     organization = db.scalar(select(Organization).order_by(Organization.id).limit(1))
     if organization is None:

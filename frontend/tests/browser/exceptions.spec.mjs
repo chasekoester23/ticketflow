@@ -59,7 +59,7 @@ test("the exceptions center shows totals, lists by severity, and saves an owner 
   await rows.nth(2).click();
   const detail = page.getByTestId("exception-detail");
   await expect(detail).toContainText("Find the paper for 10499");
-  await expect(detail.getByRole("link", { name: /Invoice INV-1/ })).toHaveAttribute("href", "/invoices?line=1");
+  await expect(detail.getByRole("link", { name: /Invoice INV-1/ })).toHaveAttribute("href", "/invoices/lines?line=1");
   await expect(detail.getByRole("link", { name: /Ticket 10499 in records/ })).toHaveAttribute("href", "/records?q=10499");
   await detail.getByLabel("Owner").selectOption("1");
   await detail.getByLabel("Status").selectOption("investigating");

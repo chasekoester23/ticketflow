@@ -49,16 +49,17 @@ test("mobile navigation opens, navigates, and preserves the signed-in workspace"
   await mockWorkspace(page);
   await page.goto("/");
   await page.getByRole("button", { name: "Open navigation" }).click();
-  // The pending count is part of the link's name, e.g. "Tickets 3 to review".
-  await expect(page.getByRole("link", { name: /^Tickets \d+ to review$/ })).toBeVisible();
+  // The pending count is part of the link's name, e.g. "Review Queue 3 to review".
+  await expect(page.getByRole("link", { name: /^Review Queue \d+ to review$/ })).toBeVisible();
   // Tap the dimmed page beside the drawer, as a person does. The scrim's centre is under
   // the open drawer at this width, so a plain click raced the drawer's slide-in and hung
   // whenever the drawer arrived first (seen with the browser's CPU slowed).
   await page.getByRole("button", { name: "Close navigation" }).click({ position: { x: 370, y: 420 } });
   await page.getByRole("button", { name: "Open navigation" }).click();
-  await page.getByRole("link", { name: /^Tickets \d+ to review$/ }).click();
-  await expect(page.getByRole("heading", { name: "Ticket intake & review", exact: true })).toBeVisible();
-  await page.getByRole("navigation", { name: "In this section" }).getByRole("link", { name: "Delivery records", exact: true }).click();
+  await page.getByRole("link", { name: /^Review Queue \d+ to review$/ }).click();
+  await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.getByRole("link", { name: "Delivery Records", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Delivery records", exact: true })).toBeVisible();
 });
 

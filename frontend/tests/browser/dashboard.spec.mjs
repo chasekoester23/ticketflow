@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { json, mockWorkspace } from "./f_helpers.mjs";
+import { chooseProject, json, mockWorkspace } from "./f_helpers.mjs";
 
 const byPath = (handlers) => (_request, path) => handlers[path];
 
@@ -82,6 +82,7 @@ test("the totals lead with quantities and costs; invoice exceptions are one row 
   const row = attention.getByRole("link", { name: /Invoice exceptions/ });
   await expect(row).toContainText("7");
   await expect(row).toHaveAttribute("href", "/invoices/exceptions");
-  await page.locator("#dashboard-project").selectOption("1");
+  await chooseProject(page, "24-115");
+  await expect(page.getByTestId("overview-scope")).toHaveText("24-115 · Fictional Road Job");
   await expect.poll(() => requested.at(-1)).toBe("?project_id=1");
 });

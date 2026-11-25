@@ -14,7 +14,7 @@ test("the sidebar changes pages without reloading, remounting the shell, or re-a
   await page.goto("/");
   await expect(page.locator(".tf-page-title")).toHaveText("Overview");
   await mark(page);
-  for (const [link, path, title] of [["Tickets 4 to review", "/upload", "Ticket intake & review"], ["Projects", "/projects", "Projects"], ["Overview", "/", "Overview"]]) {
+  for (const [link, path, title] of [["Delivery Records", "/records", "Delivery records"], ["Projects", "/projects", "Projects"], ["Overview", "/", "Overview"]]) {
     await nav(page).getByRole("link", { name: link, exact: true }).click();
     await expect(page).toHaveURL(path);
     await expect(page.locator(".tf-page-title")).toHaveText(title);
@@ -49,7 +49,7 @@ test("the current page's sidebar item clears what's in the address", async ({ pa
   await mockWorkspace(page);
   await page.goto("/records?status=needs_review");
   await expect(page.getByLabel("Review status")).toHaveValue("needs_review");
-  await tabs(page).getByRole("link", { name: "Delivery records", exact: true }).click();
+  await nav(page).getByRole("link", { name: "Delivery Records", exact: true }).click();
   await expect(page).toHaveURL(/\/records$/);
   await expect(page.getByLabel("Review status")).toHaveValue("");
 });
@@ -102,10 +102,13 @@ test("a server hiccup during that check doesn't sign anyone out", async ({ page 
 test("a role taken away shows up on the next check, and the link leaves the menu", async ({ page }) => {
   await page.addInitScript(() => { const real = Date.now; window.__skew = 0; Date.now = () => real() + window.__skew; });
   await mockWorkspace(page);
-  await page.goto("/pricing");
+  await page.goto("/account");
   await expect(tabs(page).getByRole("link", { name: "Team", exact: true })).toBeVisible();
   await page.route("**/api/auth/me", (route) => json(route, profile("viewer")));
   await page.evaluate(() => { window.__skew = 31_000; });
-  await tabs(page).getByRole("link", { name: "Account", exact: true }).click();
+  await nav(page).getByRole("link", { name: "Projects", exact: true }).click();
+  await expect(page).toHaveURL(/\/projects$/);
+  await expect(nav(page).getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "/account"); // an owner's opens Team
+  await page.goto("/account");
   await expect(tabs(page).getByRole("link", { name: "Team", exact: true })).toHaveCount(0);
 });

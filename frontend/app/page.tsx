@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Dashboard, ExceptionsSummary, Group, InvoiceOverview, Onboarding, Project, getDashboard, getInvoiceOverview, getOnboarding, listExceptions, listProjects } from "../lib/api";
+import { Dashboard, ExceptionsSummary, Group, InvoiceOverview, Onboarding, getDashboard, getInvoiceOverview, getOnboarding, listExceptions } from "../lib/api";
 import { useAccount } from "./account-context";
+import { useProject } from "./project-context";
 
 const money = (v: string | number) => `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const tons = (v: string | number) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -105,8 +106,7 @@ export default function DashboardPage() {
   const canUpload = can("tickets.upload");
   const canSetUp = can("projects.manage");
   const [data, setData] = useState<Dashboard | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState("");
+  const { projectId, project } = useProject();
   const [error, setError] = useState<string | null>(null);
   const [onboarding, setOnboarding] = useState<Onboarding | null>(null);
   const [setupHidden, setSetupHidden] = useState(false);
@@ -114,7 +114,6 @@ export default function DashboardPage() {
   const [exceptions, setExceptions] = useState<ExceptionsSummary | null>(null);
 
   useEffect(() => {
-    listProjects().then(setProjects).catch(() => {});
     // Not every role reads invoice comparisons; without it, that row is simply left out.
     getInvoiceOverview().then(setInvoices).catch(() => setInvoices(null));
   }, []);
@@ -159,14 +158,8 @@ export default function DashboardPage() {
     <div className="tf-page-heading">
       <div>
         <h1 className="tf-page-title">Overview</h1>
+        <p className="tf-eyebrow mt-1" data-testid="overview-scope">{project ? `${project.code} · ${project.name}` : "All projects"}</p>
         <p className="tf-page-description">Quantities delivered, approved costs, and what&apos;s waiting for you.</p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="sr-only" htmlFor="dashboard-project">Filter overview by project</label>
-        <select id="dashboard-project" className="tf-field min-w-[170px]" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-          <option value="">All projects</option>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
-        </select>
       </div>
     </div>
 

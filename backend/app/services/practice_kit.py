@@ -134,8 +134,8 @@ def build_practice_pdf(sheets: int) -> bytes:
     buffer = io.BytesIO()
     page_w, page_h = letter
     pdf = canvas.Canvas(buffer, pagesize=letter)
-    pdf.setTitle("TicketFlow synthetic practice tickets")
-    pdf.setAuthor("TicketFlow")
+    pdf.setTitle("Quarvera synthetic practice tickets")
+    pdf.setAuthor("Quarvera")
     quad_w, quad_h = page_w / 2, page_h / 2
     inset = 20  # points (~0.28 in); the splitter trims only 1% of the page
     for sheet in range(1, sheets + 1):

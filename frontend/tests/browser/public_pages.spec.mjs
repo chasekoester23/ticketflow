@@ -37,7 +37,7 @@ test("the welcome page leads to sign-in and to create account, and each leads ba
   await page.goto("/welcome");
   await page.getByRole("main").getByRole("link", { name: "Sign in" }).first().click();
   await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole("heading", { name: "Sign in to TicketFlow" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in to Quarvera" })).toBeVisible();
   await page.getByRole("link", { name: "Back to home" }).click();
   await expect(page).toHaveURL(/\/welcome$/);
   await page.getByRole("main").getByRole("link", { name: "Request access" }).first().click();
@@ -83,7 +83,7 @@ test("the site says signing up is gated, labels its examples, and loads nothing 
   await expect(page.getByRole("main").getByText("You can't sign yourself up yet.")).toBeVisible();
   await expect(page.getByRole("contentinfo").getByText("fictional examples")).toBeVisible();
   await expect(page.getByRole("img", { name: /review screen/ })).toBeVisible();
-  expect(await page.locator("img").evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
+  expect(await page.locator("img[src^='/site/']").evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
   expect(await page.evaluate(() => document.fonts.check('600 40px "Barlow Semi Condensed"'))).toBe(true);
   expect(outside).toEqual([]);
 });
@@ -183,7 +183,7 @@ test("a server with no accounts sends sign-in to first-time setup", async ({ pag
   await mockPublic(page, { needed: true });
   await page.goto("/login");
   await expect(page).toHaveURL(/\/signup$/);
-  await expect(page.getByRole("heading", { name: "Set up TicketFlow" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Set up Quarvera" })).toBeVisible();
 });
 
 test("a request for access says plainly that no account exists yet", async ({ page }) => {
@@ -235,7 +235,7 @@ test("the phone menu shows who's signed in, and Escape closes it", async ({ page
   await mockPublic(page, { me: profile("clerk", { display_name: "Fictional Clerk", organization_name: "Fictional Paving Co" }) });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/account");
-  await expect(page.locator(".tf-organization-name")).toHaveText("Fictional Paving Co");
+  await expect(page.locator(".tf-sidebar-workspace")).toHaveText("Fictional Paving Co");
   const toggle = page.getByRole("button", { name: "Open navigation" });
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");

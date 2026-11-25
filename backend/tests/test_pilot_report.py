@@ -108,7 +108,7 @@ def test_report_csv_has_the_same_figures_and_no_formula_text(client):
     assert "no-store" in response.headers["cache-control"]
     rows = list(csv.reader(StringIO(response.text)))
     assert ["faint_unclassified", "1"] in rows and ["empty", "2"] in rows
-    assert rows[0][0].startswith("TicketFlow pilot report - counts of records, not an approval")
+    assert rows[0][0].startswith("Quarvera pilot report - counts of records, not an approval")
 
 
 def test_report_is_company_scoped(client):

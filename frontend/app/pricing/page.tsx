@@ -5,9 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Material, NameAliasRow, PricingEventRow, Project, Rate, RatePreview, RateScope, RateSheetPlan, RateTimeline, Supplier, addAlias,
   createMaterial, createSupplier, deleteItem, getPricingHistory, getRateTimeline, importRateSheet, listAliases, listMaterials, listProjects, listRates, listSuppliers,
-  previewRate, removeAlias, saveRate,
+  previewRate, removeAlias, saveRate, HaulerRow, HaulingRate, listHaulers, listHaulingRates,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
+import { HaulingRates } from "../trucking/setup";
 
 const ACTION_LABEL: Record<PricingEventRow["action"], string> = {
   supplier_added: "Supplier added",
@@ -56,6 +57,8 @@ function ScopeFields({ idPrefix, projects, project, from, until, onChange }: {
 
 export default function PricingPage() {
   const canManage = useAccount().can("pricing.manage");
+  const [tab, setTab] = useState<"material" | "trucking">("material");
+  useEffect(() => { if (new URLSearchParams(window.location.search).get("tab") === "trucking") setTab("trucking"); }, []);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [rates, setRates] = useState<Rate[]>([]);
@@ -119,12 +122,18 @@ export default function PricingPage() {
 
   return <div className="space-y-5">
     <div className="tf-page-heading">
-      <div><h1 className="tf-page-title">Suppliers & rates</h1>
-        <p className="tf-page-description">Maintain the supplier and material price catalog used during ticket verification.</p></div>
-      <Link prefetch={false} className="tf-secondary-button" href="/records">View delivery records <span aria-hidden="true">→</span></Link>
+      <div><h1 className="tf-page-title">Rates & Pricing</h1>
+        <p className="tf-page-description">Set each rate once; it applies to every eligible delivery and shift. Approved records keep the rate they were approved at.</p></div>
+    </div>
+    <div role="tablist" aria-label="Rates" className="tf-section-tabs">
+      {([["material", "Material pricing"], ["trucking", "Trucking rates"]] as const).map(([key, label]) =>
+        <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "tf-section-tab-active" : ""}
+          onClick={() => { setTab(key); window.history.replaceState(null, "", key === "material" ? "/pricing" : `/pricing?tab=${key}`); }}>{label}</button>)}
     </div>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
-    {!canManage && <p className="tf-notice" role="note">Suppliers, materials and rates are maintained by managers and owners. You can view the current schedule.</p>}
+    {!canManage && <p className="tf-notice" role="note">Rates are maintained by managers and owners. You can view the current schedule.</p>}
+    {tab === "trucking" && <TruckingRates canPrice={canManage} />}
+    {tab === "material" && <>
 
     <div className="grid gap-5 lg:grid-cols-2">
       <section className="tf-panel">
@@ -373,7 +382,28 @@ export default function PricingPage() {
         </tr>)}</tbody>
       </table></div>}
     </section>
-    {scoped && <p className="text-[11px] leading-5 text-[#5f6c7b]">A project agreement that starts after a delivery gives way to the company rate for that delivery. A ticket with no delivery date can&apos;t be priced from a rate that changes over time; the review screen says so.</p>}
-    <p className="text-[11px] leading-5 text-[#5f6c7b]">Supplier/material matching ignores case and punctuation. Calculated material costs are verified tons multiplied by the rate locked at acceptance; taxes and delivery charges are excluded.</p>
+    </>}
+    {tab === "material" && scoped && <p className="text-[11px] leading-5 text-[#5f6c7b]">A project agreement that starts after a delivery gives way to the company rate for that delivery. A ticket with no delivery date can&apos;t be priced from a rate that changes over time; the review screen says so.</p>}
+    {tab === "material" && <p className="text-[11px] leading-5 text-[#5f6c7b]">Supplier/material matching ignores case and punctuation. Calculated material costs are verified tons multiplied by the rate locked at acceptance; taxes and delivery charges are excluded.</p>}
   </div>;
+}
+
+/** Hourly trucking agreements, beside material pricing so every rate lives in one place. */
+function TruckingRates({ canPrice }: { canPrice: boolean }) {
+  const [haulers, setHaulers] = useState<HaulerRow[]>([]);
+  const [rates, setRates] = useState<HaulingRate[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const [h, r, p] = await Promise.all([listHaulers(), listHaulingRates(), listProjects()]);
+      setHaulers(h); setRates(r); setProjects(p); setError(null);
+    } catch (e) { setError((e as Error).message); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  return <>
+    {error && <div role="alert" className="tf-alert tf-alert-bad">{error}</div>}
+    <HaulingRates haulers={haulers} rates={rates} projects={projects} canPrice={canPrice} onChanged={load} />
+    <p className="text-[11px] leading-5 text-[#5f6c7b]">Hourly rates only, for now. Per-load and per-ton hauling, and freight included in a material price, aren&apos;t modelled yet: enter those charges on the hauling invoice.</p>
+  </>;
 }

@@ -9,6 +9,7 @@ import {
   shiftHistory, timesheetUrl,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
+import { useProject } from "../project-context";
 import { HaulingInvoices } from "./HaulingInvoices";
 
 const STATUS: Record<TruckShift["status"], [string, string]> = {
@@ -221,77 +222,9 @@ function Detail({ shift, projects, haulers, canEdit, canApprove, onChanged }: {
   </section>;
 }
 
-function Setup({ haulers, rates, projects, canEdit, canPrice, onChanged }: {
-  haulers: HaulerRow[]; rates: HaulingRate[]; projects: Project[]; canEdit: boolean; canPrice: boolean; onChanged: () => Promise<void>;
-}) {
-  const [error, setError] = useState<string | null>(null);
-  const [hauler, setHauler] = useState("");
-  const [truck, setTruck] = useState({ hauler_id: "", identifier: "", equipment_type: "quad_axle" });
-  const [rate, setRate] = useState({ hauler_id: "", project_id: "", equipment_type: "", hourly_rate: "", minimum_hours: "", standby_rate: "", effective_from: "", effective_to: "", billing_increment: "", increment_rounding: "up" });
-  const act = (fn: () => Promise<void>) => fn().then(onChanged).then(() => setError(null)).catch((e) => setError((e as Error).message));
-  const haulerName = (id: number) => haulers.find((h) => h.id === id)?.name ?? `#${id}`;
-  const code = (id: number | null) => id === null ? "All projects" : projects.find((p) => p.id === id)?.code ?? `#${id}`;
-  return <section className="tf-panel" aria-label="Haulers, trucks and hourly agreements">
-    <div className="tf-panel-heading"><div><h2 className="tf-panel-title">Haulers, trucks and hourly agreements</h2>
-      <p className="tf-panel-description">A shift is priced by the most specific agreement that has started: project and truck type, then project, then truck type, then any. An expired agreement doesn&apos;t fall back to a broader one, and standby is paid only at an agreed standby rate.</p></div></div>
-    <div className="space-y-4 p-5">
-      {error && <p role="alert" className="tf-alert tf-alert-bad">{error}</p>}
-      {canEdit && <div className="grid gap-4 lg:grid-cols-2">
-        <form className="flex items-end gap-2" onSubmit={(e) => { e.preventDefault(); void act(async () => { await createHauler(hauler); setHauler(""); }); }}>
-          <label className="tf-field-label flex-1">New hauler<input className="tf-field w-full" value={hauler} onChange={(e) => setHauler(e.target.value)} placeholder="Trucking company name" /></label>
-          <button className="tf-secondary-button" disabled={!hauler.trim()}>+ Add hauler</button></form>
-        <form className="grid grid-cols-[1fr_90px_1fr_auto] items-end gap-2" onSubmit={(e) => { e.preventDefault(); void act(async () => { await createTruck(Number(truck.hauler_id), truck.identifier, truck.equipment_type); setTruck({ ...truck, identifier: "" }); }); }}>
-          <label className="tf-field-label">Hauler<select className="tf-field w-full" value={truck.hauler_id} onChange={(e) => setTruck({ ...truck, hauler_id: e.target.value })}>
-            <option value="">Select</option>{haulers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>
-          <label className="tf-field-label">Truck #<input className="tf-field w-full" value={truck.identifier} onChange={(e) => setTruck({ ...truck, identifier: e.target.value })} /></label>
-          <label className="tf-field-label">Type<select className="tf-field w-full" value={truck.equipment_type} onChange={(e) => setTruck({ ...truck, equipment_type: e.target.value })}>
-            {Object.entries(EQUIPMENT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
-          <button className="tf-secondary-button" disabled={!truck.hauler_id || !truck.identifier.trim()}>+ Add truck</button></form>
-      </div>}
-      <ul className="divide-y divide-[#edf0f2] text-[12px]">{haulers.map((h) => <li key={h.id} className="py-1.5">
-        <b>{h.name}</b> <span className="text-[#5f6c7b]">{h.trucks.length ? h.trucks.map((t) => `${t.identifier} (${EQUIPMENT_LABEL[t.equipment_type] ?? t.equipment_type})`).join(", ") : "No trucks yet"}</span></li>)}</ul>
-      {canPrice && <form className="grid items-end gap-2 sm:grid-cols-4 xl:grid-cols-[1.2fr_1fr_1fr_100px_90px_100px_130px_130px_auto]" onSubmit={(e) => {
-        e.preventDefault();
-        void act(() => createHaulingRate({ hauler_id: Number(rate.hauler_id), project_id: rate.project_id ? Number(rate.project_id) : null,
-          equipment_type: rate.equipment_type || null, hourly_rate: rate.hourly_rate, minimum_hours: rate.minimum_hours || null,
-          standby_rate: rate.standby_rate || null, effective_from: rate.effective_from || null, effective_to: rate.effective_to || null,
-          billing_increment: rate.billing_increment || null, increment_rounding: rate.billing_increment ? rate.increment_rounding as "up" | "nearest" : null }));
-      }}>
-        <label className="tf-field-label">Hauler<select className="tf-field w-full" value={rate.hauler_id} onChange={(e) => setRate({ ...rate, hauler_id: e.target.value })}>
-          <option value="">Select</option>{haulers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>
-        <label className="tf-field-label">Project<select className="tf-field w-full" value={rate.project_id} onChange={(e) => setRate({ ...rate, project_id: e.target.value })}>
-          <option value="">All projects</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}</select></label>
-        <label className="tf-field-label">Truck type<select className="tf-field w-full" value={rate.equipment_type} onChange={(e) => setRate({ ...rate, equipment_type: e.target.value })}>
-          <option value="">Any</option>{Object.entries(EQUIPMENT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
-        <label className="tf-field-label">$ / hour<input required inputMode="decimal" className="tf-field w-full" value={rate.hourly_rate} onChange={(e) => setRate({ ...rate, hourly_rate: e.target.value })} /></label>
-        <label className="tf-field-label">Min. hours<input inputMode="decimal" className="tf-field w-full" value={rate.minimum_hours} onChange={(e) => setRate({ ...rate, minimum_hours: e.target.value })} /></label>
-        <label className="tf-field-label">Standby $/h<input inputMode="decimal" className="tf-field w-full" value={rate.standby_rate} onChange={(e) => setRate({ ...rate, standby_rate: e.target.value })} /></label>
-        <label className="tf-field-label">From<input type="date" className="tf-field w-full" value={rate.effective_from} onChange={(e) => setRate({ ...rate, effective_from: e.target.value })} /></label>
-        <label className="tf-field-label">Until<input type="date" className="tf-field w-full" value={rate.effective_to} onChange={(e) => setRate({ ...rate, effective_to: e.target.value })} /></label>
-        <label className="tf-field-label">Billed in<select className="tf-field w-full" value={rate.billing_increment} onChange={(e) => setRate({ ...rate, billing_increment: e.target.value })}>
-          <option value="">Hundredths</option><option value="0.25">Quarter hours</option><option value="0.5">Half hours</option><option value="1">Whole hours</option></select></label>
-        {rate.billing_increment && <label className="tf-field-label">Rounded<select className="tf-field w-full" value={rate.increment_rounding} onChange={(e) => setRate({ ...rate, increment_rounding: e.target.value })}>
-          <option value="up">Up</option><option value="nearest">To nearest</option></select></label>}
-        <button className="tf-primary-button" disabled={!rate.hauler_id || !rate.hourly_rate}>Save agreement</button>
-      </form>}
-      {rates.length > 0 ? <div className="tf-table-wrap"><table className="tf-table" aria-label="Hourly agreements">
-        <thead><tr><th>Hauler</th><th>Applies to</th><th>Truck type</th><th className="text-right">$/hour</th><th className="text-right">Minimum</th><th className="text-right">Standby</th><th>From</th><th>Until</th><th>Billed in</th><th /></tr></thead>
-        <tbody>{rates.map((r) => <tr key={r.id}><td className="font-semibold">{haulerName(r.hauler_id)}</td><td>{code(r.project_id)}</td>
-          <td>{r.equipment_type ? EQUIPMENT_LABEL[r.equipment_type] : "Any"}</td><td className="text-right tabular-nums">{money(r.hourly_rate)}</td>
-          <td className="text-right tabular-nums">{r.minimum_hours ? hours(r.minimum_hours) : "—"}</td>
-          <td className="text-right tabular-nums">{r.standby_rate ? money(r.standby_rate) : <span className="text-[#5f6c7b]">Not payable</span>}</td>
-          <td>{r.effective_from ? day(r.effective_from) : "Any date"}</td><td>{r.effective_to ? day(r.effective_to) : "Open-ended"}</td>
-          <td>{r.billing_increment ? `${r.billing_increment} h, ${r.increment_rounding}` : "Hundredths"}</td>
-          <td className="text-right">{canPrice && <button className="text-[11px] font-semibold text-[#8a5260] hover:underline" onClick={() => {
-            if (window.confirm("Remove this agreement? Approved shifts keep the rate they were approved at.")) void act(() => deleteHaulingRate(r.id));
-          }}>Remove</button>}</td></tr>)}</tbody>
-      </table></div> : <p className="tf-empty">No hourly agreements yet. Shifts can be entered, but not approved, until one applies.</p>}
-    </div>
-  </section>;
-}
-
 export default function TruckingPage() {
   const { can } = useAccount();
+  const { projectId, setProjectId } = useProject();
   const canEdit = can("trucking.edit"), canApprove = can("trucking.approve"), canPrice = can("pricing.manage");
   const [filters, setFilters] = useState<ShiftFilters>({});
   const [page, setPage] = useState<ShiftsPage | null>(null);
@@ -314,25 +247,37 @@ export default function TruckingPage() {
     try { setPage(await listShifts(filters)); setError(null); } catch (e) { setError((e as Error).message); }
   }, [filters]);
   const [ready, setReady] = useState(false);
-  const [tab, setTab] = useState<"shifts" | "invoices" | "setup">("shifts");
+  const [tab, setTab] = useState<"shifts" | "invoices">("shifts");
   const [newInvoice, setNewInvoice] = useState(false);
+  const [openInvoice, setOpenInvoice] = useState<number | null>(null);
   useEffect(() => {
     // Filters from the address, so the Overview's "to approve" link opens that view.
     const params = new URLSearchParams(window.location.search);
     const initial: ShiftFilters = {};
     for (const key of ["project_id", "hauler_id", "status", "date_from", "date_to"] as const) { const v = params.get(key); if (v) initial[key] = v; }
+    // The project is the top bar's choice; a link naming one chooses it there.
+    if (initial.project_id) setProjectId(initial.project_id);
+    else if (projectId) initial.project_id = projectId;
     setFilters(initial);
     const wanted = Number(params.get("shift_id"));
     if (wanted) setSelected(wanted);
     const opened = params.get("tab");
-    if (opened === "invoices" || opened === "setup") setTab(opened);
+    // Agreements moved to Rates & Pricing; an old link still lands on them.
+    if (opened === "setup") { window.location.replace("/pricing?tab=trucking"); return; }
+    if (opened === "invoices") setTab(opened);
     if (params.get("new") === "1") { if (opened === "invoices") setNewInvoice(true); else setAdding(true); }
+    if (Number(params.get("invoice")) > 0) setOpenInvoice(Number(params.get("invoice")));
     setReady(true);
     loadInvoices().catch(() => setInvoices([]));
     listProjects().then(setProjects).catch(() => setProjects([]));
     loadSetup().catch((e) => setError(e.message));
   }, [loadSetup]);
   useEffect(() => { if (ready) void load(); }, [ready, load]);
+  useEffect(() => {
+    if (ready && (filters.project_id ?? "") !== projectId) setFilters((f) => ({ ...f, project_id: projectId || undefined }));
+  }, [projectId, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A new shift starts on the project being worked on.
+  useEffect(() => { if (adding && !form.project_id && projectId) setForm((f) => ({ ...f, project_id: projectId })); }, [adding]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shift = useMemo(() => page?.shifts.find((s) => s.id === selected) ?? null, [page, selected]);
   const replace = (updated: TruckShift) => setPage((p) => p && { ...p, shifts: p.shifts.map((s) => s.id === updated.id ? updated : s) });
@@ -341,12 +286,12 @@ export default function TruckingPage() {
 
   return <div className="space-y-5">
     <div className="tf-page-heading">
-      <div><h1 className="tf-page-title">Hourly trucking</h1>
+      <div><h1 className="tf-page-title">Trucking</h1>
         <p className="tf-page-description">Truck shifts from the time sheets, approved hours, and what they cost.</p></div>
       {canEdit && tab === "shifts" && <button type="button" className="tf-primary-button" onClick={() => setAdding((v) => !v)}>{adding ? "Close" : "+ Enter a shift"}</button>}
     </div>
     <div role="tablist" aria-label="Trucking" className="tf-section-tabs">
-      {([["shifts", "Shifts"], ["invoices", "Hauling invoices"], ["setup", "Haulers & agreements"]] as const).map(([key, label]) =>
+      {([["shifts", "Shifts"], ["invoices", "Hauling invoices"]] as const).map(([key, label]) =>
         <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "tf-section-tab-active" : ""}
           onClick={() => { setTab(key); window.history.replaceState(null, "", key === "shifts" ? "/trucking" : `/trucking?tab=${key}`); }}>{label}</button>)}
     </div>
@@ -359,7 +304,7 @@ export default function TruckingPage() {
         .catch((err) => setError((err as Error).message));
     }}>
       <ShiftFields form={form} set={setForm} projects={projects} haulers={haulers} />
-      {haulers.every((h) => !h.trucks.length) && <p className="text-[12px] text-[#5f6c7b]">Add a hauler and its trucks below first.</p>}
+      {haulers.every((h) => !h.trucks.length) && <p className="text-[12px] text-[#5f6c7b]">Add the hauler and its trucks in <Link prefetch={false} className="tf-link" href="/suppliers">Suppliers &amp; Haulers</Link> first.</p>}
       <button type="submit" className="tf-primary-button">Save shift</button>
     </form></section>}
 
@@ -371,9 +316,7 @@ export default function TruckingPage() {
       <Metric label="Disputed" value={s.disputed} note="Shifts in dispute with the hauler" attention={s.disputed > 0} />
     </div></section>}
 
-    <section className="tf-panel" aria-label="Filters"><div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
-      <label className="tf-field-label">Project<select className="tf-field w-full" value={filters.project_id ?? ""} onChange={(e) => set("project_id", e.target.value)}>
-        <option value="">All projects</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}</select></label>
+    <section className="tf-panel" aria-label="Filters"><div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
       <label className="tf-field-label">Hauler<select className="tf-field w-full" value={filters.hauler_id ?? ""} onChange={(e) => set("hauler_id", e.target.value)}>
         <option value="">All haulers</option>{haulers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>
       <label className="tf-field-label">Status<select className="tf-field w-full" value={filters.status ?? ""} onChange={(e) => set("status", e.target.value)}>
@@ -406,10 +349,9 @@ export default function TruckingPage() {
 
     </>}
 
-    {tab === "invoices" && <HaulingInvoices invoices={invoices} haulers={haulers} projects={projects} canManage={canInvoice} startNew={newInvoice}
+    {tab === "invoices" && <HaulingInvoices invoices={invoices} haulers={haulers} projects={projects} canManage={canInvoice} startNew={newInvoice} openId={openInvoice}
       onChanged={loadInvoices} onOpenShift={(id) => { setSelected(id); setTab("shifts"); window.scrollTo({ top: 0 }); }} />}
 
-    {tab === "setup" && <Setup haulers={haulers} rates={rates} projects={projects} canEdit={canEdit} canPrice={canPrice} onChanged={loadSetup} />}
     <p className="text-[11px] leading-5 text-[#5f6c7b]">Hours are on site less the unpaid break, to the hundredth. Each cost line rounds half up to the cent. Approved cost appears on the <Link prefetch={false} className="tf-link text-[11px]" href="/">Overview</Link> separately from material cost.</p>
   </div>;
 }

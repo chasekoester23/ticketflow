@@ -74,7 +74,7 @@ test("name cleanup finds the planted misspellings and only changes what someone 
 
 test("every planted invoice mistake gets the right result on screen", async ({ page }) => {
   await signIn(page);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await expect(page.getByRole("region", { name: "Invoice overview" })).toBeVisible();
   const expected = {
     "PL-clean": "Tickets and totals match", "PL-ticket_never_delivered": "Difference found", "PL-tons_inflated": "Difference found",
@@ -91,8 +91,8 @@ test("every planted invoice mistake gets the right result on screen", async ({ p
   await expect(page.getByRole("note", { name: "Billing patterns to check" })).toContainText("PL-earlier");
 });
 
-const PAGES = ["/", "/projects", "/upload", "/records", "/records/names", "/invoices", "/invoices/documents", "/pricing",
-  "/reports", "/reports/project", "/team", "/system", "/account"];
+const PAGES = ["/", "/projects", "/upload", "/records", "/records/names", "/invoices", "/invoices/lines", "/invoices/documents", "/pricing", "/review", "/suppliers",
+  "/reports", "/reports/pilot", "/reports/project", "/team", "/system", "/account"];
 
 test("no page scrolls sideways on a phone, with real data", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -111,7 +111,7 @@ test("the invoice result and actions are on screen at laptop width without sidew
   const context = await browser.newContext({ viewport: { width: 1366, height: 768 } });
   const page = await context.newPage();
   await signIn(page);
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   const row = page.getByRole("row").filter({ hasText: "PL-tons_inflated" });
   await row.scrollIntoViewIfNeeded();
   for (const name of ["Details", "Correct"]) {

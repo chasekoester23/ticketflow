@@ -16,7 +16,7 @@ async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> 
     return await fetch(url, { ...init, headers, credentials: "include", cache: "no-store" });
   } catch {
     // fetch only rejects when no answer came back: offline, server down, or dropped mid-request.
-    throw new ApiError("Couldn't reach the TicketFlow server. Check your connection and try again.", "network");
+    throw new ApiError("Couldn't reach the Quarvera server. Check your connection and try again.", "network");
   }
 }
 
@@ -170,7 +170,7 @@ export function describeFailure(error: unknown, noun: string, savedFirst = false
   const typed = savedFirst ? "" : " What you typed is still here.";
   const reference = api.reference;
   if (api.code === "network") {
-    return { message: `${start} may not have gone through, because TicketFlow couldn't reach the server. Check your connection, then try again.${typed}`, canRetry: true };
+    return { message: `${start} may not have gone through, because Quarvera couldn't reach the server. Check your connection, then try again.${typed}`, canRetry: true };
   }
   if (api.status === 401) {
     return { message: `${start} did not go through, because you've been signed out. Sign in again and reopen this ticket.${savedFirst ? "" : " What you typed is kept on this computer."}`, canRetry: false, signIn: true };
@@ -184,7 +184,7 @@ export function describeFailure(error: unknown, noun: string, savedFirst = false
     return { message: `${start} did not go through, because the server is busy or temporarily unavailable. Try again ${wait}.${typed}`, reference, canRetry: true };
   }
   if (api.status !== undefined && api.status >= 500) {
-    return { message: `${start} did not go through, because something went wrong on the server. Try again; if it keeps happening, quote the reference to whoever looks after TicketFlow.${typed}`, reference, canRetry: true };
+    return { message: `${start} did not go through, because something went wrong on the server. Try again; if it keeps happening, quote the reference to whoever looks after Quarvera.${typed}`, reference, canRetry: true };
   }
   // A refusal the server explained: trying the same thing again won't change the answer.
   return { message: api.message, canRetry: false };
@@ -427,8 +427,53 @@ const qs = (f: Filters) => {
 export async function listProjects(includeArchived = false): Promise<Project[]> {
   return (await check(await apiFetch(`${API}/api/projects?include_archived=${includeArchived}`))).json();
 }
-export async function createProject(body: { code: string; name: string; job_location?: string; description?: string }) {
-  await check(await apiFetch(`${API}/api/projects`, json("POST", body)));
+export async function createProject(body: { code: string; name: string; job_location?: string; description?: string }): Promise<Project> {
+  return (await check(await apiFetch(`${API}/api/projects`, json("POST", body)))).json();
+}
+/** A project with what it holds. Costs are approved figures only; `unpriced_tickets` are approved with no rate. */
+export type ProjectSummary = Project & {
+  created_at: string; tickets: number; open_tickets: number; open_shifts: number; verified_tickets: number;
+  verified_tons: string; material_cost: string; unpriced_tickets: number; trucking_cost: string; verified_cost: string;
+  last_activity: string | null;
+};
+export type QueueKind = "tickets" | "failed_files" | "truck_shifts" | "invoice_lines";
+export type QueueItem = {
+  kind: QueueKind; id: number; title: string; detail: string; count: number; attention: boolean;
+  project: { id: number; code: string; name: string } | null; created_at: string | null; href: string;
+};
+export type ReviewQueue = { summary: Record<QueueKind | "total", number>; items: QueueItem[] };
+/** What's waiting for a person, oldest first. Each item links to where the work is done. */
+export async function getReviewQueue(projectId?: string, kind?: QueueKind): Promise<ReviewQueue> {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project_id", projectId);
+  if (kind) params.set("kind", kind);
+  const query = params.toString();
+  return (await check(await apiFetch(`${API}/api/review-queue${query ? `?${query}` : ""}`))).json();
+}
+export type CostRow = { name: string; tickets: number; tons: string; cost: string; unpriced: number };
+export type HaulerCost = { name: string; shifts: number; hours: string; cost: string; loads: number };
+export type PeriodRow = { period: string; tickets: number; tons: string; material: string; unpriced: number; hours: string; trucking: string; loads: number; total: string };
+/** Approved figures only. `unpriced` counts approved tickets with no rate: their cost is missing, not zero. */
+export type CostReport = {
+  period: "day" | "week" | "month"; date_from: string | null; date_to: string | null;
+  material: { tickets: number; tons: string; cost: string; unpriced: number; waiting: number; undated: { tickets: number; tons: string; cost: string; unpriced: number };
+    by_material: CostRow[]; by_supplier: CostRow[] };
+  trucking: { shifts: number; hours: string; cost: string; loads: number; by_hauler: HaulerCost[]; billing_methods: { method: string; cost: string }[] };
+  costs: { material: string; trucking: string; total: string; complete: boolean; unpriced: number };
+  by_period: PeriodRow[];
+  invoices: { invoices: number; billed: string; matched: number; with_differences: number; incomplete: number; difference: string; totals_only: number; rows: RegisterInvoice[] };
+};
+export type CostReportQuery = { project_id?: string; date_from?: string; date_to?: string; period: "day" | "week" | "month" };
+const reportParams = (q: CostReportQuery) => new URLSearchParams(Object.entries(q).filter(([, v]) => v) as [string, string][]).toString();
+export async function getCostReport(q: CostReportQuery): Promise<CostReport> {
+  return (await check(await apiFetch(`${API}/api/reports/summary?${reportParams(q)}`))).json();
+}
+export const costReportXlsxUrl = (q: CostReportQuery) => `${API}/api/reports/summary.xlsx?${reportParams(q)}`;
+export async function getProjectDirectory(): Promise<ProjectSummary[]> {
+  return (await check(await apiFetch(`${API}/api/projects/directory`))).json();
+}
+export async function updateProject(id: number, body: { name?: string; job_location?: string | null; description?: string | null }): Promise<Project> {
+  return (await check(await apiFetch(`${API}/api/projects/${id}`, json("PATCH", body)))).json();
 }
 export async function setProjectStatus(id: number, status: "active" | "archived") {
   await check(await apiFetch(`${API}/api/projects/${id}`, json("PATCH", { status })));
@@ -648,6 +693,17 @@ export type InvoiceOverview = {
   by_supplier: { supplier: string; lines: number; billed: string; verified: string; lines_unresolved: number; open: number }[];
   exceptions: { kind: string; title: string; detail: string; line_ids: number[] }[];
 };
+/** One row per supplier or trucking invoice. `compared` is null while any part can't be priced. */
+export type RegisterInvoice = {
+  kind: "supplier" | "trucking"; id: number; invoice_number: string; company: string | null;
+  project: { id: number; code: string; name: string } | null; period_from: string; period_to: string; lines: number;
+  billed: string; compared: string | null; difference: string | null; status: "matched" | "discrepancy" | "incomplete";
+  ticket_level: boolean; has_document: boolean; href: string;
+};
+export type InvoiceRegister = { totals: { invoices: number; billed: string; with_differences: number; incomplete: number }; invoices: RegisterInvoice[] };
+export async function getInvoiceRegister(projectId?: string): Promise<InvoiceRegister> {
+  return (await check(await apiFetch(`${API}/api/invoice-comparisons/register${projectId ? `?project_id=${projectId}` : ""}`))).json();
+}
 export async function getInvoiceOverview(): Promise<InvoiceOverview> {
   return (await check(await apiFetch(API + "/api/invoice-comparisons/overview"))).json();
 }
@@ -761,7 +817,7 @@ export async function downloadInvoiceComparisonReport(id: number): Promise<void>
   try {
     const link = document.createElement("a");
     link.href = url;
-    link.download = "ticketflow-invoice-" + id + ".csv";
+    link.download = "quarvera-invoice-" + id + ".csv";
     document.body.appendChild(link);
     link.click();
     link.remove();

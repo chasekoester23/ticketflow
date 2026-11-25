@@ -6,6 +6,7 @@ import {
   ApiError, BillingException, ExceptionEventRow, ExceptionFilters, ExceptionStatus, ExceptionsPage, downloadFile,
   exceptionHistory, exceptionsCsvUrl, listExceptions, reviewException,
 } from "../../../lib/api";
+import { useProject } from "../../project-context";
 
 const STATUS_LABEL: Record<ExceptionStatus, string> = {
   open: "Open", investigating: "Investigating", disputed: "Disputed with supplier",
@@ -87,7 +88,7 @@ function Detail({ item, page, onSaved }: { item: BillingException; page: Excepti
         {item.unbilled_tickets !== null && <div><dt className="tf-stat-label">Deliveries</dt><dd className="tabular-nums">{item.unbilled_tickets}</dd></div>}
       </dl>
       <div className="flex flex-wrap gap-2 text-[12px]">
-        {item.line_ids.map((id, n) => <Link key={id} prefetch={false} className="tf-secondary-button" href={`/invoices?line=${id}`}>
+        {item.line_ids.map((id, n) => <Link key={id} prefetch={false} className="tf-secondary-button" href={`/invoices/lines?line=${id}`}>
           Invoice {item.invoice_numbers[n] ?? item.invoice_numbers[0]} <span aria-hidden="true">→</span></Link>)}
         {item.shift_id && <Link prefetch={false} className="tf-secondary-button" href={`/trucking?shift_id=${item.shift_id}`}>
           Truck shift <span aria-hidden="true">→</span></Link>}
@@ -138,6 +139,7 @@ function Detail({ item, page, onSaved }: { item: BillingException; page: Excepti
 }
 
 export default function ExceptionsCenter() {
+  const { projectId, setProjectId } = useProject();
   const [filters, setFilters] = useState<ExceptionFilters>({ status: "open" });
   const [page, setPage] = useState<ExceptionsPage | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -150,6 +152,9 @@ export default function ExceptionsCenter() {
     const params = new URLSearchParams(window.location.search);
     const initial: ExceptionFilters = { status: "open" };
     for (const key of FILTER_KEYS) { const value = params.get(key); if (value) initial[key] = value; }
+    // The project is the top bar's choice; a link naming one chooses it there.
+    if (initial.project_id) setProjectId(initial.project_id);
+    else if (projectId) initial.project_id = projectId;
     setFilters(initial);
     setSelected(params.get("key"));
     setReady(true);
@@ -162,6 +167,9 @@ export default function ExceptionsCenter() {
     finally { setLoading(false); }
   }, [filters]);
   useEffect(() => { if (ready) void load(); }, [ready, load]);
+  useEffect(() => {
+    if (ready && (filters.project_id ?? "") !== projectId) setFilters((f) => ({ ...f, project_id: projectId || undefined }));
+  }, [projectId, ready]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!ready) return;
     const params = new URLSearchParams();
@@ -180,7 +188,7 @@ export default function ExceptionsCenter() {
       <div><p className="tf-eyebrow">Invoices</p><h1 className="tf-page-title">Invoice exceptions</h1>
         <p className="tf-page-description">Every reason to question a supplier invoice, in one list: who owns it, where it stands, and what it&apos;s worth.</p></div>
       <div className="flex flex-wrap gap-2">
-        <Link prefetch={false} className="tf-secondary-button" href="/invoices">Invoice comparison</Link>
+        <Link prefetch={false} className="tf-secondary-button" href="/invoices/lines">Invoice comparison</Link>
         <button type="button" className="tf-secondary-button" onClick={() => void downloadFile(exceptionsCsvUrl(filters), "invoice-exceptions.csv").catch((e) => setError((e as Error).message))}>Export CSV</button>
       </div>
     </div>
@@ -199,7 +207,7 @@ export default function ExceptionsCenter() {
     </section>}
 
     <section className="tf-panel" aria-label="Filters">
-      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <label className="tf-field-label">Status
           <select className="tf-field w-full" value={filters.status ?? "open"} onChange={(e) => set("status", e.target.value)}>
             <option value="open">Open (any stage)</option><option value="all">All</option>
@@ -215,12 +223,6 @@ export default function ExceptionsCenter() {
         <label className="tf-field-label">Severity
           <select className="tf-field w-full" value={filters.severity ?? ""} onChange={(e) => set("severity", e.target.value)}>
             <option value="">Any</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
-          </select>
-        </label>
-        <label className="tf-field-label">Project
-          <select className="tf-field w-full" value={filters.project_id ?? ""} onChange={(e) => set("project_id", e.target.value)}>
-            <option value="">All projects</option>
-            {page?.projects.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}
           </select>
         </label>
         <label className="tf-field-label">Owner

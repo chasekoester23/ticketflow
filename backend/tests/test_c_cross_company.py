@@ -93,7 +93,7 @@ def _view(browser: TestClient) -> list:
     return [browser.get(path).json() for path in (
         "/api/projects", "/api/batches", "/api/records", "/api/suppliers", "/api/materials", "/api/rates", "/api/name-aliases",
         "/api/saved-views", "/api/invoice-comparisons", "/api/invoice-documents", "/api/team/members", "/api/dashboard",
-        "/api/team/events", "/api/pricing/history")]
+        "/api/team/events", "/api/pricing/history", "/api/projects/directory", "/api/review-queue", "/api/invoice-comparisons/register", "/api/reports/summary")]
 
 
 def test_each_session_is_its_own_company_whatever_the_request_says(sessions, world):
