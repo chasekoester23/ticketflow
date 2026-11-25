@@ -23,6 +23,7 @@ export function BatchQueue() {
   const [openOnly, setOpenOnly] = useState(false);
   const { projectId } = useProject();
   const [failed, setFailed] = useState(false);
+  const [everything, setEverything] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -49,7 +50,7 @@ export function BatchQueue() {
       : shown.length === 0 ? <p className="tf-empty">{openOnly ? "Nothing is waiting on a person." : "Nothing uploaded yet. Your first upload starts below."}</p>
       : <div className="tf-table-wrap"><table className="tf-table">
         <thead><tr><th>Batch</th><th>Project</th><th>Next step</th><th className="tf-hide-narrow">Uploaded</th><th className="tf-hide-narrow text-right">Tickets</th><th className="tf-hide-narrow">Accepted</th><th><span className="sr-only">Open</span></th></tr></thead>
-        <tbody>{shown.map((row) => {
+        <tbody>{(everything ? shown : shown.slice(0, 15)).map((row) => {
           const step = nextStep(row);
           const resolved = row.verified + row.skipped;
           return <tr key={row.id}>
@@ -68,5 +69,7 @@ export function BatchQueue() {
           </tr>;
         })}</tbody>
       </table></div>}
+    {shown && shown.length > 15 && !everything && <div className="border-t border-[#dce1e6] px-4 py-2 text-[12.5px]">
+      <button type="button" className="tf-link" onClick={() => setEverything(true)}>Show all {shown.length} uploads</button></div>}
   </section>;
 }

@@ -22,6 +22,10 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
   // Starts on the project chosen in the top bar, when it's still taking uploads.
   const chosen = useProject();
   const [projectId, setProjectId] = useState(chosen.project?.status === "active" ? chosen.projectId : "");
+  const pickedProject = useRef(false);
+  useEffect(() => {
+    if (!pickedProject.current && chosen.project?.status === "active") setProjectId(chosen.projectId);
+  }, [chosen.project, chosen.projectId]);
   const [expected, setExpected] = useState("");
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -96,7 +100,7 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
       <div className="flex flex-col justify-between gap-4">
         <div className="space-y-3">
           <label className="tf-field-label">Project
-            <select className="tf-field w-full" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <select className="tf-field w-full" value={projectId} onChange={(e) => { pickedProject.current = true; setProjectId(e.target.value); }}>
               <option value="">Select a project...</option>
               {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
             </select>

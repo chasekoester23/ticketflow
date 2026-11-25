@@ -545,8 +545,8 @@ export default function Home() {
       {!canUpload && !opening && (
         <p className="tf-notice" role="note">Your role is view-only. You can open batches and ticket images, but uploads and edits are disabled.</p>
       )}
-      {!batch && !opening && <BatchQueue />}
       {canUpload && !opening && (!batch || showUpload) && <UploadPanel projects={projects} reading={configured} onUploaded={onUploaded} onError={setError} />}
+      {!batch && !opening && <BatchQueue />}
 
       {batch && (
         <section className="tf-panel px-3 py-2" aria-label="Batch summary">

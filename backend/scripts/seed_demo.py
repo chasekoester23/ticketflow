@@ -58,12 +58,12 @@ PROJECTS = [
 ARCHIVED = ("24-088", "Westfield Parking Lot", "Fictional City, IN")
 # supplier -> [(material, company $/ton or None for no rate, freight)]
 SUPPLIERS = {
-    "Granite Ridge Aggregates": [("No. 57 Stone", "26.50", None), ("No. 53 Crushed Stone", "24.75", None), ("No. 2 Stone", "23.90", None)],
+    "Granite Ridge Aggregates": [("No. 57 Stone", "26.50", None), ("No. 53 Crushed Stone", "24.70", None), ("No. 2 Stone", "23.90", None)],
     "Lakeside Sand & Gravel": [("Fill Sand", "14.50", "separate"), ("Concrete Sand", "21.00", "separate")],
     "Summit Asphalt Supply": [("No. 2 Stone", None, None)],  # no rate on file: approved, cost incomplete
     "Blue Valley Quarry": [("No. 57 Stone", "27.10", None), ("Surge Stone", "29.40", None)],
     "Prairie Stone Co.": [("No. 53 Crushed Stone", "24.40", None), ("Rip Rap Class 1", "36.50", None)],
-    "Twin Rivers Materials": [("No. 57 Stone", "33.75", "included"), ("Structural Fill", "22.60", "included")],  # delivered prices
+    "Twin Rivers Materials": [("No. 57 Stone", "33.70", "included"), ("Structural Fill", "22.60", "included")],  # delivered prices
     "Northline Aggregates": [("No. 8 Stone", "30.20", None)],
     "Redbud Recycled Base": [("Recycled Concrete Base", "17.40", "separate")],
     "Central Indiana Fill": [("Structural Fill", "13.90", "separate"), ("Screened Topsoil", "18.00", "separate")],
@@ -73,7 +73,7 @@ SUPPLIERS = {
 }
 # Extra rates: (supplier, material, $/ton, project code or None, from, freight)
 EXTRA_RATES = [
-    ("Granite Ridge Aggregates", "No. 57 Stone", "27.25", None, "2026-11-01", None),  # an increase: approved costs stay put
+    ("Granite Ridge Aggregates", "No. 57 Stone", "27.20", None, "2026-11-01", None),  # an increase: approved costs stay put
     ("Granite Ridge Aggregates", "No. 57 Stone", "25.80", "25-101", "2026-09-01", None),  # a project agreement
     ("Hillcrest Aggregates", "No. 53 Crushed Stone", "24.40", "25-140", "2026-09-01", None),
 ]
@@ -219,10 +219,10 @@ def plan_tickets(rng: random.Random, days: list[date]) -> list[dict]:
         outcome = "verified"
         if day in recent:
             outcome = "needs_review" if rng.random() < 0.55 else "verified"
-        elif rng.random() < 0.012:
+        elif day >= days[-15] and rng.random() < 0.04:
             outcome = "flagged"
         rows.append(dict(project=code, ticket_number=str(number[supplier]), delivery_date=day.isoformat(), supplier=supplier,
-                         material_type=material, tonnage=f"{rng.uniform(17.5, 25.5):.2f}", job_location=code, hauler=hauler,
+                         material_type=material, tonnage=f"{rng.uniform(17.5, 25.5):.1f}", job_location=code, hauler=hauler,
                          truck=None, outcome=outcome))
     return rows
 
@@ -306,10 +306,15 @@ def build(client, make_page, make_pdf) -> None:
     shifts_by: dict[tuple[str, str, str], list[dict]] = defaultdict(list)  # (hauler, project, month) -> approved shifts
     count = 0
     for day in days:
+        used: set[str] = set()
         for _ in range(rng.choice([5, 6, 6, 7])):
             name = rng.choice(HOURLY)[0]
             code = rng.choices(PROJECTS, weights=[p[3] for p in PROJECTS])[0][0]
-            truck = rng.choice(list(haulers[name]["trucks"]))
+            free = [t for t in haulers[name]["trucks"] if t not in used]
+            if not free:
+                continue
+            truck = rng.choice(free)
+            used.add(truck)
             start_h = rng.choice(["06:00", "06:30", "07:00", "07:30"])
             end_h = rng.choice(["14:30", "15:00", "15:30", "16:00", "16:30", "17:00"]) if rng.random() > 0.05 else "10:15"
             # Standby is paid only where the agreement has a standby rate (Quarvera refuses it otherwise).
@@ -331,7 +336,7 @@ def build(client, make_page, make_pdf) -> None:
                 continue
             done = ok(client.post(f"/api/truck-shifts/{shift['id']}/approve", json={"work_hours": shift["work_hours"],
                                   "standby_hours": shift.get("standby_hours", "0")}, headers={"If-Match": shift["revision"]}))
-            shifts_by[(name, code, day.isoformat()[:7])].append(done)
+            shifts_by[(name, code, day.isoformat()[:7])].append({**done, "lines": shift["cost_lines"]})
     print(f"  trucking: {count} shifts")
 
     # Supplier invoices for September and October: one per supplier and project with the most volume.
@@ -349,18 +354,16 @@ def build(client, make_page, make_pdf) -> None:
     for n, ((code, supplier, month), group) in enumerate(chosen):
         number = f"{''.join(w[0] for w in supplier.split()[:2]).upper()}-{month.replace('-', '')}-{projects[code]:02d}{n:02d}"
         scenario = scenarios.get(n, "match")
-        by_material: dict[str, list[dict]] = defaultdict(list)
+        by_material: dict[tuple[str, str], list[dict]] = defaultdict(list)
         for row in group:
-            by_material[row["material_type"]].append(row)
-        for material, items in by_material.items():
+            by_material[(row["material_type"], row["unit_price"] or "")].append(row)
+        for (material, locked), items in by_material.items():  # noqa: B007
             listed = [(r["ticket_number"], Decimal(r["tonnage"])) for r in items]
-            priced = [r for r in items if r["cost"]]
-            subtotal = sum((Decimal(r["cost"]) for r in priced), Decimal(0))
             tons = sum((t for _, t in listed), Decimal(0))
-            price = (subtotal / tons).quantize(Decimal("0.0001")) if priced and tons else Decimal(items[0]["unit_price"] or "24.00")
-            if not priced:  # no rate on file: billed at the supplier's own price; Quarvera can't compare it yet
-                price = Decimal("24.20")
-                subtotal = cents(tons * price)
+            # Billed at the rate locked on the tickets; with no rate on file, at the supplier's own
+            # price, which Quarvera can't compare yet.
+            price = Decimal(locked) if locked else Decimal("24.20")
+            subtotal = cents(tons * price)
             if scenario == "extra_ticket":
                 listed.append(("99" + listed[0][0][-4:], Decimal("22.80")))  # a ticket never delivered
                 tons += Decimal("22.80")
@@ -385,8 +388,10 @@ def build(client, make_page, make_pdf) -> None:
     hauling = sorted(shifts_by.items(), key=lambda kv: -len(kv[1]))
     hauling = [kv for kv in hauling if kv[0][2] in ("2026-09", "2026-10")][:13]
     for n, ((name, code, month), shifts) in enumerate(hauling):
-        lines = [{"kind": "hours", "truck_identifier": s["truck"], "work_date": s["work_date"], "hours": s["approved"]["billable_hours"],
-                  "rate": haulers[name]["rate"], "amount": s["cost"]} for s in sorted(shifts, key=lambda s: s["work_date"])]
+        kind_of = lambda label: "standby" if label.startswith("Standby") else "minimum" if label.startswith("Minimum") else "hours"  # noqa: E731
+        lines = [{"kind": kind_of(cl["label"]), "truck_identifier": s["truck"], "work_date": s["work_date"], "hours": cl["hours"],
+                  "rate": cl["rate"], "amount": cl["amount"]}
+                 for s in sorted(shifts, key=lambda s: s["work_date"]) for cl in s["lines"]]
         if n == 0:  # an hour more than approved on one day
             first = lines[0]
             hours = Decimal(first["hours"]) + 1

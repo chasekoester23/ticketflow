@@ -1,7 +1,8 @@
 # Quarvera commercial transformation: living implementation document
 
-Branch: `feature/commercial-foundation`. It is stacked on `feature/ux-simplification`, which sits on
-`feature/trucking-reconciliation` (PR #38), which sits on `feature/hourly-trucking` (PR #37).
+Branch: `feature/commercial-foundation` (draft PR #41). It is stacked on `feature/hourly-trucking`
+(PR #40 to `main`), which holds the trucking reconciliation work from #38 plus `main` (#37 and #39).
+Merge order: #40, then #41 (its base moves to `main`). Nothing merges without the founder's approval.
 
 The next session starts from the **Continuation point** section at the bottom.
 
@@ -199,13 +200,60 @@ The script prints a one-time password for `demo-owner`.
 4. Decide on billing (per organization, project or document) before building subscription states.
 5. Close the records-list query count, and add units of measure if the first customer buys by the yard or load.
 
+## Round 2 (2026-11-26): final product refinement
+
+| Area | What changed | Where |
+|---|---|---|
+| Integration | #37 and #39 were merged to `main`; #38 was stranded on `feature/hourly-trucking`. Merged `main` into it (PostgreSQL worker fix in), opened #40 to `main`, merged it into this branch, opened draft #41 | PRs #40, #41 |
+| Navigation | Workspace: Overview, Projects. Operations: Document Intake, Review Queue, Delivery Records, Trucking. Financials: Invoices (All, Exceptions, Unbilled activity), Analytics. Management: Suppliers & Haulers, Rates & Pricing. Settings (with Pilot measurement). `/reports` and `/reports/project` redirect | `app/AuthShell.tsx` |
+| Projects | `/projects/:id` opens on the Project Report: cost figures, trend, materials with average $/t, suppliers, hauling, invoice summary, unbilled deliveries, one comprehensive workbook. The project strip makes Deliveries, Trucking, Invoices and Documents the company screens filtered to the project | `app/projects/[id]`, `app/ProjectBar.tsx` |
+| Overview | Approved material, hauling and combined cost, trend chart, clickable project performance, material and supplier shares; waiting work is one line; missing rates disclosed | `app/page.tsx` |
+| Analytics | Costs (cross-project), Materials (unit prices by supplier), Suppliers (spend share), Trucking (haulers compared, by billing method) | `app/analytics` |
+| One calculation | Overview, project report and Analytics all read `/api/reports/summary` (`services/cost_reports.py`); the dashboard, directory and exports use the same `aggregates` helpers | |
+| Trucking billing | Per ton, per load, freight included: migration `20261126_31`, `services/haul_billing.py`, rules in `docs/engineering/trucking-billing.md` | |
+| Vendors | One directory row per company (material, trucking or both), add a company as supplier and/or hauler | `app/suppliers` |
+| Intake | Upload first, history below (latest 15), filtered to the project; the chosen project pre-fills once projects load | `app/upload` |
+| Demo | 6 active projects, 12 suppliers, 8 haulers, 2,500 deliveries, 321 shifts, 46 invoices, about $1.5M of approved cost, every figure from records | `scripts/seed_demo.py` |
+| Deployment | Readiness checked against the code, for four targets | `docs/deploy/readiness.md` |
+
+### Financial integrity findings and fixes
+
+- **Fixed: unbilled shifts on other projects.** An approved shift no invoice billed was pinned to any same-hauler invoice covering the date, even one for another project. A hauler billing per project showed false discrepancies. Now a project invoice covers only its project's shifts (pre-existing from #38; regression test).
+- **Fixed: freight setting cleared by accident.** Re-saving a material price without a freight choice no longer clears the setting (test).
+- **Fixed: inconsistent zero format.** A zero trucking total was "0" in the cost report and "0.00" elsewhere.
+- **Verified, regression-tested:**
+  - One approved delivery and shift report identically on every surface and export.
+  - Invoices never add cost.
+  - Unapproved activity and missing rates never enter verified totals.
+  - Freight included and hourly shifts never get a per-ton charge.
+  - Approved hauling charges are trigger-locked.
+- **Verified end to end on the demo stack:** $480 material plus $120 per-ton hauling plus a $945 shift equals $1,545 on Overview, the directory and reports. A matching invoice changes nothing, and the company total moves by exactly that $1,545.
+
+### Performance
+
+The records page ran 3 lookups per row. Those lookups now run once per page (query-budget test).
+
+Measured with `scripts/measure_performance.py` on SQLite on the development Mac, at 50,000 tickets:
+
+| Request | Before (2026-11-25) | After (2026-11-26) |
+|---|---|---|
+| Records, first page | 0.48 s, 161 statements | 0.18 s, 14 statements |
+| Records, one project | 0.48 s, 161 statements | 0.10 s, 14 statements |
+| Records, one project, sorted by tons | 0.56 s, 161 statements | 0.20 s, 14 statements |
+| Project directory | 0.13 s | 0.12 s |
+| Cost report, by week | 0.35 s | 0.42 s (now includes per-project, unit-price and per-ton/per-load hauling) |
+| Excel export, everything | 4.68 s | 3.97 s (same code path; run-to-run variance) |
+
+Excel export spends its time in openpyxl's pure-Python XML writer. Adding `lxml` would let openpyxl use its faster writer. It's a new dependency, and adding it was not approved in this session, so it is left for the founder.
+
 ## Continuation point
 
-All seven phases are done for this pass. `feature/commercial-foundation` is local and not pushed; pushing needs the founder's go-ahead. Next, in order:
+Round 2 is done and pushed to draft PR #41. Next, in order:
 
-1. Delivery Records: unit of measure, gross/tare, truck and hauler columns. This needs an additive migration, and `tonnage` stays the approved quantity for tons.
-2. Non-hourly trucking (per-ton, per-load, freight included), built on (1).
-3. Usage report per workspace from `extraction_usage` (documents, pages, attempts, failures, seconds, tokens).
-4. One upload dialog with document-type detection, only if it proves reliable. Explicit type selection stays until then.
-5. The records-list query count (161 statements for a 50-row page).
-6. A security review pass: upload limits, rate limits and logs (see `SECURITY_PRELAUNCH.md`).
+1. Founder review of PR #40, then #41; merge only with green checks and approval.
+2. Decide on `lxml`, for faster Excel exports.
+3. Hauling invoices billed per ton or per load: line kinds `tons` and `loads` matched to approved tickets that carry the hauler. Today those charges are counted as cost but not reconciled against a hauler's invoice.
+4. Units of measure other than tons, and gross/tare on tickets (columns exist for hauler and truck only).
+5. A unified company identity across suppliers and haulers, if pilots show many companies do both. The directory matches by name today.
+6. A usage report per workspace from `extraction_usage`.
+7. A hosted demo: see `docs/deploy/readiness.md`, target 2.

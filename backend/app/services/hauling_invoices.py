@@ -197,7 +197,10 @@ def reconcile(lines: list[LineFacts], shifts: list[ShiftFacts]) -> tuple[list[Li
     for s in shifts:
         if s.status != "approved" or s.id in billed_shifts or s.hauler_id not in periods:
             continue
-        covering = [line for line in periods[s.hauler_id] if line.period_from <= s.work_date <= line.period_to]
+        # An invoice for one project covers only that project's shifts: a hauler billing each job
+        # separately hasn't left another job's shift off this one.
+        covering = [line for line in periods[s.hauler_id] if line.period_from <= s.work_date <= line.period_to
+                    and (line.project_id is None or line.project_id == s.project_id)]
         if not covering:
             continue
         findings.append(Finding(key=f"HS{s.id}", category="not_invoiced", shift_id=s.id, project_id=s.project_id,
