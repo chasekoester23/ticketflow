@@ -67,9 +67,9 @@ Tagline: "Every delivery. Every truck. Every dollar."
 | 2 | Official logo and favicons; light shell with grouped sidebar (Workspace / Operations / Financials / Management / Settings); Upload documents menu; global project selector (search, recent, archived, New project) shared by every page; project directory with open work, verified tons, material, trucking and verified cost; TicketFlow removed from customer-facing text | Done |
 | 3 | Review Queue (`/review`): tickets by batch, failed files, truck shifts, drafted invoice lines, oldest first, filtered by project and kind. Automatic reading is the default when it is set up, in plain language | Done |
 | 4 | Suppliers & Haulers (`/suppliers`): suppliers with delivered tons and costs and rates on file, ticket names not yet set up, haulers with trucks and rates, hauler and truck setup. Rates & Pricing: Material pricing and Trucking rates tabs. Trucking page is the operational register (Shifts, Hauling invoices); `?tab=setup` redirects | Done |
-| 5 | Invoice register (`/invoices`): supplier and trucking invoices in one list with exact server-side totals; line comparison moved to `/invoices/lines` (old `?line=` links redirect). Reports hub | Register done; reports hub next |
-| 6 | Demo workspace seeder (`scripts/seed_demo.py`); roles mapping; usage reporting; security review | Seeder done |
-| 7 | Full verification and final report | Planned |
+| 5 | Invoice register (`/invoices`): supplier and trucking invoices in one list with exact server-side totals; line comparison moved to `/invoices/lines` (old `?line=` links redirect). Reports (`/reports`): approved material and trucking by day, week or month, by material, supplier and hauler, invoice results, Excel export (`/api/reports/summary[.xlsx]`); pilot measurement at `/reports/pilot` | Done |
+| 6 | Demo workspace seeder (`scripts/seed_demo.py`); roles mapping (documented, no change); usage reporting; security review | Seeder and roles decision done; usage report and security review not done |
+| 7 | Full verification and final report | Done for this pass (see Verification) |
 
 ## New endpoints (all company-scoped, in the tenant sweep and cross-company tests)
 
@@ -138,12 +138,74 @@ The script prints a one-time password for `demo-owner`.
   - Viewer: accounting and read-only.
   - Split a role only when a customer needs it, for example a field uploader who may not edit, or accounting that may manage invoices but not approve tickets.
 
+## Verification (2026-11-25, commit after `faa524f`)
+
+- Backend, SQLite: 1,464 passed, 37 skipped, 3 xfailed (full suite), plus the new cost report tests.
+- Backend, PostgreSQL 16, full suite on this branch: 1,467 passed, 24 failed, 13 skipped (31 min).
+  - All 24 failures are worker crash and recovery tests (`test_t_failures`, `test_durable_jobs`, `test_operations`, `test_b_worker_reliability`). They come from the test trigger bug that PR #39 (`fix/postgres-ci`, commit `205f17d`) fixes.
+  - With #39's four test-file changes applied temporarily, those files ran 150 passed, 0 failed in about 1 minute. The temporary copy was reverted, so the fix arrives by merging #39.
+  - The new endpoint, tenant sweep, cross-company and row-security tests pass on PostgreSQL.
+- Browser suite (production build): 328 passed, 1 skipped, 0 failed. `tests/browser/commercial.spec.mjs` covers:
+  - Project context across pages and reload.
+  - Deep links choosing a project.
+  - The Review Queue.
+  - The invoice register and its old-link redirect.
+  - Reports and their Excel link.
+  - Incomplete costs in the directory.
+- Type check clean.
+
+## Acceptance scenarios: where each stands
+
+| Scenario | State |
+|---|---|
+| A Material deliveries | Works: upload, review beside the scan, approve, Delivery Records, Excel |
+| B Missing pricing | Works: approval without a rate, cost marked incomplete everywhere (Overview, directory, reports), rate added later in Rates & Pricing |
+| C Hourly trucking | Works for entered time sheets (attached original); no AI reading of time sheets |
+| D Non-hourly trucking | **Not implemented** (see decisions) |
+| E Freight included | **Not implemented**; nothing double counts today because no per-ton hauling exists |
+| F Invoice discrepancy | Works: missing ticket, extra tons, rate, arithmetic; totals-only invoices labelled as such |
+| G Historical pricing | Works: approval snapshots the rate; the demo has a later increase that leaves approved costs alone |
+| H Extraction failure | Works: original kept, failed files in the Review Queue with the reason, retries don't duplicate (existing tests) |
+| I Multi-tenant isolation | Works: every new endpoint is in the tenant sweep and the cross-company tests; row security on PostgreSQL |
+| J Project context | Works: browser test covers navigation and reload |
+| K Large project | Measured to 50k tickets (above); records list's 161 queries per page is open |
+| L New customer | Partly: onboarding checklist, empty states, project creation; self-serve organization sign-up is still gated (request access) |
+
+## Demo walkthrough (about 6 minutes)
+
+1. **Overview** (All projects): verified tons, material, trucking and total cost. The Review Queue badge shows what's waiting.
+2. **Project selector**: choose `25-114 · Northpark`. Every page now shows that job.
+3. **Review Queue**: the waiting ticket, the flagged one, and the truck shift to approve. Open a ticket and review it beside the scan.
+4. **Delivery Records**: filter, total and export to Excel.
+5. **Trucking**:
+   - The disputed CH-7 shift, with its reason.
+   - Approved shifts with locked cost.
+   - On Route 9, a short day topped up to the 4-hour minimum.
+6. **Invoices**:
+   - GRA-110517 bills ticket 52999, which was never delivered, and more tons. Open it to see the ticket-by-ticket check.
+   - BT-2026-1107 bills 10 hours for a 9-hour day.
+   - The other two invoices match.
+7. **Reports**:
+   - Costs by week.
+   - #2 Stone is approved with no rate, so the total is marked incomplete and never shows a $0 cost.
+   - Download Excel.
+8. **Rates & Pricing**: add the #2 Stone rate. Approved costs don't change on their own (historical pricing).
+
+## Before onboarding a paying contractor
+
+1. Merge the PostgreSQL CI fix (#39), then #37 and #38, then this stack, with all required checks passing.
+2. Deploy to the hosted environment with PostgreSQL and object storage, run a backup and restore drill there, and set the AI provider key and usage alerts.
+3. Run one real pilot on a contractor's own paper: measure the reading accuracy and correction rate, and the time to review.
+4. Decide on billing (per organization, project or document) before building subscription states.
+5. Close the records-list query count, and add units of measure if the first customer buys by the yard or load.
+
 ## Continuation point
 
-Phases 2 to 4 are done, and Phase 5's register and Phase 6's seeder are done. Next:
+All seven phases are done for this pass. `feature/commercial-foundation` is local and not pushed; pushing needs the founder's go-ahead. Next, in order:
 
-1. Reports hub at `/reports`: material, trucking, project cost and invoice reports with date filters and Excel export. Pilot measurement moves under the hub.
-2. Delivery Records: units of measure, truck and hauler columns (needs a migration).
-3. Non-hourly trucking (see decisions).
-4. Usage report per workspace from `extraction_usage`.
-5. Final verification.
+1. Delivery Records: unit of measure, gross/tare, truck and hauler columns. This needs an additive migration, and `tonnage` stays the approved quantity for tons.
+2. Non-hourly trucking (per-ton, per-load, freight included), built on (1).
+3. Usage report per workspace from `extraction_usage` (documents, pages, attempts, failures, seconds, tokens).
+4. One upload dialog with document-type detection, only if it proves reliable. Explicit type selection stays until then.
+5. The records-list query count (161 statements for a 50-row page).
+6. A security review pass: upload limits, rate limits and logs (see `SECURITY_PRELAUNCH.md`).
