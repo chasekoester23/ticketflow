@@ -858,6 +858,12 @@ class HaulingInvoiceLine(Base):
     rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     description: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Billed per ton or per load (kinds "tons" and "loads"): how many, and which delivery
+    # tickets, when the invoice lists them. shift_id: the shift a person chose for a line
+    # that matched more than one. All optional; hourly lines don't use the first two.
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    tickets: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shift_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class HaulingInvoiceEvent(Base):

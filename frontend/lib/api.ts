@@ -1032,15 +1032,20 @@ export const attachTimesheet = (id: number, file: File): Promise<TruckShift> => 
 export const timesheetUrl = (id: number) => `${API}/api/truck-shifts/${id}/timesheet`;
 
 export type HaulingInvoiceLine = {
-  line_no?: number; kind: "hours" | "standby" | "minimum" | "fee" | "credit"; truck_identifier: string | null; work_date: string | null;
+  line_no?: number; kind: "hours" | "standby" | "minimum" | "fee" | "credit" | "tons" | "loads"; truck_identifier: string | null; work_date: string | null;
   hours: string | null; rate: string | null; amount: string; description: string | null;
-  result?: "matched" | "differs" | "repeat" | "no_shift" | "not_approved" | "ambiguous" | "fee" | "credit" | null;
+  /** Tons or loads billed, and the ticket numbers the line lists (per ton or per load). */
+  quantity?: string | null; tickets?: string | null;
+  /** The shift a person chose when the line matched more than one. */
+  chosen_shift_id?: number | null;
+  result?: "matched" | "differs" | "repeat" | "no_shift" | "no_delivery" | "not_approved" | "ambiguous" | "fee" | "credit" | null;
   shift_id?: number | null; supported?: string | null; difference?: string | null;
+  ticket_ids?: number[]; candidates?: { id: number; truck: string; hours: string | null; project: string | null }[];
 };
 export type HaulingInvoice = {
   id: number; revision: string; hauler_id: number; hauler: string | null; project_id: number | null; project: string | null;
   invoice_number: string; invoice_date: string | null; period_from: string; period_to: string; document: { name: string } | null;
-  billed: string; supported: string | null; difference: string | null; exceptions: number; lines: HaulingInvoiceLine[];
+  billed: string; supported: string | null; difference: string | null; exceptions: number; unbilled_in_period?: number; lines: HaulingInvoiceLine[];
 };
 export type HaulingInvoiceInput = Pick<HaulingInvoice, "hauler_id" | "project_id" | "invoice_number" | "invoice_date" | "period_from" | "period_to"> & {
   lines: HaulingInvoiceLine[];

@@ -36,6 +36,7 @@ CATEGORIES = {
     "hours": "Billed truck hours differ from approved",
     "missing_shift": "Billed truck time with no shift",
     "unsupported_fee": "Fee not in an agreement",
+    "wrong_project": "Billed against another project",
 }
 SEVERITIES = ("high", "medium", "low")
 # Billed above approved by at least this much in one cause is high severity.
@@ -92,7 +93,7 @@ class Detected:
 def _severity(category: str, amount: Decimal | None) -> str:
     if category == "duplicate" or (amount is not None and amount >= HIGH_AMOUNT):
         return "high"
-    if (amount is not None and amount > 0) or category in ("missing_ticket", "unmatched_line", "missing_shift", "unsupported_fee"):
+    if (amount is not None and amount > 0) or category in ("missing_ticket", "unmatched_line", "missing_shift", "unsupported_fee", "wrong_project"):
         return "medium"
     return "low"
 
@@ -161,11 +162,10 @@ def detect(db: Session, organization_id: int, items: list[InvoiceComparison], li
             supplier=group[0].supplier_name, material=group[0].material_name,
             invoice_numbers=sorted({g.invoice_number for g in group}), line_ids=pattern["line_ids"]))
     from . import hauling_invoices
-    hauling_lines, shifts = hauling_invoices.load(db, organization_id)
-    for f in hauling_invoices.reconcile(hauling_lines, shifts)[1]:
+    for f in hauling_invoices.reconcile(*hauling_invoices.load_all(db, organization_id))[1]:
         found.append(Detected(
             key=f.key, category=f.category, severity=_severity(f.category, f.amount), title=f.title, explanation=f.explanation,
-            project_id=f.project_id, supplier=f.hauler, material="Hourly trucking",
+            project_id=f.project_id, supplier=f.hauler, material=f.material,
             invoice_numbers=[f.invoice_number] if f.invoice_number else [], amount=f.amount, line_billed=f.billed,
             line_approved=f.expected, shift_id=f.shift_id, hauling_invoice_id=f.invoice_id, group=f.group))
     gaps = reconciliation.unbilled_gaps_by_project(db, organization_id)

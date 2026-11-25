@@ -7,12 +7,15 @@ import {
 } from "../../lib/api";
 
 const RESULT: Record<string, [string, string]> = {
-  matched: ["Matches approved shift", "tf-status-open"], differs: ["Differs", "tf-status-attention"], repeat: ["Billed again", "tf-status-error"],
-  no_shift: ["No shift recorded", "tf-status-error"], not_approved: ["Shift not approved", "tf-status-attention"],
-  ambiguous: ["Which truck?", "tf-status-attention"], fee: ["Fee: not in an agreement", "tf-status-attention"],
+  matched: ["Matches approved", "tf-status-open"], differs: ["Differs", "tf-status-attention"], repeat: ["Already paid", "tf-status-error"],
+  no_shift: ["No shift recorded", "tf-status-error"], no_delivery: ["No approved delivery", "tf-status-error"],
+  not_approved: ["Not approved yet", "tf-status-attention"],
+  ambiguous: ["Choose the shift", "tf-status-attention"], fee: ["Fee: not in an agreement", "tf-status-attention"],
   credit: ["Credit", "tf-status-open"],
 };
-const KIND = { hours: "Working hours", standby: "Standby", minimum: "Minimum charge", fee: "Fee", credit: "Credit (negative)" } as const;
+const KIND = { hours: "Working hours", standby: "Standby", minimum: "Minimum charge", tons: "Tons hauled", loads: "Loads hauled",
+  fee: "Fee", credit: "Credit (negative)" } as const;
+const PER_UNIT = (kind: string) => kind === "tons" || kind === "loads";
 // Display only: server decimals are shown, never added up here.
 const money = (v: string | null | undefined) => v == null ? "—" : (v.startsWith("-") ? "−$" + Number(v.slice(1)).toLocaleString(undefined, { minimumFractionDigits: 2 })
   : "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -35,8 +38,10 @@ function InvoiceForm({ haulers, projects, start, onSaved, onCancel }: {
       await saveHaulingInvoice({
         hauler_id: Number(head.hauler_id), project_id: head.project_id ? Number(head.project_id) : null, invoice_number: head.invoice_number,
         invoice_date: head.invoice_date || null, period_from: head.period_from, period_to: head.period_to,
-        lines: lines.map((l) => ({ kind: l.kind, truck_identifier: text(l.truck_identifier), work_date: l.work_date || null, hours: text(l.hours),
-          rate: text(l.rate), amount: l.amount, description: text(l.description) })),
+        lines: lines.map((l) => ({ kind: l.kind, truck_identifier: text(l.truck_identifier), work_date: l.work_date || null,
+          hours: PER_UNIT(l.kind) ? null : text(l.hours), rate: text(l.rate), amount: l.amount, description: text(l.description),
+          ...(PER_UNIT(l.kind) ? { quantity: text(l.quantity ?? null), tickets: text(l.tickets ?? null) } : {}),
+          ...(l.chosen_shift_id && !PER_UNIT(l.kind) ? { shift_id: l.chosen_shift_id } : {}) })),
       }, start ? { id: start.id, revision: start.revision } : undefined);
       await onSaved();
     } catch (e) { setError((e as Error).message); }
@@ -54,16 +59,20 @@ function InvoiceForm({ haulers, projects, start, onSaved, onCancel }: {
       <label className="tf-field-label">Period to<input required type="date" className="tf-field w-full" value={head.period_to} onChange={(e) => setHead({ ...head, period_to: e.target.value })} /></label>
     </div>
     <div className="tf-table-wrap"><table className="tf-table" aria-label="Invoice lines">
-      <thead><tr><th>Charge</th><th>Truck</th><th>Date worked</th><th className="text-right">Hours</th><th className="text-right">Rate</th><th className="text-right">Amount</th><th>Description</th><th /></tr></thead>
+      <thead><tr><th>Charge</th><th>Truck</th><th>Date</th><th className="text-right">Hours or quantity</th><th className="text-right">Rate</th><th className="text-right">Amount</th><th>Ticket numbers or description</th><th /></tr></thead>
       <tbody>{lines.map((l, n) => <tr key={n}>
         <td><select aria-label="Charge" className="tf-field" value={l.kind} onChange={(e) => set(n, { kind: e.target.value as HaulingInvoiceLine["kind"] })}>
           {Object.entries(KIND).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></td>
         <td><input aria-label="Truck" className="tf-field w-24" value={l.truck_identifier ?? ""} onChange={(e) => set(n, { truck_identifier: e.target.value })} /></td>
-        <td><input aria-label="Date worked" type="date" className="tf-field" value={l.work_date ?? ""} required={l.kind !== "fee" && l.kind !== "credit"} onChange={(e) => set(n, { work_date: e.target.value })} /></td>
-        <td><input aria-label="Hours" inputMode="decimal" className="tf-field w-20 text-right" value={l.hours ?? ""} onChange={(e) => set(n, { hours: e.target.value })} /></td>
+        <td><input aria-label="Date worked" type="date" className="tf-field" value={l.work_date ?? ""} required={!PER_UNIT(l.kind) && l.kind !== "fee" && l.kind !== "credit"} onChange={(e) => set(n, { work_date: e.target.value })} /></td>
+        <td>{PER_UNIT(l.kind)
+          ? <input aria-label={l.kind === "tons" ? "Tons billed" : "Loads billed"} required inputMode="decimal" className="tf-field w-20 text-right" value={l.quantity ?? ""} onChange={(e) => set(n, { quantity: e.target.value })} />
+          : <input aria-label="Hours" inputMode="decimal" className="tf-field w-20 text-right" value={l.hours ?? ""} onChange={(e) => set(n, { hours: e.target.value })} />}</td>
         <td><input aria-label="Rate" inputMode="decimal" className="tf-field w-24 text-right" value={l.rate ?? ""} onChange={(e) => set(n, { rate: e.target.value })} /></td>
         <td><input aria-label="Amount" required inputMode="decimal" className="tf-field w-28 text-right" value={l.amount} onChange={(e) => set(n, { amount: e.target.value })} /></td>
-        <td><input aria-label="Description" className="tf-field w-full" value={l.description ?? ""} onChange={(e) => set(n, { description: e.target.value })} /></td>
+        <td>{PER_UNIT(l.kind)
+          ? <input aria-label="Ticket numbers" placeholder="Tickets, or leave blank to use the date" className="tf-field w-full" value={l.tickets ?? ""} onChange={(e) => set(n, { tickets: e.target.value })} />
+          : <input aria-label="Description" className="tf-field w-full" value={l.description ?? ""} onChange={(e) => set(n, { description: e.target.value })} />}</td>
         <td>{lines.length > 1 && <button type="button" className="tf-link text-[12px]" onClick={() => setLines(lines.filter((_, i) => i !== n))}>Remove</button>}</td>
       </tr>)}</tbody>
     </table></div>
@@ -83,10 +92,25 @@ export function HaulingInvoices({ invoices, haulers, projects, canManage, onChan
   const [editing, setEditing] = useState<HaulingInvoice | "new" | null>(startNew && canManage ? "new" : null);
   const [open, setOpen] = useState<number | null>(openId);
   const [error, setError] = useState<string | null>(null);
+  // A person's choice of shift for an uncertain line: saved as a correction of the invoice, with its revision, so it's on the record.
+  async function choose(inv: HaulingInvoice, lineNo: number, shiftId: number) {
+    setError(null);
+    try {
+      await saveHaulingInvoice({
+        hauler_id: inv.hauler_id, project_id: inv.project_id, invoice_number: inv.invoice_number, invoice_date: inv.invoice_date,
+        period_from: inv.period_from, period_to: inv.period_to,
+        lines: inv.lines.map((l) => ({ kind: l.kind, truck_identifier: l.truck_identifier, work_date: l.work_date, hours: l.hours, rate: l.rate,
+          amount: l.amount, description: l.description,
+          ...(l.kind === "tons" || l.kind === "loads" ? { quantity: l.quantity ?? null, tickets: l.tickets ?? null } : {}),
+          ...(l.line_no === lineNo ? { shift_id: shiftId } : l.chosen_shift_id ? { shift_id: l.chosen_shift_id } : {}) })),
+      }, { id: inv.id, revision: inv.revision });
+      await onChanged();
+    } catch (e) { setError((e as Error).message); }
+  }
   return <section className="tf-panel" aria-label="Hauling invoices">
     <div className="tf-panel-heading">
       <div><h2 className="tf-panel-title">Hauling invoices</h2>
-        <p className="tf-panel-description">Each line is checked against the approved shift for that truck and day. Differences, repeats, fees and missing shifts go to <Link prefetch={false} className="tf-link" href="/invoices/exceptions?category=hours">Invoice exceptions</Link>.</p></div>
+        <p className="tf-panel-description">Hours are checked against the approved shift for that truck and day; tons and loads against the approved deliveries this hauler carried, at their locked hauling rate. Differences, repeats, fees and missing records go to <Link prefetch={false} className="tf-link" href="/invoices/exceptions">Invoice exceptions</Link>.</p></div>
       {canManage && editing === null && <button type="button" className="tf-secondary-button" onClick={() => setEditing("new")}>+ Enter an invoice</button>}
     </div>
     {editing !== null && <InvoiceForm haulers={haulers} projects={projects} start={editing === "new" ? null : editing}
@@ -102,18 +126,28 @@ export function HaulingInvoices({ invoices, haulers, projects, canManage, onChan
             <td className="text-right tabular-nums">{money(inv.billed)}</td>
             <td className="text-right tabular-nums">{inv.supported === null ? <span className="text-[#5f6c7b]">Not yet known</span> : money(inv.supported)}</td>
             <td className={`text-right font-semibold tabular-nums ${inv.difference && Number(inv.difference) > 0 ? "text-[#a3511d]" : ""}`}>{money(inv.difference)}</td>
-            <td>{inv.exceptions ? <span className="tf-status tf-status-attention">{inv.exceptions}</span> : <span className="tf-status tf-status-open">None</span>}</td>
+            <td>{inv.exceptions ? <span className="tf-status tf-status-attention">{inv.exceptions}</span> : <span className="tf-status tf-status-open">None</span>}
+              {inv.unbilled_in_period ? <span className="block text-[11px] text-[#5f6c7b]">{inv.unbilled_in_period} approved not billed</span> : null}</td>
             <td className="text-right">{inv.document ? <a className="tf-link text-[12px]" href={haulingInvoiceUrl(inv.id)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Original</a> : null}</td>
           </tr>
           {open === inv.id && <tr><td colSpan={8} className="bg-[#fafbfc]">
             <table className="tf-table" aria-label={`Lines of ${inv.invoice_number}`}><tbody>{inv.lines.map((l) => <tr key={l.line_no}>
               <td className="tabular-nums">{l.line_no}</td><td>{KIND[l.kind]}{l.description ? ` · ${l.description}` : ""}</td>
               <td>{l.truck_identifier ?? "—"}</td><td className="tabular-nums">{l.work_date ?? "—"}</td>
-              <td className="text-right tabular-nums">{l.hours ? `${l.hours} h × ${money(l.rate)}` : "—"}</td>
+              <td className="text-right tabular-nums">{l.hours ? `${l.hours} h × ${money(l.rate)}`
+                : l.quantity ? `${Number(l.quantity).toLocaleString()} ${l.kind === "tons" ? "t" : "loads"}${l.rate ? ` × ${money(l.rate)}` : ""}` : "—"}
+                {l.tickets && <span className="block text-[11px] text-[#5f6c7b]">Tickets {l.tickets}</span>}</td>
               <td className="text-right tabular-nums">{money(l.amount)}</td>
               <td>{l.result && <span className={`tf-status ${RESULT[l.result][1]}`}>{RESULT[l.result][0]}</span>}
                 {l.difference && Number(l.difference) !== 0 && <span className="ml-1 tabular-nums text-[11px]">{Number(l.difference) > 0 ? "+" : ""}{money(l.difference)}</span>}</td>
-              <td>{l.shift_id ? <button type="button" className="tf-link text-[12px]" onClick={() => onOpenShift(l.shift_id!)}>Shift</button> : null}</td>
+              <td>{l.shift_id ? <button type="button" className="tf-link text-[12px]" onClick={() => onOpenShift(l.shift_id!)}>Shift</button> : null}
+                {l.ticket_ids && l.ticket_ids.length > 0 && <Link prefetch={false} className="tf-link text-[12px]" href={`/records?q=${encodeURIComponent((l.tickets ?? "").split(/[\s,;]+/)[0] ?? "")}`}>
+                  {l.ticket_ids.length} deliver{l.ticket_ids.length === 1 ? "y" : "ies"}</Link>}
+                {canManage && l.result === "ambiguous" && l.candidates && l.candidates.length > 0 && <select aria-label={`Choose the shift for line ${l.line_no}`} className="tf-field ml-1 !min-h-0 !py-1 text-[12px]"
+                  defaultValue="" onChange={(e) => { if (e.target.value) void choose(inv, l.line_no!, Number(e.target.value)); }}>
+                  <option value="">Choose the shift…</option>
+                  {l.candidates.map((c) => <option key={c.id} value={c.id}>Truck {c.truck}{c.hours ? `, ${c.hours} h` : ""}{c.project ? ` (${c.project})` : ""}</option>)}
+                </select>}</td>
             </tr>)}</tbody></table>
             {canManage && <div className="flex flex-wrap items-center gap-3 p-2">
               <button type="button" className="tf-secondary-button" onClick={() => setEditing(inv)}>Correct this invoice</button>
