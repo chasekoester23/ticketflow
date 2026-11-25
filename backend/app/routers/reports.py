@@ -396,10 +396,15 @@ def _hauling(db: Session, organization_id: int, project_id: int | None, material
         allocations = allocations.where(ShiftAllocation.project_id == project_id)
         shifts = shifts.where(TruckShift.project_id == project_id)
     cost, hours = db.execute(allocations).one()
-    hauling = aggregates.as_decimal(cost, 2)
+    # Per-ton and per-load hauling locked on approved tickets, beside hourly shifts: each delivery paid once.
+    per_unit, haul_missing = db.execute(filtered_query(select(aggregates.counted_haul_cost(), aggregates.haul_unpriced()),
+                                                       organization_id=organization_id, project_id=project_id, supplier=None,
+                                                       material=None, status=None, date_from=None, date_to=None)).one()
+    hauling = aggregates.as_decimal(int(cost) + int(per_unit), 2)
     return {"approved_cost": str(hauling), "approved_hours": str(aggregates.as_decimal(hours, 2)),
             # Added here, exactly: approved material and approved hauling, each counted once.
             "approved_with_material": str(material + hauling),
+            "per_unit_cost": str(aggregates.as_decimal(per_unit, 2)), "rate_missing": int(haul_missing),
             "awaiting_approval": db.scalar(shifts.where(TruckShift.status == "needs_review")),
             "disputed": db.scalar(shifts.where(TruckShift.status == "disputed"))}
 

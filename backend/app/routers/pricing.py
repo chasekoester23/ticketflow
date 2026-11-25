@@ -41,6 +41,9 @@ class RateIn(BaseModel):
     effective_from: date | None = None
     # Blank: open-ended. Set: the last day the price is valid (a quote's expiry).
     effective_to: date | None = None
+    # Does the price include trucking? "included": no hauling charge is added for deliveries
+    # it prices. "separate" or blank (not stated): a hauler's per-ton or per-load rate applies.
+    freight: Literal["included", "separate"] | None = None
 
     @model_validator(mode="after")
     def _ends_after_it_starts(self):
@@ -65,6 +68,7 @@ class RateOut(BaseModel):
     project_id: int | None = None
     effective_from: date | None = None
     effective_to: date | None = None
+    freight: str | None = None
 
 
 def _dump(o, *fields):
@@ -420,6 +424,12 @@ def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depend
                    old=rate.unit_price, new=body.unit_price, scope=scope)
             rate.unit_price = body.unit_price
         _set_expiry(db, user, rate, body.effective_to, supplier.name, material.name, scope)
+        if "freight" in body.model_fields_set and rate.freight != body.freight:
+            # Changes which deliveries carry a hauling charge from now on; approved ones keep theirs.
+            db.add(PricingEvent(organization_id=organization_id, actor_user_id=user.id, action="freight_changed",
+                                supplier_name=supplier.name, material_name=material.name, scope=scope,
+                                old_value=rate.freight or "not stated", new_value=body.freight or "not stated"))
+            rate.freight = body.freight
     else:
         rate = SupplierRate(organization_id=organization_id, **body.model_dump())
         db.add(rate)

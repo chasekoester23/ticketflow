@@ -89,6 +89,11 @@ export type Ticket = {
   tonnage: string | null; // decimal string from the API; never parsed to float for money math
   supplier: string | null;
   job_location: string | null;
+  hauler_id?: number | null;
+  truck_number?: string | null;
+  haul_billing?: string | null;
+  haul_unit_rate?: string | null;
+  haul_cost?: string | null;
   flags: string[];
   status: "needs_review" | "verified" | "flagged" | "skipped" | "failed";
   /** Why the ticket number may really be the job, PO or truck number. Never blocks approval. */
@@ -129,7 +134,7 @@ export async function getTicketHistory(id: number): Promise<HistoryEntry[]> {
 export type Supplier = { id: number; name: string; contact: string | null };
 export type Material = { id: number; name: string; unit: string };
 // project_id null: company-wide. effective_from null: no start date (YYYY-MM-DD otherwise).
-export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string; project_id: number | null; effective_from: string | null; effective_to?: string | null };
+export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string; project_id: number | null; effective_from: string | null; effective_to?: string | null; freight?: "included" | "separate" | null };
 // effective_to: the last day the price is valid (a quote's expiry). Left out or null: open-ended.
 export type RateScope = { project_id: number | null; effective_from: string | null; effective_to?: string | null };
 export type TimelineSegment = { rate_id: number; price: string; from: string | null; to: string | null; declared_to: string | null; state: "past" | "current" | "future" };
@@ -292,7 +297,7 @@ export async function getTickets(batchId: number): Promise<Ticket[]> {
   return (await check(await apiFetch(`${API}/api/batches/${batchId}/tickets`))).json();
 }
 
-export async function patchTicket(id: number, body: Partial<Record<string, string | null>>, revision?: string): Promise<Ticket> {
+export async function patchTicket(id: number, body: Partial<Record<string, string | number | null>>, revision?: string): Promise<Ticket> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (revision) headers["If-Match"] = revision;
   return (
@@ -380,18 +385,19 @@ export async function listMaterials(): Promise<Material[]> {
 export async function listRates(): Promise<Rate[]> {
   return (await check(await apiFetch(`${API}/api/rates`))).json();
 }
-export async function createSupplier(name: string) {
-  await check(await apiFetch(`${API}/api/suppliers`, json("POST", { name })));
+export async function createSupplier(name: string, contact?: string) {
+  await check(await apiFetch(`${API}/api/suppliers`, json("POST", { name, ...(contact ? { contact } : {}) })));
 }
 export async function createMaterial(name: string) {
   await check(await apiFetch(`${API}/api/materials`, json("POST", { name })));
 }
-export async function saveRate(supplier_id: number, material_id: number, unit_price: string, scope: RateScope = { project_id: null, effective_from: null }) {
-  await check(await apiFetch(`${API}/api/rates`, json("PUT", { supplier_id, material_id, unit_price, ...scope })));
+export async function saveRate(supplier_id: number, material_id: number, unit_price: string, scope: RateScope = { project_id: null, effective_from: null },
+  freight?: "included" | "separate" | null) {
+  await check(await apiFetch(`${API}/api/rates`, json("PUT", { supplier_id, material_id, unit_price, ...scope, ...(freight !== undefined ? { freight } : {}) })));
 }
 export type PricingEventRow = {
   id: number;
-  action: "supplier_added" | "supplier_removed" | "material_added" | "material_removed" | "rate_set" | "rate_changed" | "rate_validity_changed" | "rate_removed";
+  action: "supplier_added" | "supplier_removed" | "material_added" | "material_removed" | "rate_set" | "rate_changed" | "rate_validity_changed" | "rate_removed" | "freight_changed";
   supplier: string | null; material: string | null;
   old: string | null; new: string | null; // decimal strings, never parsed for money math
   scope: string | null; // which rate: "Company-wide", or a project and start date
@@ -451,7 +457,7 @@ export async function getReviewQueue(projectId?: string, kind?: QueueKind): Prom
   return (await check(await apiFetch(`${API}/api/review-queue${query ? `?${query}` : ""}`))).json();
 }
 export type CostRow = { name: string; tickets: number; tons: string; cost: string; unpriced: number };
-export type HaulerCost = { name: string; shifts: number; hours: string; cost: string; loads: number; per_hour: string | null };
+export type HaulerCost = { name: string; shifts: number; hours: string; cost: string; loads: number; per_hour: string | null; deliveries?: number };
 export type ProjectCost = { id: number; code: string; name: string; status: string; tickets: number; tons: string; material: string; unpriced: number; hours: string; trucking: string; total: string };
 export type UnitPrice = { supplier: string; material: string; tons: string; cost: string; average: string; low: string | null; high: string | null };
 export type PeriodRow = { period: string; tickets: number; tons: string; material: string; unpriced: number; hours: string; trucking: string; loads: number; total: string };
@@ -934,7 +940,8 @@ export const EQUIPMENT_LABEL: Record<string, string> = {
 };
 export type HaulerRow = { id: number; name: string; contact: string | null; trucks: { id: number; identifier: string; equipment_type: string; active: boolean }[] };
 export type HaulingRate = {
-  id: number; hauler_id: number; project_id: number | null; equipment_type: string | null; hourly_rate: string;
+  id: number; hauler_id: number; project_id: number | null; equipment_type: string | null;
+  billing_method?: "hourly" | "per_ton" | "per_load"; hourly_rate: string | null; unit_rate?: string | null;
   minimum_hours: string | null; standby_rate: string | null; effective_from: string | null; effective_to: string | null;
   billing_increment: string | null; increment_rounding: "up" | "nearest" | null;
 };
@@ -972,8 +979,8 @@ const withRevision = (init: RequestInit, revision: string): RequestInit => {
 export async function listHaulers(): Promise<HaulerRow[]> {
   return (await check(await apiFetch(`${API}/api/haulers`))).json();
 }
-export async function createHauler(name: string): Promise<void> {
-  await check(await apiFetch(`${API}/api/haulers`, json("POST", { name })));
+export async function createHauler(name: string, contact?: string): Promise<void> {
+  await check(await apiFetch(`${API}/api/haulers`, json("POST", { name, ...(contact ? { contact } : {}) })));
 }
 export async function createTruck(hauler_id: number, identifier: string, equipment_type: string): Promise<void> {
   await check(await apiFetch(`${API}/api/trucks`, json("POST", { hauler_id, identifier, equipment_type })));

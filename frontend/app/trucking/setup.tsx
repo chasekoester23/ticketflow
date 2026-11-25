@@ -39,43 +39,55 @@ export function HaulingRates({ haulers, rates, projects, canPrice, onChanged }: 
   haulers: HaulerRow[]; rates: HaulingRate[]; projects: Project[]; canPrice: boolean; onChanged: () => Promise<void>;
 }) {
   const [error, setError] = useState<string | null>(null);
-  const [rate, setRate] = useState({ hauler_id: "", project_id: "", equipment_type: "", hourly_rate: "", minimum_hours: "", standby_rate: "", effective_from: "", effective_to: "", billing_increment: "", increment_rounding: "up" });
+  const [rate, setRate] = useState({ billing_method: "hourly" as "hourly" | "per_ton" | "per_load", hauler_id: "", project_id: "", equipment_type: "", hourly_rate: "",
+    unit_rate: "", minimum_hours: "", standby_rate: "", effective_from: "", effective_to: "", billing_increment: "", increment_rounding: "up" });
+  const hourly = rate.billing_method === "hourly";
   const act = (fn: () => Promise<void>) => fn().then(onChanged).then(() => setError(null)).catch((e) => setError((e as Error).message));
   const haulerName = (id: number) => haulers.find((h) => h.id === id)?.name ?? `#${id}`;
   const code = (id: number | null) => id === null ? "All projects" : projects.find((p) => p.id === id)?.code ?? `#${id}`;
-  return <section className="tf-panel" aria-label="Hourly trucking rates">
-    <div className="tf-panel-heading"><div><h2 className="tf-panel-title">Hourly trucking rates</h2>
-      <p className="tf-panel-description">A shift is priced by the most specific agreement that has started: project and truck type, then project, then truck type, then any. An expired agreement doesn&apos;t fall back to a broader one, and standby is paid only at an agreed standby rate.</p></div></div>
+  return <section className="tf-panel" aria-label="Trucking rates">
+    <div className="tf-panel-heading"><div><h2 className="tf-panel-title">Trucking rates</h2>
+      <p className="tf-panel-description"><b>By the hour</b>: prices truck shifts from time sheets, by the most specific agreement that has started (project and truck type, then project, then truck type, then any).
+        {" "}<b>Per ton</b> or <b>per load</b>: prices each approved delivery that names the hauler. A delivery is never paid twice: not when the material price includes freight, and not when it rode on an hourly shift.</p></div></div>
     <div className="space-y-4 p-4">
       {error && <p role="alert" className="tf-alert tf-alert-bad">{error}</p>}
       {canPrice && (haulers.length ? <form className="grid items-end gap-2 sm:grid-cols-4 xl:grid-cols-[1.2fr_1fr_1fr_100px_90px_100px_130px_130px_auto]" onSubmit={(e) => {
         e.preventDefault();
-        void act(() => createHaulingRate({ hauler_id: Number(rate.hauler_id), project_id: rate.project_id ? Number(rate.project_id) : null,
+        void act(() => createHaulingRate(hourly ? { billing_method: "hourly", hauler_id: Number(rate.hauler_id), project_id: rate.project_id ? Number(rate.project_id) : null,
           equipment_type: rate.equipment_type || null, hourly_rate: rate.hourly_rate, minimum_hours: rate.minimum_hours || null,
           standby_rate: rate.standby_rate || null, effective_from: rate.effective_from || null, effective_to: rate.effective_to || null,
-          billing_increment: rate.billing_increment || null, increment_rounding: rate.billing_increment ? rate.increment_rounding as "up" | "nearest" : null }));
+          billing_increment: rate.billing_increment || null, increment_rounding: rate.billing_increment ? rate.increment_rounding as "up" | "nearest" : null }
+          : { billing_method: rate.billing_method, hauler_id: Number(rate.hauler_id), project_id: rate.project_id ? Number(rate.project_id) : null,
+            equipment_type: null, hourly_rate: null, unit_rate: rate.unit_rate, minimum_hours: null, standby_rate: null,
+            effective_from: rate.effective_from || null, effective_to: rate.effective_to || null, billing_increment: null, increment_rounding: null }));
       }}>
+        <label className="tf-field-label">Billed<select className="tf-field w-full" value={rate.billing_method} onChange={(e) => setRate({ ...rate, billing_method: e.target.value as typeof rate.billing_method })}>
+          <option value="hourly">By the hour</option><option value="per_ton">Per ton</option><option value="per_load">Per load</option></select></label>
         <label className="tf-field-label">Hauler<select className="tf-field w-full" value={rate.hauler_id} onChange={(e) => setRate({ ...rate, hauler_id: e.target.value })}>
           <option value="">Select</option>{haulers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>
         <label className="tf-field-label">Project<select className="tf-field w-full" value={rate.project_id} onChange={(e) => setRate({ ...rate, project_id: e.target.value })}>
           <option value="">All projects</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}</select></label>
-        <label className="tf-field-label">Truck type<select className="tf-field w-full" value={rate.equipment_type} onChange={(e) => setRate({ ...rate, equipment_type: e.target.value })}>
-          <option value="">Any</option>{Object.entries(EQUIPMENT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
-        <label className="tf-field-label">$ / hour<input required inputMode="decimal" className="tf-field w-full" value={rate.hourly_rate} onChange={(e) => setRate({ ...rate, hourly_rate: e.target.value })} /></label>
-        <label className="tf-field-label">Min. hours<input inputMode="decimal" className="tf-field w-full" value={rate.minimum_hours} onChange={(e) => setRate({ ...rate, minimum_hours: e.target.value })} /></label>
-        <label className="tf-field-label">Standby $/h<input inputMode="decimal" className="tf-field w-full" value={rate.standby_rate} onChange={(e) => setRate({ ...rate, standby_rate: e.target.value })} /></label>
+        {hourly ? <>
+          <label className="tf-field-label">Truck type<select className="tf-field w-full" value={rate.equipment_type} onChange={(e) => setRate({ ...rate, equipment_type: e.target.value })}>
+            <option value="">Any</option>{Object.entries(EQUIPMENT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
+          <label className="tf-field-label">$ / hour<input required inputMode="decimal" className="tf-field w-full" value={rate.hourly_rate} onChange={(e) => setRate({ ...rate, hourly_rate: e.target.value })} /></label>
+          <label className="tf-field-label">Min. hours<input inputMode="decimal" className="tf-field w-full" value={rate.minimum_hours} onChange={(e) => setRate({ ...rate, minimum_hours: e.target.value })} /></label>
+          <label className="tf-field-label">Standby $/h<input inputMode="decimal" className="tf-field w-full" value={rate.standby_rate} onChange={(e) => setRate({ ...rate, standby_rate: e.target.value })} /></label>
+        </> : <label className="tf-field-label">{rate.billing_method === "per_ton" ? "$ / ton" : "$ / load"}<input required inputMode="decimal" className="tf-field w-full" value={rate.unit_rate} onChange={(e) => setRate({ ...rate, unit_rate: e.target.value })} /></label>}
         <label className="tf-field-label">From<input type="date" className="tf-field w-full" value={rate.effective_from} onChange={(e) => setRate({ ...rate, effective_from: e.target.value })} /></label>
         <label className="tf-field-label">Until<input type="date" className="tf-field w-full" value={rate.effective_to} onChange={(e) => setRate({ ...rate, effective_to: e.target.value })} /></label>
-        <label className="tf-field-label">Billed in<select className="tf-field w-full" value={rate.billing_increment} onChange={(e) => setRate({ ...rate, billing_increment: e.target.value })}>
-          <option value="">Hundredths</option><option value="0.25">Quarter hours</option><option value="0.5">Half hours</option><option value="1">Whole hours</option></select></label>
-        {rate.billing_increment && <label className="tf-field-label">Rounded<select className="tf-field w-full" value={rate.increment_rounding} onChange={(e) => setRate({ ...rate, increment_rounding: e.target.value })}>
+        {hourly && <label className="tf-field-label">Billed in<select className="tf-field w-full" value={rate.billing_increment} onChange={(e) => setRate({ ...rate, billing_increment: e.target.value })}>
+          <option value="">Hundredths</option><option value="0.25">Quarter hours</option><option value="0.5">Half hours</option><option value="1">Whole hours</option></select></label>}
+        {hourly && rate.billing_increment && <label className="tf-field-label">Rounded<select className="tf-field w-full" value={rate.increment_rounding} onChange={(e) => setRate({ ...rate, increment_rounding: e.target.value })}>
           <option value="up">Up</option><option value="nearest">To nearest</option></select></label>}
-        <button className="tf-primary-button" disabled={!rate.hauler_id || !rate.hourly_rate}>Save agreement</button>
+        <button className="tf-primary-button" disabled={!rate.hauler_id || !(hourly ? rate.hourly_rate : rate.unit_rate)}>Save rate</button>
       </form> : <p className="tf-notice">Add the trucking company in Suppliers &amp; Haulers first, then its hourly rate here.</p>)}
-      {rates.length > 0 ? <div className="tf-table-wrap"><table className="tf-table" aria-label="Hourly agreements">
-        <thead><tr><th>Hauler</th><th>Applies to</th><th>Truck type</th><th className="text-right">$/hour</th><th className="text-right">Minimum</th><th className="text-right">Standby</th><th>From</th><th>Until</th><th>Billed in</th><th /></tr></thead>
-        <tbody>{rates.map((r) => <tr key={r.id}><td className="font-semibold">{haulerName(r.hauler_id)}</td><td>{code(r.project_id)}</td>
-          <td>{r.equipment_type ? EQUIPMENT_LABEL[r.equipment_type] : "Any"}</td><td className="text-right tabular-nums">{money(r.hourly_rate)}</td>
+      {rates.length > 0 ? <div className="tf-table-wrap"><table className="tf-table" aria-label="Trucking rates">
+        <thead><tr><th>Hauler</th><th>Billed</th><th>Applies to</th><th>Truck type</th><th className="text-right">Rate</th><th className="text-right">Minimum</th><th className="text-right">Standby</th><th>From</th><th>Until</th><th>Increment</th><th /></tr></thead>
+        <tbody>{rates.map((r) => <tr key={r.id}><td className="font-semibold">{haulerName(r.hauler_id)}</td>
+          <td>{r.billing_method === "per_ton" ? "Per ton" : r.billing_method === "per_load" ? "Per load" : "By the hour"}</td><td>{code(r.project_id)}</td>
+          <td>{r.equipment_type ? EQUIPMENT_LABEL[r.equipment_type] : "Any"}</td>
+          <td className="text-right tabular-nums">{r.billing_method && r.billing_method !== "hourly" ? `${money(r.unit_rate ?? null)}/${r.billing_method === "per_ton" ? "t" : "load"}` : `${money(r.hourly_rate)}/h`}</td>
           <td className="text-right tabular-nums">{r.minimum_hours ? hours(r.minimum_hours) : "—"}</td>
           <td className="text-right tabular-nums">{r.standby_rate ? money(r.standby_rate) : <span className="text-[#5f6c7b]">Not payable</span>}</td>
           <td>{r.effective_from ? day(r.effective_from) : "Any date"}</td><td>{r.effective_to ? day(r.effective_to) : "Open-ended"}</td>
@@ -83,7 +95,7 @@ export function HaulingRates({ haulers, rates, projects, canPrice, onChanged }: 
           <td className="text-right">{canPrice && <button className="text-[11px] font-semibold text-[#8a5260] hover:underline" onClick={() => {
             if (window.confirm("Remove this agreement? Approved shifts keep the rate they were approved at.")) void act(() => deleteHaulingRate(r.id));
           }}>Remove</button>}</td></tr>)}</tbody>
-      </table></div> : <p className="tf-empty">No hourly agreements yet. Shifts can be entered, but not approved, until one applies.</p>}
+      </table></div> : <p className="tf-empty">No trucking rates yet. Shifts can be entered, but not approved, until an hourly rate applies.</p>}
     </div>
   </section>;
 }

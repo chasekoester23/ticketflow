@@ -41,13 +41,19 @@ const CARRY_LABEL = "Material, supplier and job";
 
 const OVERRIDE_KEY = "unit_price_override";
 const NOTE_KEY = "flag_note";
+const HAULER_KEY = "hauler_id";
+const TRUCK_KEY = "truck_number";
 const DRAFT_LABEL: Record<string, string> = {
   ...Object.fromEntries(FIELDS.map((f) => [f.key, f.label])),
-  [OVERRIDE_KEY]: "Override rate",
+  [OVERRIDE_KEY]: "Override rate", [HAULER_KEY]: "Hauled by", [TRUCK_KEY]: "Truck",
   [NOTE_KEY]: "Note",
 };
 
 export type PreviousValues = Partial<Record<FieldKey, string>>;
+const HAUL_TEXT: Record<string, string> = {
+  per_ton: "billed per ton", per_load: "billed per load", freight_included: "included in the material price",
+  hourly: "paid by its hourly truck shift", unpriced: "no hauling rate yet (cost missing, not zero)", ambiguous: "two hauling rates apply; remove one",
+};
 
 /** The saved values of a ticket as the form holds them, with blanks as empty text. */
 function savedValues(ticket: Ticket): Record<string, string> {
@@ -55,6 +61,8 @@ function savedValues(ticket: Ticket): Record<string, string> {
     ...Object.fromEntries(FIELDS.map((f) => [f.key, (ticket[f.key] as string | null) ?? ""])),
     [OVERRIDE_KEY]: ticket.unit_price_override ?? "",
     [NOTE_KEY]: ticket.flag_note ?? "",
+    [HAULER_KEY]: ticket.hauler_id != null ? String(ticket.hauler_id) : "",
+    [TRUCK_KEY]: ticket.truck_number ?? "",
   };
 }
 
@@ -105,8 +113,11 @@ export function previousValues(tickets: Ticket[], index: number): PreviousValues
 
 export const ReviewForm = memo(function ReviewForm({
   ticket, manual, catalog, previous, failure, onChange, onAdvance, onAccepted, onDirtyChange, onBusyChange, onError, onFailure, onStale,
+  haulers = [],
 }: {
   ticket: Ticket;
+  /** The company's haulers, for deliveries billed per ton or per load. None: the field isn't shown. */
+  haulers?: { id: number; name: string }[];
   manual: boolean;
   catalog: { suppliers: string[]; materials: string[] };
   previous: PreviousValues;
@@ -139,6 +150,8 @@ export const ReviewForm = memo(function ReviewForm({
   );
   const [override, setOverride] = useState(recovered.same?.typed[OVERRIDE_KEY] ?? saved[OVERRIDE_KEY]);
   const [note, setNote] = useState(recovered.same?.typed[NOTE_KEY] ?? failure?.note ?? saved[NOTE_KEY]);
+  const [hauler, setHauler] = useState(recovered.same?.typed[HAULER_KEY] ?? saved[HAULER_KEY]);
+  const [truck, setTruck] = useState(recovered.same?.typed[TRUCK_KEY] ?? saved[TRUCK_KEY]);
   const [saving, setSaving] = useState(false);
   const [leftBlank, setLeftBlank] = useState<Record<string, boolean>>({});
   const [triedAccept, setTriedAccept] = useState(false);
@@ -148,8 +161,9 @@ export const ReviewForm = memo(function ReviewForm({
   const acceptButton = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLElement>(null);
   const overrideDirty = override !== saved[OVERRIDE_KEY];
+  const haulDirty = hauler !== saved[HAULER_KEY] || truck !== saved[TRUCK_KEY];
 
-  const dirty = overrideDirty || FIELDS.some((f) => values[f.key] !== saved[f.key]);
+  const dirty = overrideDirty || haulDirty || FIELDS.some((f) => values[f.key] !== saved[f.key]);
   // Before paint, so the unsaved-work guard is never a keystroke behind.
   useLayoutEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
 
@@ -160,15 +174,19 @@ export const ReviewForm = memo(function ReviewForm({
     FIELDS.forEach((f) => { if (values[f.key] !== saved[f.key]) typed[f.key] = values[f.key]; });
     if (overrideDirty) typed[OVERRIDE_KEY] = override;
     if (note !== saved[NOTE_KEY]) typed[NOTE_KEY] = note;
+    if (hauler !== saved[HAULER_KEY]) typed[HAULER_KEY] = hauler;
+    if (truck !== saved[TRUCK_KEY]) typed[TRUCK_KEY] = truck;
     if (Object.keys(typed).length) saveDraft(ticket.id, revision, accountId, typed);
     else removeDraft(ticket.id, revision);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- saved values only change by remounting this form
-  }, [values, override, note]);
+  }, [values, override, note, hauler, truck]);
 
   function discardRestored() {
     setValues(Object.fromEntries(FIELDS.map((f) => [f.key, saved[f.key]])));
     setOverride(saved[OVERRIDE_KEY]);
     setNote(saved[NOTE_KEY]);
+    setHauler(saved[HAULER_KEY]);
+    setTruck(saved[TRUCK_KEY]);
     setRestoredAt(null);
   }
 
@@ -216,11 +234,13 @@ export const ReviewForm = memo(function ReviewForm({
 
   /** Send what's been typed, if anything. The form stays open until the whole action is done. */
   async function write(action: ActionName, advance: boolean): Promise<Ticket | null> {
-    const body: Record<string, string | null> = {};
+    const body: Record<string, string | number | null> = {};
     FIELDS.forEach((f) => {
       if (values[f.key] !== saved[f.key]) body[f.key] = values[f.key].trim() === "" ? null : values[f.key];
     });
     if (overrideDirty) body.unit_price_override = override.trim() === "" ? null : override;
+    if (hauler !== saved[HAULER_KEY]) body.hauler_id = hauler ? Number(hauler) : null;
+    if (truck !== saved[TRUCK_KEY]) body.truck_number = truck.trim() === "" ? null : truck.trim();
     if (!Object.keys(body).length) return ticket;
     try {
       const t = await patchTicket(ticket.id, body, ticket.revision);
@@ -480,6 +500,21 @@ export const ReviewForm = memo(function ReviewForm({
           </Fragment>;
         })}
         </div>
+        {haulers.length > 0 && <div className="tf-rv-fields" role="group" aria-label="Hauling">
+          <div className="tf-rv-field tf-rv-span4">
+            <label htmlFor="review-hauler">Hauled by <span className="tf-rv-muted">(if a hauler bills per ton or per load)</span></label>
+            <select id="review-hauler" className="tf-rv-input" value={hauler} disabled={!canEdit || saving} onChange={(e) => setHauler(e.target.value)}>
+              <option value="">Supplier delivered / not recorded</option>
+              {haulers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+            </select>
+          </div>
+          <div className="tf-rv-field tf-rv-span2">
+            <label htmlFor="review-truck">Truck</label>
+            <input id="review-truck" className="tf-rv-input" value={truck} readOnly={!canEdit || saving} maxLength={50} onChange={(e) => setTruck(e.target.value)} />
+          </div>
+          {ticket.status === "verified" && ticket.haul_billing && <p className="tf-rv-field tf-rv-note tf-rv-muted">
+            Hauling: {HAUL_TEXT[ticket.haul_billing] ?? ticket.haul_billing}{ticket.haul_cost ? ` · $${ticket.haul_cost} locked at approval` : ""}</p>}
+        </div>}
         {catalogLists}
         <div className="tf-rv-cost">
           {ticket.status === "verified" && ticket.price_snapshot_state === "priced" && (

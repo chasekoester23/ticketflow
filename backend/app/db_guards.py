@@ -19,6 +19,7 @@ HISTORY_TABLES = ("audit_events", "pricing_events", "account_events", "scan_even
                   "truck_shift_events", "hauling_invoice_events")
 APPEND_ONLY = "This history is append-only."
 LOCKED = "Approved tons and locked prices can only change by withdrawing the approval."
+HAUL_LOCKED = "The hauling charge of an approved ticket is locked. Withdraw the approval to change it."
 SHIFT_LOCKED = "An approved truck shift has locked hours, rates and cost. Reopen it to change them."
 SHIFT_FIGURES = ("approved_work_hours", "approved_standby_hours", "approved_billable_hours", "applied_hourly_rate",
                  "applied_standby_rate", "applied_minimum_hours", "approved_cost")
@@ -68,6 +69,12 @@ def sqlite_statements() -> list[str]:
         "AND (NEW.tonnage IS NOT OLD.tonnage OR NEW.applied_unit_price IS NOT OLD.applied_unit_price "
         "OR NEW.approved_cost IS NOT OLD.approved_cost) "
         f"BEGIN SELECT RAISE(ABORT, '{LOCKED}'); END")
+    statements.append(
+        "CREATE TRIGGER IF NOT EXISTS tickets_haul_charge_locked BEFORE UPDATE ON tickets "
+        "WHEN OLD.status = 'verified' AND NEW.status = 'verified' AND OLD.haul_billing IS NOT NULL "
+        "AND (NEW.haul_billing IS NOT OLD.haul_billing OR NEW.haul_unit_rate IS NOT OLD.haul_unit_rate "
+        "OR NEW.haul_cost IS NOT OLD.haul_cost OR NEW.hauler_id IS NOT OLD.hauler_id) "
+        f"BEGIN SELECT RAISE(ABORT, '{HAUL_LOCKED}'); END")
     return statements + shift_sqlite_statements()
 
 
@@ -91,6 +98,16 @@ def postgres_statements() -> list[str]:
     statements.append("DROP TRIGGER IF EXISTS tickets_approved_figures_locked ON tickets")
     statements.append("CREATE TRIGGER tickets_approved_figures_locked BEFORE UPDATE ON tickets "
                       "FOR EACH ROW EXECUTE FUNCTION ticketflow_approved_figures_locked()")
+    statements.append(
+        "CREATE OR REPLACE FUNCTION ticketflow_haul_charge_locked() RETURNS trigger AS $$ "
+        "BEGIN IF OLD.status = 'verified' AND NEW.status = 'verified' AND OLD.haul_billing IS NOT NULL "
+        "AND (NEW.haul_billing IS DISTINCT FROM OLD.haul_billing OR NEW.haul_unit_rate IS DISTINCT FROM OLD.haul_unit_rate "
+        "OR NEW.haul_cost IS DISTINCT FROM OLD.haul_cost OR NEW.hauler_id IS DISTINCT FROM OLD.hauler_id) THEN "
+        f"RAISE EXCEPTION '{HAUL_LOCKED}' USING ERRCODE = 'restrict_violation'; END IF; RETURN NEW; END "
+        "$$ LANGUAGE plpgsql")
+    statements.append("DROP TRIGGER IF EXISTS tickets_haul_charge_locked ON tickets")
+    statements.append("CREATE TRIGGER tickets_haul_charge_locked BEFORE UPDATE ON tickets "
+                      "FOR EACH ROW EXECUTE FUNCTION ticketflow_haul_charge_locked()")
     return statements + shift_postgres_statements()
 
 

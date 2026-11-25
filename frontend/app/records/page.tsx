@@ -27,6 +27,7 @@ const EXPORT_COLUMNS: [string, string][] = [
   ["supplier", "Supplier"], ["job_location", "Job location"], ["unit_price", "Unit price"], ["cost", "Cost"],
   ["status", "Status"], ["source", "Source file"], ["approved_by", "Approved by"], ["approved_at", "Approved at"],
   ["project", "Project"], ["batch", "Batch"], ["price_basis", "Price basis"],
+  ["hauler", "Hauler"], ["truck", "Truck"], ["haul_basis", "Hauling billed"], ["haul_cost", "Hauling cost"],
 ];
 const DEFAULT_EXPORT = EXPORT_COLUMNS.slice(0, 12).map(([key]) => key);
 

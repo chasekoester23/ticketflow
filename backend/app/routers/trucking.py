@@ -119,7 +119,10 @@ class HaulingRateIn(BaseModel):
     hauler_id: int = Field(gt=0)
     project_id: int | None = Field(default=None, gt=0)
     equipment_type: str | None = None
-    hourly_rate: Decimal = Field(gt=0, max_digits=12, decimal_places=4)
+    # hourly prices truck shifts; per_ton and per_load price the deliveries the hauler carried.
+    billing_method: str = "hourly"
+    hourly_rate: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=4)
+    unit_rate: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=4)
     minimum_hours: Decimal | None = Field(default=None, gt=0, le=24, max_digits=6, decimal_places=2)
     standby_rate: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=4)
     effective_from: date | None = None
@@ -131,6 +134,18 @@ class HaulingRateIn(BaseModel):
     def _sensible(self):
         if self.equipment_type is not None and self.equipment_type not in EQUIPMENT_TYPES:
             raise ValueError("Unknown truck type.")
+        if self.billing_method not in ("hourly", "per_ton", "per_load"):
+            raise ValueError("Billing method is hourly, per_ton or per_load.")
+        if self.billing_method == "hourly":
+            if self.hourly_rate is None or self.unit_rate is not None:
+                raise ValueError("An hourly rate needs its $ per hour, and no per-ton or per-load rate.")
+        else:
+            if self.unit_rate is None or self.hourly_rate is not None:
+                raise ValueError("A per-ton or per-load rate needs its $ per ton or per load, and no hourly rate.")
+            if self.minimum_hours is not None or self.standby_rate is not None or self.billing_increment is not None:
+                raise ValueError("Minimum hours, standby and billing increments apply to hourly trucking only.")
+            if self.equipment_type is not None:
+                raise ValueError("Per-ton and per-load rates apply to the hauler, whatever the truck.")
         if (self.billing_increment is None) != (self.increment_rounding is None):
             raise ValueError("A billing increment needs its rounding rule (up or nearest), and the other way round.")
         if self.increment_rounding is not None and self.increment_rounding not in ROUNDINGS:
@@ -146,6 +161,7 @@ def _money(value: Decimal | None, places: str = "0.01") -> str | None:
 
 def _rate_out(r: HaulingRate) -> dict:
     return {"id": r.id, "hauler_id": r.hauler_id, "project_id": r.project_id, "equipment_type": r.equipment_type,
+            "billing_method": r.billing_method, "unit_rate": _money(r.unit_rate, "0.0001"),
             "hourly_rate": _money(r.hourly_rate, "0.0001"), "minimum_hours": _money(r.minimum_hours),
             "standby_rate": _money(r.standby_rate, "0.0001"),
             "effective_from": r.effective_from.isoformat() if r.effective_from else None,
@@ -233,7 +249,8 @@ def _rates(db: Session, organization_id: int) -> list[HaulRate]:
                      equipment_type=r.equipment_type, minimum_hours=r.minimum_hours, standby_rate=r.standby_rate,
                      effective_from=r.effective_from, effective_to=r.effective_to, billing_increment=r.billing_increment,
                      increment_rounding=r.increment_rounding)
-            for r in db.scalars(select(HaulingRate).where(HaulingRate.organization_id == organization_id))]
+            for r in db.scalars(select(HaulingRate).where(HaulingRate.organization_id == organization_id,
+                                                          HaulingRate.billing_method == "hourly"))]  # per-ton rates never price a shift
 
 
 def _shift_or_404(db: Session, organization_id: int, shift_id: int) -> TruckShift:
@@ -539,6 +556,11 @@ def link_deliveries(shift_id: int, body: DeliveriesIn, db: Session = Depends(get
     if missing:
         raise HTTPException(404, "; ".join(f"#{i}: no such ticket" for i in missing))
     elsewhere = [t for t in found.values() if t.truck_shift_id not in (None, shift.id)]
+    # A delivery whose hauling is already charged per ton or per load can't also be paid by the hour.
+    charged = [t for t in found.values() if t.haul_billing in ("per_ton", "per_load")]
+    if charged:
+        raise HTTPException(409, f"Ticket {charged[0].ticket_number or charged[0].id}'s hauling is already charged "
+                                 f"{charged[0].haul_billing.replace('_', ' ')}; it can't also be paid by this shift.")
     if elsewhere:
         raise HTTPException(409, "Already linked to another shift: " + ", ".join(t.ticket_number or f"#{t.id}" for t in elsewhere))
     current = {t.id: t for t in db.scalars(select(Ticket).where(Ticket.truck_shift_id == shift.id))}

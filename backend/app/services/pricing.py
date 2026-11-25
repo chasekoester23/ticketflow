@@ -30,6 +30,7 @@ class RateRow:
     project_id: int | None
     effective_from: date | None
     effective_to: date | None = None  # last day it's valid; None is open-ended
+    freight: str | None = None  # "included" | "separate" | None (not stated)
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class RateMatch:
     price: Decimal | None
     source: str | None  # "project_rate" | "rate" | None
     reason: str | None = None  # why there is no price, when the rates themselves are the reason
+    freight: str | None = None  # of the rate that priced it
 
 
 class RateBook:
@@ -91,7 +93,7 @@ class RateBook:
                 return RateMatch(None, None, f"{which} for this supplier and material ended on {newest.effective_to.isoformat()}"
                                  + (f", and the next one starts {later[0].isoformat()}" if later else "")
                                  + ". Set the price for this date on Pricing, or extend the rate.")
-            return RateMatch(newest.price, "project_rate" if scope is not None else "rate")
+            return RateMatch(newest.price, "project_rate" if scope is not None else "rate", freight=newest.freight)
         return RateMatch(None, None)
 
     def for_ticket(self, t: Ticket) -> RateMatch:
@@ -101,7 +103,7 @@ class RateBook:
 def rate_table(db: Session, organization_id: int) -> RateBook:
     rows = db.execute(
         select(Supplier.name, Material.name, SupplierRate.unit_price, SupplierRate.project_id, SupplierRate.effective_from,
-               SupplierRate.effective_to)
+               SupplierRate.effective_to, SupplierRate.freight)
         .join(SupplierRate, SupplierRate.supplier_id == Supplier.id)
         .join(Material, Material.id == SupplierRate.material_id)
         .where(SupplierRate.organization_id == organization_id,
@@ -109,8 +111,8 @@ def rate_table(db: Session, organization_id: int) -> RateBook:
                Material.organization_id == organization_id)
     ).all()
     book: dict[tuple[str, str], list[RateRow]] = {}
-    for s, m, p, project_id, effective_from, effective_to in rows:
-        book.setdefault((norm(s), norm(m)), []).append(RateRow(p, project_id, effective_from, effective_to))
+    for s, m, p, project_id, effective_from, effective_to, freight in rows:
+        book.setdefault((norm(s), norm(m)), []).append(RateRow(p, project_id, effective_from, effective_to, freight))
     # A ticket's project comes from its batch. Read only when some rate is per project.
     projects_by_batch: dict[int, int | None] = {}
     if any(r.project_id is not None for found in book.values() for r in found):

@@ -11,6 +11,7 @@ import {
   Manifest,
   getStatus,
   listMaterials,
+  listHaulers,
   listProjects,
   listSuppliers,
   Project,
@@ -131,6 +132,8 @@ export default function Home() {
   const canMove = can("projects.manage");
   const openedAt = useRef<Record<number, number>>({});
   const [catalog, setCatalog] = useState<{ suppliers: string[]; materials: string[] }>({ suppliers: [], materials: [] });
+  const [haulers, setHaulers] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => { listHaulers().then((h) => setHaulers(h.map(({ id, name }) => ({ id, name })))).catch(() => setHaulers([])); }, []);
 
   useEffect(() => {
     listProjects().then(setProjects).catch((e) => setError(e.message));
@@ -670,6 +673,7 @@ export default function Home() {
           <ReviewForm
             key={current.id + "-" + (current.revision ?? `${current.status}-${current.tonnage}-${current.ticket_number}-${current.unit_price}-${current.cost}`)}
             ticket={current}
+            haulers={haulers}
             manual={batch?.intake_mode === "manual"}
             catalog={catalog}
             previous={previous}

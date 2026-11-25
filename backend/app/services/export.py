@@ -12,7 +12,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Batch, Project, Ticket, UploadedFile
+from ..models import Hauler, Batch, Project, Ticket, UploadedFile
 from .pricing import to_cents
 
 LEGACY_APPROVER = "Not recorded (approved before individual accounts)"
@@ -65,6 +65,8 @@ def _money(value: Decimal | None) -> float | None:
 
 
 PRICE_BASIS = {"project_rate": "Project agreement", "rate": "Company rate", "override": "Manual override"}
+HAUL_BASIS = {"per_ton": "Per ton", "per_load": "Per load", "freight_included": "Freight in material price",
+              "hourly": "Hourly shift", "unpriced": "Rate missing", "ambiguous": "Two rates apply"}
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,11 @@ COLUMNS: dict[str, Column] = {
     # Which rate an approved ticket's price was locked from: what an accountant checks first.
     "price_basis": Column("Price Basis", 18, lambda t, *_: PRICE_BASIS.get(t.applied_price_source)
                           if t.status == "verified" and t.price_snapshot_state == "priced" else None),
+    # Who hauled it, and the hauling charge locked at approval when it's billed per ton or per load.
+    "hauler": Column("Hauler", 24, lambda t, *_: _safe_excel_text(t.hauler_name)),
+    "truck": Column("Truck", 10, lambda t, *_: _safe_excel_text(t.truck_number)),
+    "haul_basis": Column("Hauling Billed", 22, lambda t, *_: HAUL_BASIS.get(t.haul_billing) if t.status == "verified" else None),
+    "haul_cost": Column("Hauling Cost", 14, lambda t, *_: _money(t.haul_cost) if t.status == "verified" else None, '"$"#,##0.00'),
 }
 DEFAULT_COLUMNS = ("ticket_number", "delivery_date", "material", "tons", "supplier", "job_location", "unit_price",
                    "cost", "status", "source", "approved_by", "approved_at")
@@ -103,6 +110,7 @@ _ROW_COLUMNS = (
     Ticket.id, Ticket.batch_id, Ticket.source_page, Ticket.position, Ticket.ticket_number, Ticket.delivery_date, Ticket.material_type,
     Ticket.tonnage, Ticket.supplier, Ticket.job_location, Ticket.status, Ticket.tonnage_confirmed, Ticket.unit_price_override,
     Ticket.price_snapshot_state, Ticket.applied_unit_price, Ticket.applied_price_source, Ticket.verified_by_user_id, Ticket.verified_at,
+    Ticket.truck_number, Ticket.haul_billing, Ticket.haul_cost,
 )
 
 
@@ -112,7 +120,8 @@ def row_query():
     objects are never built for a large export."""
     file_name = select(UploadedFile.original_name).where(UploadedFile.id == Ticket.file_id).scalar_subquery()
     project_code = select(Project.code).join(Batch, Batch.project_id == Project.id).where(Batch.id == Ticket.batch_id).scalar_subquery()
-    return select(*_ROW_COLUMNS, file_name.label("file_name"), project_code.label("project_code"))
+    hauler_name = select(Hauler.name).where(Hauler.id == Ticket.hauler_id).scalar_subquery()
+    return select(*_ROW_COLUMNS, file_name.label("file_name"), project_code.label("project_code"), hauler_name.label("hauler_name"))
 
 
 def rows(db: Session, query, order=(Ticket.delivery_date, Ticket.id)) -> Iterator:

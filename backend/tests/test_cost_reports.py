@@ -33,11 +33,12 @@ def test_report_adds_approved_material_and_trucking_by_week_and_counts_missing_p
     report = client.get("/api/reports/summary", params={"project_id": yard["project"]}).json()
     m = report["material"]
     assert (m["tickets"], m["tons"], m["cost"], m["unpriced"], m["waiting"]) == (3, "45.500", "549.00", 1, 1)
-    assert report["costs"] == {"material": "549.00", "trucking": "990.00", "total": "1539.00", "complete": False, "unpriced": 1}
+    assert report["costs"] == {"material": "549.00", "trucking": "990.00", "total": "1539.00", "complete": False, "unpriced": 1,
+                               "hauling_rate_missing": 0}
     weeks = {p["period"]: p for p in report["by_period"]}
     assert weeks["2026-11-02"]["tons"] == "30.500" and weeks["2026-11-02"]["material"] == "549.00" and weeks["2026-11-02"]["trucking"] == "990.00"
     assert weeks["2026-11-09"]["unpriced"] == 1 and weeks["2026-11-09"]["material"] == "0.00"
-    assert report["trucking"]["by_hauler"] == [{"name": "Fictional Hauling LLC", "shifts": 1, "hours": "9.00", "cost": "990.00", "loads": 0,
+    assert report["trucking"]["by_hauler"] == [{"name": "Fictional Hauling LLC", "shifts": 1, "hours": "9.00", "cost": "990.00", "loads": 0, "deliveries": 0,
                                                  "per_hour": "110.00"}]
     [job] = report["by_project"]
     assert (job["code"], job["tons"], job["material"], job["unpriced"], job["trucking"], job["total"]) == ("P1", "45.500", "549.00", 1, "990.00", "1539.00")

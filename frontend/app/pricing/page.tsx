@@ -18,6 +18,7 @@ const ACTION_LABEL: Record<PricingEventRow["action"], string> = {
   rate_set: "Rate set",
   rate_changed: "Rate changed",
   rate_validity_changed: "Validity changed",
+  freight_changed: "Freight changed",
   rate_removed: "Rate removed",
 };
 // Display only: keep the server's decimal string, trimmed to cents where exact.
@@ -66,7 +67,7 @@ export default function PricingPage() {
   const [error, setError] = useState<string | null>(null);
   const [newSupplier, setNewSupplier] = useState("");
   const [newMaterial, setNewMaterial] = useState("");
-  const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "", project: "", from: "", until: "" });
+  const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "", project: "", from: "", until: "", freight: "" });
   const [timeline, setTimeline] = useState<RateTimeline | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [sheetScope, setSheetScope] = useState({ project: "", from: "", until: "" });
@@ -191,7 +192,9 @@ export default function PricingPage() {
       </div>
       {canManage && <form className="grid items-end gap-3 border-b border-[#e9edf0] p-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_140px_140px_120px_auto]"
         onSubmit={(e) => { e.preventDefault(); void act(async () => {
-          await saveRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price, scopeOf(rateForm.project, rateForm.from, rateForm.until));
+          await saveRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price, scopeOf(rateForm.project, rateForm.from, rateForm.until),
+            // Only when chosen: re-saving a price never clears a freight setting by accident.
+            rateForm.freight ? rateForm.freight as "included" | "separate" : undefined);
           setRateForm((v) => ({ ...v, price: "" }));
           setRatePreview(null);
         }); }}>
@@ -212,6 +215,11 @@ export default function PricingPage() {
         <label className="tf-field-label">Unit price ($/ton)
           <input required className="tf-field w-full" inputMode="decimal" placeholder="30.00"
             value={rateForm.price} onChange={(e) => { setRateForm({ ...rateForm, price: e.target.value }); setRatePreview(null); }} />
+        </label>
+        <label className="tf-field-label">Freight
+          <select className="tf-field w-full" value={rateForm.freight} onChange={(e) => setRateForm({ ...rateForm, freight: e.target.value })}>
+            <option value="">Leave as is / not stated</option><option value="included">Included (delivered price)</option><option value="separate">Billed separately</option>
+          </select>
         </label>
         <div className="flex gap-2">
           <button type="button" className="tf-secondary-button" disabled={saving || !rateForm.supplier || !rateForm.material || !rateForm.price}
@@ -245,7 +253,7 @@ export default function PricingPage() {
             : <span className="tf-status tf-status-open">{projectLabel(r.project_id)}</span>}</td>
           <td className="whitespace-nowrap tabular-nums">{r.effective_from ? longDate(r.effective_from) : <span className="text-[#5d6b7b]">Any date</span>}</td>
           <td className="whitespace-nowrap tabular-nums">{r.effective_to ? longDate(r.effective_to) : <span className="text-[#5d6b7b]">Open-ended</span>}</td>
-          <td className="text-right font-bold tabular-nums">{`$${Number(r.unit_price).toFixed(2)}`}</td>
+          <td className="text-right font-bold tabular-nums">{`$${Number(r.unit_price).toFixed(2)}`}{r.freight === "included" && <span className="block text-[10.5px] font-semibold text-[#216c43]">freight included</span>}</td>
           <td className="text-right">{canManage && <button disabled={saving} onClick={() => void remove("rates", r.id, "this rate")}
             className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}</td>
         </tr>)}</tbody>
@@ -404,6 +412,6 @@ function TruckingRates({ canPrice }: { canPrice: boolean }) {
   return <>
     {error && <div role="alert" className="tf-alert tf-alert-bad">{error}</div>}
     <HaulingRates haulers={haulers} rates={rates} projects={projects} canPrice={canPrice} onChanged={load} />
-    <p className="text-[11px] leading-5 text-[#5f6c7b]">Hourly rates only, for now. Per-load and per-ton hauling, and freight included in a material price, aren&apos;t modelled yet: enter those charges on the hauling invoice.</p>
+    <p className="text-[11px] leading-5 text-[#5f6c7b]">A material rate marked &ldquo;freight included&rdquo; (Material pricing tab) is never charged hauling again. See how each billing method is counted in the trucking rates description above.</p>
   </>;
 }

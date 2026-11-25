@@ -55,7 +55,8 @@ def project_directory(db: Session = Depends(get_db), organization_id: int = Depe
 
     Material cost counts approved tickets with a locked price only; ``unpriced`` says how
     many approved tickets have none, so a missing rate never reads as a zero cost.
-    Trucking cost is approved hourly trucking, through each shift's allocations.
+    Trucking cost is approved hourly trucking through each shift's allocations, plus per-ton and
+    per-load hauling locked on approved tickets.
     A fixed number of grouped queries, whatever the number of projects.
     """
     jobs = list(db.scalars(select(Project).where(Project.organization_id == organization_id)))
@@ -64,6 +65,7 @@ def project_directory(db: Session = Depends(get_db), organization_id: int = Depe
                func.sum(case((Ticket.status.in_(OPEN_STATUSES), 1), else_=0)).label("open"),
                aggregates.counted_tickets().label("verified"), aggregates.counted_tons().label("tons"),
                aggregates.counted_cost().label("cost"), aggregates.unpriced().label("unpriced"),
+               aggregates.counted_haul_cost().label("haul"), aggregates.haul_unpriced().label("haul_missing"),
                func.max(Ticket.created_at).label("last_ticket"))
         .select_from(Ticket).join(Batch, Batch.id == Ticket.batch_id)
         .where(Ticket.organization_id == organization_id, Batch.organization_id == organization_id)
@@ -88,7 +90,8 @@ def project_directory(db: Session = Depends(get_db), organization_id: int = Depe
     for job in jobs:
         t, tr, sh = tickets.get(job.id), trucking.get(job.id), shifts.get(job.id)
         material = aggregates.as_decimal(t.cost if t else 0, 2)
-        hauling = aggregates.as_decimal(tr.cost if tr else 0, 2)
+        # Hourly shifts plus per-ton and per-load hauling locked on approved tickets: each paid once.
+        hauling = aggregates.as_decimal(int(tr.cost if tr else 0) + int(t.haul if t else 0), 2)
         rows.append({
             "id": job.id, "code": job.code, "name": job.name, "job_location": job.job_location,
             "description": job.description, "status": job.status, "created_at": as_utc(job.created_at),
@@ -100,6 +103,7 @@ def project_directory(db: Session = Depends(get_db), organization_id: int = Depe
             "material_cost": str(material),
             "unpriced_tickets": int(t.unpriced or 0) if t else 0,
             "trucking_cost": str(hauling),
+            "hauling_rate_missing": int(t.haul_missing or 0) if t else 0,
             "verified_cost": str(material + hauling),
             "last_activity": latest(uploads.get(job.id), t.last_ticket if t else None, sh.last if sh else None),
         })

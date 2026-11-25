@@ -44,7 +44,8 @@ def _tickets(organization_id: int, project_id: int | None, date_from: date | Non
 
 def _counted():
     return (aggregates.counted_tickets().label("tickets"), aggregates.counted_tons().label("tons"),
-            aggregates.counted_cost().label("cost"), aggregates.unpriced().label("unpriced"))
+            aggregates.counted_cost().label("cost"), aggregates.unpriced().label("unpriced"),
+            aggregates.counted_haul_cost().label("haul"), aggregates.haul_unpriced().label("haul_missing"))
 
 
 def _material_row(name, r) -> dict:
@@ -81,6 +82,7 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
         p["tons"] += int(r.tons)          # thousandths
         p["material"] += int(r.cost)      # cents
         p["unpriced"] += int(r.unpriced)
+        p["trucking"] += int(r.haul)      # per-ton and per-load hauling on the day it was delivered
 
     # Approved trucking, through allocations so a shift split across jobs counts once, in its parts.
     shifts = (select(TruckShift.work_date.label("day"), Hauler.name.label("hauler"),
@@ -100,10 +102,13 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
         shifts, loads = shifts.where(TruckShift.work_date >= date_from), loads.where(TruckShift.work_date >= date_from)
     if date_to:
         shifts, loads = shifts.where(TruckShift.work_date <= date_to), loads.where(TruckShift.work_date <= date_to)
-    haulers: dict[str, dict] = defaultdict(lambda: {"shifts": 0, "hours": 0, "cost": 0, "loads": 0})
+    haulers: dict[str, dict] = defaultdict(lambda: {"shifts": 0, "hours": 0, "cost": 0, "hourly": 0, "loads": 0, "deliveries": 0})
+    methods = {"hourly": 0, "per_ton": 0, "per_load": 0}
     for r in db.execute(shifts.group_by(TruckShift.work_date, Hauler.name)).all():
         haulers[r.hauler]["hours"] += int(r.hours)
         haulers[r.hauler]["cost"] += int(r.cost)
+        haulers[r.hauler]["hourly"] += int(r.cost)
+        methods["hourly"] += int(r.cost)
         p = periods[bucket(r.day, period)]
         p["hours"] += int(r.hours)
         p["trucking"] += int(r.cost)
@@ -111,6 +116,18 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
         haulers[r.hauler]["shifts"] += int(r.shifts)
         haulers[r.hauler]["loads"] += int(r.loads)
         periods[bucket(r.day, period)]["loads"] += int(r.loads)
+    # Hauling billed per ton or per load: each approved delivery is one load of its hauler.
+    unit = (_tickets(organization_id, project_id, date_from, date_to, Hauler.name.label("hauler"), Ticket.haul_billing.label("method"),
+                     aggregates.counted_tickets().label("deliveries"), aggregates.counted_haul_cost().label("cost"))
+            .join(Hauler, Hauler.id == Ticket.hauler_id).where(Ticket.haul_billing.in_(("per_ton", "per_load")))
+            .group_by(Hauler.name, Ticket.haul_billing))
+    for r in db.execute(unit).all():
+        if not r.deliveries:
+            continue
+        haulers[r.hauler]["cost"] += int(r.cost)
+        haulers[r.hauler]["deliveries"] += int(r.deliveries)
+        haulers[r.hauler]["loads"] += int(r.deliveries)
+        methods[r.method] += int(r.cost)
 
     # Per project: tickets through their batch, trucking through each shift's allocations.
     projects = {p.id: p for p in db.scalars(select(Project).where(Project.organization_id == organization_id))}
@@ -121,6 +138,7 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
             continue
         row = per_project[r.pid]
         row["tickets"], row["tons"], row["material"], row["unpriced"] = int(r.tickets), int(r.tons), int(r.cost), int(r.unpriced)
+        row["trucking"] += int(r.haul)
     by_alloc = (select(ShiftAllocation.project_id.label("pid"), aggregates.exact_sum(ShiftAllocation.hours, 2).label("hours"),
                        aggregates.exact_sum(ShiftAllocation.cost, 2).label("cost"))
                 .join(TruckShift, TruckShift.id == ShiftAllocation.shift_id)
@@ -159,6 +177,7 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
     cents = lambda units: str(aggregates.as_decimal(units, 2))  # noqa: E731
     material = aggregates.as_decimal(totals.cost, 2)
     trucking = aggregates.as_decimal(sum(h["cost"] for h in haulers.values()), 2)
+    haul_missing = int(totals.haul_missing)
     return {
         "period": period, "date_from": date_from.isoformat() if date_from else None, "date_to": date_to.isoformat() if date_to else None,
         "material": {
@@ -170,10 +189,13 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
         "trucking": {
             "shifts": sum(h["shifts"] for h in haulers.values()), "hours": cents(sum(h["hours"] for h in haulers.values())),
             "cost": str(trucking), "loads": sum(h["loads"] for h in haulers.values()),
+            # Cost per hour from hourly work only: per-ton and per-load charges have no hours.
             "by_hauler": sorted(({"name": name, "shifts": h["shifts"], "hours": cents(h["hours"]), "cost": cents(h["cost"]), "loads": h["loads"],
-                                  "per_hour": str((Decimal(h["cost"]) / Decimal(h["hours"])).quantize(Decimal("0.01"))) if h["hours"] else None}
+                                  "deliveries": h["deliveries"],
+                                  "per_hour": str((Decimal(h["hourly"]) / Decimal(h["hours"])).quantize(Decimal("0.01"))) if h["hours"] else None}
                                  for name, h in haulers.items()), key=lambda r: (-Decimal(r["cost"]), r["name"])),
-            "billing_methods": [{"method": "hourly", "cost": str(trucking)}],
+            "billing_methods": [{"method": m, "cost": cents(v)} for m, v in methods.items() if v or m == "hourly"],
+            "rate_missing": haul_missing,
         },
         "unit_prices": unit_prices,
         "by_project": sorted(({"id": pid, "code": projects[pid].code, "name": projects[pid].name, "status": projects[pid].status,
@@ -182,7 +204,8 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
                                "total": cents(p["material"] + p["trucking"])}
                               for pid, p in per_project.items() if pid in projects), key=lambda p: (-Decimal(p["total"]), p["code"])),
         "costs": {"material": str(material), "trucking": str(trucking), "total": str(material + trucking),
-                  "complete": int(totals.unpriced) == 0, "unpriced": int(totals.unpriced)},
+                  "complete": int(totals.unpriced) == 0 and haul_missing == 0, "unpriced": int(totals.unpriced),
+                  "hauling_rate_missing": haul_missing},
         "by_period": [{"period": key, "tickets": p["tickets"], "tons": str(aggregates.as_decimal(p["tons"], 3)),
                        "material": cents(p["material"]), "unpriced": p["unpriced"], "hours": cents(p["hours"]),
                        "trucking": cents(p["trucking"]), "loads": p["loads"], "total": cents(p["material"] + p["trucking"])}

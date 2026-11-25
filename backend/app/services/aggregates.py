@@ -44,3 +44,14 @@ def unpriced():
 
 def counted_tickets():
     return func.coalesce(func.sum(case((COUNTED, 1), else_=0)), 0)
+
+
+# Hauling billed per ton or per load, locked on approved tickets (services/haul_billing.py).
+# Hourly hauling is counted from approved shifts instead, so a delivery is never paid twice.
+def counted_haul_cost():
+    return exact_sum(case((COUNTED, func.coalesce(Ticket.haul_cost, 0)), else_=0), 2)
+
+
+def haul_unpriced():
+    """Approved deliveries with a hauler but no applicable hauling rate: missing, never $0."""
+    return func.coalesce(func.sum(case((and_(COUNTED, Ticket.haul_billing.in_(("unpriced", "ambiguous"))), 1), else_=0)), 0)

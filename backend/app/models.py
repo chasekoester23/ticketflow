@@ -155,6 +155,9 @@ class SupplierRate(Base):
     effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     # Last day the price is valid (a quote's expiry). Blank: open-ended.
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Does the unit price include trucking? 'included' | 'separate' | None (not stated).
+    # Included: no hauling charge is added for deliveries priced by this rate.
+    freight: Mapped[str | None] = mapped_column(String(10), nullable=True)
     supplier: Mapped[Supplier] = relationship()
     material: Mapped[Material] = relationship()
 
@@ -386,6 +389,15 @@ class Ticket(Base):
     # The truck shift that carried this delivery, if a person linked it. The hourly cost
     # belongs to the shift alone: linking never charges a delivery for trucking.
     truck_shift_id: Mapped[int | None] = mapped_column(ForeignKey("truck_shifts.id"), nullable=True, index=True)
+    # Who hauled it, when a hauler bills per ton or per load (see docs/engineering/trucking-billing.md).
+    hauler_id: Mapped[int | None] = mapped_column(ForeignKey("haulers.id"), nullable=True, index=True)
+    truck_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # The hauling charge, locked at approval like the material price: per_ton | per_load |
+    # freight_included | hourly (paid by its shift) | unpriced | ambiguous. NULL: no hauler recorded.
+    haul_billing: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    haul_rate_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # kept even if the rate is removed
+    haul_unit_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    haul_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
 
     file: Mapped[UploadedFile] = relationship(back_populates="tickets")
 
@@ -719,7 +731,10 @@ class HaulingRate(Base):
     hauler_id: Mapped[int] = mapped_column(ForeignKey("haulers.id"), nullable=False, index=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
     equipment_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    hourly_rate: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    # hourly prices truck shifts; per_ton and per_load price the deliveries a hauler carried.
+    billing_method: Mapped[str] = mapped_column(String(10), nullable=False, default="hourly", server_default="hourly")
+    hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    unit_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)  # $ per ton or per load
     # Paid hours below this are topped up at the hourly rate. Blank: no minimum.
     minimum_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
     # Blank: standby isn't payable under this agreement, so standby leaves a shift unpriced.
