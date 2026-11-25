@@ -138,3 +138,29 @@ To turn it off: set `POSTGRES_RLS=off`, restart, then `python scripts/postgres_r
 - A fresh database starts from `migrations/frozen_schema.py`, the schema at `20261105_17`, and applies every later migration. It no longer depends on the current models.
 - `test_schema.py` builds a database through the migrations and compares it with the code, on both databases.
 - On PostgreSQL the API refuses to start unless the database is at the expected version, and never creates tables itself. SQLite local installs can still create tables at first start.
+
+## The PostgreSQL CI job that never finished (fixed 2026-11-24)
+
+From 2026-11-10 to 2026-11-24 the `PostgreSQL tests` job hit its time limit on every run,
+so most of the suite, including row-level security and the money guards, never ran there.
+
+**Cause.** The test fixture (`tests/conftest.py`) adds a test-only trigger to every table with
+an `id` column, to keep id sequences in step with fixed ids that tests insert. The worker
+leases work (8a5364a) added `worker_heartbeats`, whose `id` is text with no sequence. On that
+table the trigger built `SELECT last_value FROM ` with no table name, so every heartbeat
+failed. The real worker in the crash-simulation tests (`tests/test_t_failures.py`) died at
+start, and each test waited 90-120 s for it before failing, until the job's limit stopped
+the run. SQLite never installs the trigger, which is why only PostgreSQL showed it.
+
+**Fix.** The trigger is attached only where `pg_get_serial_sequence` finds a sequence, and
+does nothing for a table without one. With the suite now running to the end, four worker
+tests that exercise the single-machine worker (lock file, heartbeat file, recovery at
+restart) were found to run in database-coordination mode on PostgreSQL; they now pin
+`worker_coordination="local"`, which is valid on either database (database mode has its own
+tests in `test_cloud_workers.py`). One row-security test re-uploaded a scan its company had
+already approved, which the duplicate guard rightly refused; it now uses different paper.
+
+**Guard against a repeat.** The job first runs the critical checks on their own, with their
+own limit: schema from migrations, database guards, row-level security, the cross-company
+sweeps, locked prices, approval integrity and the PostgreSQL copy. They report even if an
+unrelated test later hangs.

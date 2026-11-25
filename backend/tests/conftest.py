@@ -63,6 +63,8 @@ DECLARE
   name text := pg_get_serial_sequence(TG_TABLE_NAME, 'id');
   seen bigint;
 BEGIN
+  -- A table whose id isn't a sequence (worker_heartbeats' is a text id) has nothing to keep in step.
+  IF name IS NULL THEN RETURN NEW; END IF;
   EXECUTE format('SELECT last_value FROM %s', name) INTO seen;
   IF NEW.id >= seen THEN PERFORM setval(name, NEW.id); END IF;
   RETURN NEW;
@@ -85,7 +87,10 @@ def postgres_engine():
     with engine.begin() as connection:
         connection.execute(text(_ADVANCE_SEQUENCE))
         for table in db_module.Base.metadata.sorted_tables:
-            if "id" in table.columns:
+            # Only tables whose id comes from a sequence. Attached to worker_heartbeats (a text
+            # id), it made every heartbeat fail, so the real worker in the crash tests died at
+            # start and they timed out waiting for it.
+            if "id" in table.columns and connection.scalar(text("SELECT pg_get_serial_sequence(:t, 'id')"), {"t": table.name}):
                 connection.execute(text(
                     f"CREATE TRIGGER test_advance AFTER INSERT ON {table.name} "
                     "FOR EACH ROW EXECUTE FUNCTION test_advance_sequence()"))
