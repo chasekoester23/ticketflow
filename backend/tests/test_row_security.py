@@ -134,9 +134,12 @@ def test_work_and_the_worker_still_work_with_row_security_on(rls, client):
     """Upload, read by the worker as the company, edit and approve."""
     _as(client, 2)
     ids = rls["world"][2]
-    from .test_t_tenant_sweep import SCAN
+    from .sample_data import TICKETS, make_page, make_pdf
+    # Its own paper: the shared world already approved a ticket from the sweep's scan, and
+    # approving an identical image again is (rightly) refused as a duplicate.
+    scan = make_pdf([make_page([{**t, "ticket_number": f"RLS-{n}"} for n, t in enumerate(TICKETS)])])
     batch = client.post("/api/batches", data={"layout": "grid_2x2", "intake_mode": "extract", "project_id": str(ids["project"])},
-                        files=[("files", ("again.pdf", SCAN, "application/pdf"))])
+                        files=[("files", ("again.pdf", scan, "application/pdf"))])
     assert batch.status_code == 200, batch.text
     tickets = client.get(f"/api/batches/{batch.json()['id']}/tickets").json()
     assert len(tickets) == 4 and client.get(f"/api/batches/{batch.json()['id']}").json()["status"] == "ready_for_review"
