@@ -37,7 +37,7 @@ test("upload, reconcile the scan, approve, export, draft an invoice, and catch t
   await page.locator("input[type=file]").setInputFiles(`${KIT}/demo-tickets.pdf`);
   await page.getByLabel("Project").selectOption({ index: 1 });
   await page.getByLabel("Paper tickets in this upload (optional)").fill("3");
-  await page.getByRole("button", { name: "Queue for manual entry" }).click();
+  await page.getByRole("button", { name: "Upload for entry by hand" }).click();
 
   // 2. The scan check catches the faint ticket before any total looks complete.
   const check = page.getByRole("region", { name: "Scan check" });
