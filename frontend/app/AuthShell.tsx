@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { ApiError, getAuthMe, getDashboard, logOut, type Account, type Permission } from "../lib/api";
+import { ApiError, getAuthMe, getReviewQueue, logOut, type Account, type Permission } from "../lib/api";
 import { mayNavigate } from "../lib/navigation-guard";
 import { beginSignOut, clearAllDrafts, clearOtherAccountsDrafts, hasDrafts } from "../lib/drafts";
 import { AccountContext } from "./account-context";
@@ -164,7 +164,8 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isPublic || checking || Date.now() - pendingAt.current < 60_000) return;
     pendingAt.current = Date.now();
-    getDashboard().then((d) => setPending({ review: d.needs_review + (d.hauling?.awaiting_approval ?? 0) }))
+    // The Review Queue's own total, so the badge and the queue never disagree.
+    getReviewQueue().then((q) => setPending({ review: q.summary.total }))
       .catch(() => setPending(null));
   }, [pathname, isPublic, checking]);
 

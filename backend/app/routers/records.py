@@ -29,7 +29,7 @@ from ..models import Batch, Material, Project, SavedView, Supplier, Ticket, User
 from ..permissions import has_permission, require
 from ..rate_limit import limited
 from ..schemas import TicketOut
-from ..services import aggregates
+from ..services import consistency, aggregates
 from ..services import duplicates as dup_svc
 from ..services import export as export_svc
 from ..services import pricing as pricing_svc
@@ -100,8 +100,12 @@ def search_records(
     names = pricing_svc.catalog_names(db, organization_id)
     people = names_by_id(db, organization_id)
     aliases = pricing_svc.alias_suggestions(db, organization_id, names)
+    # Once per page, not once per row (they were 3 queries a row: 150 of a 50-row page's 161).
+    similar = consistency.similar_names(db, organization_id)
+    numbers = consistency.ticket_numbers(db, organization_id)
     return RecordsPage(
-        rows=[_out(db, t, organization_id, table, duplicate_index=index, catalog=names, people=people, aliases=aliases)
+        rows=[_out(db, t, organization_id, table, duplicate_index=index, catalog=names, people=people, aliases=aliases,
+                   similar=similar, numbers=numbers)
               for t in tickets],
         total=total, page=page, page_size=page_size,
         summary=RecordsSummary(records=total, by_status=by_status, verified_tons=tons, verified_cost=cost,

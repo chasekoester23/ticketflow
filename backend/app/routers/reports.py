@@ -471,8 +471,18 @@ def project_report_view(project_id: int, db: Session = Depends(get_db),
 def project_report_xlsx(project_id: int, db: Session = Depends(get_db),
                         organization_id: int = Depends(current_organization_id)):
     report = _project_report(db, organization_id, project_id)
+    costs = _summary(db, organization_id, project_id, None, None, "month")
+    people = names_by_id(db, organization_id)
+    deliveries = [
+        [export_svc._safe_excel_text(t.ticket_number), t.delivery_date, export_svc._safe_excel_text(t.supplier),
+         export_svc._safe_excel_text(t.material_type), t.tonnage, t.applied_unit_price, t.approved_cost,
+         people.get(t.verified_by_user_id), t.verified_at.replace(tzinfo=None) if t.verified_at else None]
+        for t in db.scalars(filtered_query(select(Ticket), organization_id=organization_id, project_id=project_id, supplier=None,
+                                           material=None, status="verified", date_from=None, date_to=None)
+                            .where(aggregates.COUNTED)  # the same rule as every total, so the rows add up to them
+                            .order_by(Ticket.delivery_date, Ticket.id))]
     return Response(
-        project_report.workbook(report),
+        project_report.workbook(report, costs, deliveries),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="project-{project_id}-report.xlsx"', "Cache-Control": "no-store"})
 

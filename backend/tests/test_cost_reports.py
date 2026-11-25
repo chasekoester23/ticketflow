@@ -37,7 +37,13 @@ def test_report_adds_approved_material_and_trucking_by_week_and_counts_missing_p
     weeks = {p["period"]: p for p in report["by_period"]}
     assert weeks["2026-11-02"]["tons"] == "30.500" and weeks["2026-11-02"]["material"] == "549.00" and weeks["2026-11-02"]["trucking"] == "990.00"
     assert weeks["2026-11-09"]["unpriced"] == 1 and weeks["2026-11-09"]["material"] == "0.00"
-    assert report["trucking"]["by_hauler"] == [{"name": "Fictional Hauling LLC", "shifts": 1, "hours": "9.00", "cost": "990.00", "loads": 0}]
+    assert report["trucking"]["by_hauler"] == [{"name": "Fictional Hauling LLC", "shifts": 1, "hours": "9.00", "cost": "990.00", "loads": 0,
+                                                 "per_hour": "110.00"}]
+    [job] = report["by_project"]
+    assert (job["code"], job["tons"], job["material"], job["unpriced"], job["trucking"], job["total"]) == ("P1", "45.500", "549.00", 1, "990.00", "1539.00")
+    # Average unit price from priced tons only: the unpriced Rip Rap has none to show.
+    assert [(u["supplier"], u["material"], u["tons"], u["average"]) for u in report["unit_prices"]] == [
+        ("Example Aggregates", "No. 57 Stone", "30.500", "18.00")]
     assert {r["name"]: r["unpriced"] for r in m["by_supplier"]} == {"Example Aggregates": 0, "Other Quarry": 1}
 
     first_week = client.get("/api/reports/summary", params={"project_id": yard["project"], "date_to": "2026-11-08", "period": "day"}).json()

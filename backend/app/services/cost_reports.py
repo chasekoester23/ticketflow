@@ -13,10 +13,10 @@ from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
-from ..models import Batch, Hauler, ShiftAllocation, Ticket, TruckShift
+from ..models import Batch, Hauler, Project, ShiftAllocation, Ticket, TruckShift
 from . import aggregates
 
 PERIODS = ("day", "week", "month")
@@ -112,9 +112,53 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
         haulers[r.hauler]["loads"] += int(r.loads)
         periods[bucket(r.day, period)]["loads"] += int(r.loads)
 
+    # Per project: tickets through their batch, trucking through each shift's allocations.
+    projects = {p.id: p for p in db.scalars(select(Project).where(Project.organization_id == organization_id))}
+    per_project: dict[int, dict] = defaultdict(lambda: {"tickets": 0, "tons": 0, "material": 0, "unpriced": 0, "hours": 0, "trucking": 0})
+    for r in db.execute(_tickets(organization_id, project_id, date_from, date_to, Batch.project_id.label("pid"), *_counted())
+                        .join(Batch, Batch.id == Ticket.batch_id).group_by(Batch.project_id)).all():
+        if r.pid is None or not r.tickets:
+            continue
+        row = per_project[r.pid]
+        row["tickets"], row["tons"], row["material"], row["unpriced"] = int(r.tickets), int(r.tons), int(r.cost), int(r.unpriced)
+    by_alloc = (select(ShiftAllocation.project_id.label("pid"), aggregates.exact_sum(ShiftAllocation.hours, 2).label("hours"),
+                       aggregates.exact_sum(ShiftAllocation.cost, 2).label("cost"))
+                .join(TruckShift, TruckShift.id == ShiftAllocation.shift_id)
+                .where(TruckShift.organization_id == organization_id, TruckShift.status == "approved"))
+    if project_id is not None:
+        by_alloc = by_alloc.where(ShiftAllocation.project_id == project_id)
+    if date_from:
+        by_alloc = by_alloc.where(TruckShift.work_date >= date_from)
+    if date_to:
+        by_alloc = by_alloc.where(TruckShift.work_date <= date_to)
+    for r in db.execute(by_alloc.group_by(ShiftAllocation.project_id)).all():
+        per_project[r.pid]["hours"] += int(r.hours)
+        per_project[r.pid]["trucking"] += int(r.cost)
+
+    # What each supplier charged per ton for each material: priced tons only, so a
+    # delivery still waiting for its rate can't pull an average down.
+    priced = and_(aggregates.COUNTED, Ticket.approved_cost.is_not(None))
+    unit_prices = []
+    supplier_label = func.coalesce(func.nullif(Ticket.supplier, ""), "(unknown)")
+    material_label = func.coalesce(func.nullif(Ticket.material_type, ""), "(unknown)")
+    for r in db.execute(_tickets(organization_id, project_id, date_from, date_to, supplier_label.label("supplier"), material_label.label("material"),
+                                 aggregates.exact_sum(case((priced, Ticket.tonnage), else_=0), 3).label("tons"),
+                                 aggregates.exact_sum(case((priced, Ticket.approved_cost), else_=0), 2).label("cost"),
+                                 func.min(case((priced, Ticket.applied_unit_price))).label("low"),
+                                 func.max(case((priced, Ticket.applied_unit_price))).label("high"))
+                        .group_by(supplier_label, material_label)).all():
+        if not r.tons:
+            continue
+        tons_d, cost_d = aggregates.as_decimal(r.tons, 3), aggregates.as_decimal(r.cost, 2)
+        unit_prices.append({"supplier": r.supplier, "material": r.material, "tons": str(tons_d), "cost": str(cost_d),
+                            "average": str((cost_d / tons_d).quantize(Decimal("0.01"))),
+                            "low": str(Decimal(r.low).quantize(Decimal("0.01"))) if r.low is not None else None,
+                            "high": str(Decimal(r.high).quantize(Decimal("0.01"))) if r.high is not None else None})
+    unit_prices.sort(key=lambda u: (u["material"], Decimal(u["average"])))
+
     cents = lambda units: str(aggregates.as_decimal(units, 2))  # noqa: E731
     material = aggregates.as_decimal(totals.cost, 2)
-    trucking = sum((aggregates.as_decimal(h["cost"], 2) for h in haulers.values()), Decimal(0))
+    trucking = aggregates.as_decimal(sum(h["cost"] for h in haulers.values()), 2)
     return {
         "period": period, "date_from": date_from.isoformat() if date_from else None, "date_to": date_to.isoformat() if date_to else None,
         "material": {
@@ -126,10 +170,17 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
         "trucking": {
             "shifts": sum(h["shifts"] for h in haulers.values()), "hours": cents(sum(h["hours"] for h in haulers.values())),
             "cost": str(trucking), "loads": sum(h["loads"] for h in haulers.values()),
-            "by_hauler": sorted(({"name": name, "shifts": h["shifts"], "hours": cents(h["hours"]), "cost": cents(h["cost"]), "loads": h["loads"]}
+            "by_hauler": sorted(({"name": name, "shifts": h["shifts"], "hours": cents(h["hours"]), "cost": cents(h["cost"]), "loads": h["loads"],
+                                  "per_hour": str((Decimal(h["cost"]) / Decimal(h["hours"])).quantize(Decimal("0.01"))) if h["hours"] else None}
                                  for name, h in haulers.items()), key=lambda r: (-Decimal(r["cost"]), r["name"])),
             "billing_methods": [{"method": "hourly", "cost": str(trucking)}],
         },
+        "unit_prices": unit_prices,
+        "by_project": sorted(({"id": pid, "code": projects[pid].code, "name": projects[pid].name, "status": projects[pid].status,
+                               "tickets": p["tickets"], "tons": str(aggregates.as_decimal(p["tons"], 3)), "material": cents(p["material"]),
+                               "unpriced": p["unpriced"], "hours": cents(p["hours"]), "trucking": cents(p["trucking"]),
+                               "total": cents(p["material"] + p["trucking"])}
+                              for pid, p in per_project.items() if pid in projects), key=lambda p: (-Decimal(p["total"]), p["code"])),
         "costs": {"material": str(material), "trucking": str(trucking), "total": str(material + trucking),
                   "complete": int(totals.unpriced) == 0, "unpriced": int(totals.unpriced)},
         "by_period": [{"period": key, "tickets": p["tickets"], "tons": str(aggregates.as_decimal(p["tons"], 3)),
