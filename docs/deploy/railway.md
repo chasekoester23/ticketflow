@@ -84,6 +84,8 @@ The full lists, with placeholders only, are in this folder: [`shared.env.example
 3. In `web`, set `API_INTERNAL_URL=http://api.railway.internal:8080` and `TRUSTED_PROXY_HOPS=1`. Don't set `NEXT_PUBLIC_API_URL`. The image is built with it empty, which makes the browser call its own origin.
 4. Mark secrets as sealed where Railway offers it: `S3_SECRET_ACCESS_KEY`, `GEMINI_API_KEY`, `STORAGE_ENCRYPTION_KEY` and the database password.
 
+`shared.env.example` declares `APP_ENVIRONMENT=pilot`. The fictional demo uses [`demo.env.example`](demo.env.example) instead, in its own project. Each refuses the other's database and buckets by name (see [founder-launch-checklist.md](founder-launch-checklist.md)).
+
 If anything is missing or unsafe, the API and the worker refuse to start, and the deploy log names the variable. This covers SQLite, local storage, an `http://` storage endpoint, insecure cookies, a non-https or wildcard origin, local hosts and API docs turned on.
 
 ## 4. Custom domain and HTTPS
