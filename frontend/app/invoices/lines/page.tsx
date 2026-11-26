@@ -331,6 +331,7 @@ export default function InvoiceComparisonPage() {
     return !search || [line.invoice_number, line.supplier_name, line.material_name].some((value) => value.toLowerCase().includes(search));
   });
   const formOpen = showForm || editing !== null || (!loading && lines.length === 0);
+  const formUnit = UNIT_LABEL[form.unit ?? "ton"]?.long ?? "tons"; // the unit the line being entered bills in
   const pastedRows = form.ticket_list.split(/\r?\n/).filter((line) => line.trim()).length;
   const required = form.project_id !== "" && form.invoice_number.trim() &&
     form.supplier_name.trim() && form.material_name.trim() && form.date_from &&
@@ -478,7 +479,7 @@ export default function InvoiceComparisonPage() {
             value={form.ticket_list} placeholder={"10482\t24.50\n10483\t22.10"}
             onChange={(e) => field("ticket_list", e.target.value)}/>
           <p id="invoice-ticket-list-help" className="mt-1 text-[11px] text-[#5f6c7b]">
-            Paste two columns from Excel: ticket number, then billed tons (tons optional). One ticket per row;
+            {`Paste two columns from Excel: ticket number, then billed ${formUnit} (${formUnit} optional). One ticket per row;`}
             a header row is fine. Leading zeros count. Leave blank if the invoice shows totals only.
             {pastedRows > 0 && <strong> {pastedRows} row{pastedRows === 1 ? "" : "s"} entered.</strong>}
           </p>

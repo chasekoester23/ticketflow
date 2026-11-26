@@ -67,20 +67,23 @@ def _cells(line: str) -> list[str]:
     return cells
 
 
-def _tons(text: str) -> Decimal:
+def _tons(text: str, unit: str | None = None) -> Decimal:
+    """A billed quantity in the line's unit ("tons" wording for a ton line, as before)."""
+    q = units.long(unit)
     try:
         value = Decimal(text)
     except InvalidOperation:
-        raise TicketListError(f"'{text}' is not a number of tons (enter it like 24.50)") from None
+        raise TicketListError(f"'{text}' is not a number of {q} (enter it like 24.50)") from None
     if not value.is_finite() or value <= 0 or value >= _MAX_TONS:
-        raise TicketListError(f"billed tons '{text}' must be a positive number")
+        raise TicketListError(f"billed {q} '{text}' must be a positive number")
     if value.as_tuple().exponent < -3:
-        raise TicketListError(f"billed tons '{text}' has more than 3 decimal places")
+        raise TicketListError(f"billed {q} '{text}' has more than 3 decimal places")
     return value.quantize(Decimal("0.001"))  # stored as Numeric(12, 3)
 
 
-def parse_ticket_list(text: str | None) -> list[ParsedRef]:
-    """Read one ticket per line: ticket number, then optional billed tons.
+def parse_ticket_list(text: str | None, unit: str | None = None) -> list[ParsedRef]:
+    """Read one ticket per line: ticket number, then optional billed quantity
+    in the line's unit (tons unless `unit` says otherwise).
 
     Blank lines are skipped. A first line whose ticket cell has no digits
     (a copied header such as "Ticket No. / Tons") is skipped. Any other
@@ -104,14 +107,14 @@ def parse_ticket_list(text: str | None) -> list[ParsedRef]:
         try:
             if len(cells) > 2:
                 raise TicketListError(
-                    "copy only two columns: ticket number, then billed tons (optional)")
+                    f"copy only two columns: ticket number, then billed {units.long(unit)} (optional)")
             if len(number) > MAX_TICKET_NUMBER:
                 raise TicketListError(f"ticket number is longer than {MAX_TICKET_NUMBER} characters")
             if _EXCEL_SCIENTIFIC.match(number):
                 raise TicketListError(
                     f"'{number}' looks like an Excel number in scientific notation; "
                     "format the ticket column as Text and copy it again")
-            tons = _tons(cells[1]) if len(cells) == 2 and cells[1] else None
+            tons = _tons(cells[1], unit) if len(cells) == 2 and cells[1] else None
         except TicketListError as exc:
             problems.append(f"line {line_no}: {exc}")
             continue
@@ -125,10 +128,10 @@ def parse_ticket_list(text: str | None) -> list[ParsedRef]:
     return refs
 
 
-def format_ticket_list(refs) -> str:
-    """Stable text form used for the correction history."""
+def format_ticket_list(refs, unit: str | None = None) -> str:
+    """Stable text form used for the correction history ("24.500 t" for tons)."""
     return "; ".join(
-        r.ticket_number + (f" {r.billed_tons} t" if r.billed_tons is not None else "")
+        r.ticket_number + (f" {r.billed_tons} {units.short(unit)}" if r.billed_tons is not None else "")
         for r in refs
     )
 
@@ -205,14 +208,15 @@ def _conflicts(t, project_id: int | None, item: InvoiceComparison,
 
 
 def _gaps(t) -> list[str]:
-    """Why a delivery record cannot be relied on yet."""
+    """Why a delivery record cannot be relied on yet, in the ticket's unit ("tons" for tons)."""
+    q = units.long(getattr(t, "unit", None))
     gaps = []
     if t.status != "verified":
         gaps.append("not verified (" + t.status.replace("_", " ") + ")")
     elif not t.tonnage_confirmed:
-        gaps.append("tons not confirmed")
+        gaps.append(f"{q} not confirmed")
     for label, value in (("supplier", norm(t.supplier)), ("material", norm(t.material_type)),
-                         ("delivery date", t.delivery_date), ("tons", t.tonnage)):
+                         ("delivery date", t.delivery_date), (q, t.tonnage)):
         if not value:
             gaps.append(f"{label} missing")
     return gaps
@@ -300,6 +304,7 @@ def check_tickets(
     refs: list[InvoiceTicketRef], in_scope: list, lookup: NumberLookup | None = None,
 ) -> TicketCheck:
     keys = [ticket_key(r.ticket_number) for r in refs]
+    q = units.long(getattr(item, "unit", None))  # "tons" for a ton line, as before
     lookup = lookup or NumberLookup(db, organization_id)
     lookup.prefetch(set(keys))
     projects = lookup.projects
@@ -337,7 +342,7 @@ def check_tickets(
                 row.verified_tons = t.tonnage
                 if ref.billed_tons is None:
                     row.result = "matched"
-                    row.notes.append("No billed tons entered for this ticket; quantity not compared.")
+                    row.notes.append(f"No billed {q} entered for this ticket; quantity not compared.")
                 else:
                     row.tons_difference = ref.billed_tons - t.tonnage
                     row.result = "tons_differ" if row.tons_difference else "matched"
@@ -411,7 +416,7 @@ def check_tickets(
                         "not verified or is incomplete.")
     if counts["tons_differ"]:
         warnings.append(f"{counts['tons_differ']} ticket(s) are billed at different "
-                        f"{units.long(getattr(item, 'unit', None))} than verified.")
+                        f"{q} than verified.")
     if counts["duplicate_on_invoice"]:
         warnings.append(f"{counts['duplicate_on_invoice']} invoice line(s) repeat a ticket number.")
     if counts["on_another_invoice"]:
@@ -421,8 +426,8 @@ def check_tickets(
         warnings.append(f"{missing_verified} verified delivery ticket(s) in this scope are not "
                         "listed on the invoice.")
     if itemized is not None and itemized != item.billed_tons:
-        warnings.append(f"Itemized ticket tons add up to {itemized}, but the invoice line bills "
-                        f"{item.billed_tons} tons.")
+        warnings.append(f"Itemized ticket {q} add up to {itemized}, but the invoice line bills "
+                        f"{item.billed_tons} {q}.")
 
     return TicketCheck(
         rows=rows, counts=counts, itemized_billed_tons=itemized, warnings=warnings,

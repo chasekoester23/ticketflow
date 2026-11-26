@@ -58,7 +58,7 @@ class InvoiceLineIn(BaseModel):
     billed_unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=4)
     billed_subtotal: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     # Optional: the invoice's ticket numbers, one per line, each optionally
-    # followed by billed tons (pasted from Excel). Empty = totals-only.
+    # followed by the billed quantity in `unit` (pasted from Excel). Empty = totals-only.
     # The whole list is replaced on correction.
     ticket_list: str = Field(default="", max_length=200_000)
 
@@ -280,7 +280,7 @@ def _validate_scope(db: Session, organization_id: int, body: InvoiceLineIn, *,
 
 def _parse_tickets(body: InvoiceLineIn) -> list[ParsedRef]:
     try:
-        return parse_ticket_list(body.ticket_list)
+        return parse_ticket_list(body.ticket_list, body.unit)
     except TicketListError as exc:
         raise HTTPException(422, str(exc)) from None
 
@@ -727,7 +727,7 @@ def correct_comparison(line_id: int, body: InvoiceLineIn, db: Session = Depends(
                 comparison_id=line_id, actor_user_id=user.id, field=field,
                 old_value=str(old), new_value=str(new),
             ))
-    old_list, new_list = format_ticket_list(_refs(db, line_id)), format_ticket_list(parsed)
+    old_list, new_list = format_ticket_list(_refs(db, line_id), item.unit), format_ticket_list(parsed, body.unit)
     if old_list != new_list:
         # The full previous list stays in the history; nothing is lost.
         db.add(InvoiceComparisonEvent(
