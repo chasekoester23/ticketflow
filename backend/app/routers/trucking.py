@@ -556,11 +556,11 @@ def link_deliveries(shift_id: int, body: DeliveriesIn, db: Session = Depends(get
     if missing:
         raise HTTPException(404, "; ".join(f"#{i}: no such ticket" for i in missing))
     elsewhere = [t for t in found.values() if t.truck_shift_id not in (None, shift.id)]
-    # A delivery whose hauling is already charged per ton or per load can't also be paid by the hour.
+    # A delivery whose hauling is already charged per ton or per load can't also be charged by the hour.
     charged = [t for t in found.values() if t.haul_billing in ("per_ton", "per_load")]
     if charged:
         raise HTTPException(409, f"Ticket {charged[0].ticket_number or charged[0].id}'s hauling is already charged "
-                                 f"{charged[0].haul_billing.replace('_', ' ')}; it can't also be paid by this shift.")
+                                 f"{charged[0].haul_billing.replace('_', ' ')}; it can't also be charged to this shift.")
     if elsewhere:
         raise HTTPException(409, "Already linked to another shift: " + ", ".join(t.ticket_number or f"#{t.id}" for t in elsewhere))
     current = {t.id: t for t in db.scalars(select(Ticket).where(Ticket.truck_shift_id == shift.id))}
@@ -724,9 +724,15 @@ def _invoices_out(db: Session, organization_id: int, only: int | None = None) ->
                      select(TruckShift.id, Truck.identifier, TruckShift.approved_billable_hours, TruckShift.project_id)
                      .join(Truck, Truck.id == TruckShift.truck_id)
                      .where(TruckShift.organization_id == organization_id, TruckShift.id.in_(wanted)))} if wanted else {}
+    # Every invoice's lines in one query, not one query per invoice.
+    lines_of: dict[int, list[HaulingInvoiceLine]] = {}
+    for row in db.scalars(select(HaulingInvoiceLine).join(HaulingInvoice, HaulingInvoice.id == HaulingInvoiceLine.invoice_id)
+                          .where(HaulingInvoice.organization_id == organization_id, *([HaulingInvoice.id == only] if only is not None else []))
+                          .order_by(HaulingInvoiceLine.invoice_id, HaulingInvoiceLine.line_no)):
+        lines_of.setdefault(row.invoice_id, []).append(row)
     out = []
     for invoice in db.scalars(query.order_by(HaulingInvoice.period_to.desc(), HaulingInvoice.id.desc())):
-        rows = db.scalars(select(HaulingInvoiceLine).where(HaulingInvoiceLine.invoice_id == invoice.id).order_by(HaulingInvoiceLine.line_no)).all()
+        rows = lines_of.get(invoice.id, [])
         checked = [by_line.get((invoice.id, row.line_no)) for row in rows]
         billed = sum((row.amount for row in rows), Decimal(0))
         known = all(c is not None and c.expected is not None for c in checked)

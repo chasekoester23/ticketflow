@@ -24,8 +24,13 @@ approval, see haul_billing.py). The deliveries are the ticket numbers the line l
 or else the hauler's deliveries that day (and truck, if named) on the invoice's
 project. Its difference splits the same way: a quantity effect (tons or loads) at the
 billed rate, a rate effect on the approved quantity, and the arithmetic. A delivery
-billed a second time, on another project, paid by the hour, or with its freight in the
-material price is never supported here, so no hauling is paid twice.
+billed a second time, on another project, covered by an hourly shift, or with its freight in
+the material price is never supported here, so no hauling is counted twice. A delivery from
+outside the invoice's period stays supported (it is owed once, whichever invoice bills it)
+and is questioned.
+
+A shift split across projects is compared, on each project's invoice, with that project's
+allocated hours and cost, the same figures the cost reports show for the project.
 
 Not billed at all: approved hauling (shifts, and per-ton or per-load deliveries) that
 no invoice covers is one "not billed yet" finding per hauler and project, so nothing
@@ -84,8 +89,11 @@ class ShiftFacts:
     hourly: Decimal | None = None
     standby_rate: Decimal | None = None
     hauler: str = ""
-    # Every project the shift's hours are charged to: its own, and any it was split onto.
+    # Every project the shift's hours are charged to: its allocations once approved, else its own.
     projects: frozenset = frozenset()
+    # Approved allocations per project: ((project_id, hours, cost), ...). More than one project
+    # means the shift is split, and each project's invoice is compared with its own share.
+    shares: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -134,7 +142,7 @@ class Finding:
 class LineResult:
     invoice_id: int
     line_no: int
-    result: str  # matched | differs | repeat | no_shift | no_delivery | not_approved | ambiguous | fee | credit
+    result: str  # matched | differs | repeat | no_shift | no_delivery | not_approved | ambiguous | needs_review | fee | credit
     shift_id: int | None
     expected: Decimal | None
     difference: Decimal | None
@@ -151,11 +159,22 @@ def _approved(shift: ShiftFacts, kind: str) -> tuple[Decimal, Decimal | None]:
     return shift.top_up or Decimal(0), shift.hourly
 
 
+def _share(shift: ShiftFacts, project_id: int | None) -> tuple[Decimal, Decimal] | None:
+    """A split shift's hours and cost for one project's invoice; None when the invoice
+    answers for the whole shift (no project named, or the shift isn't split)."""
+    if project_id is None or len(shift.shares) < 2:
+        return None
+    return next(((hours, cost) for pid, hours, cost in shift.shares if pid == project_id), None)
+
+
 def reconcile(lines: list[LineFacts], shifts: list[ShiftFacts],
               deliveries: list[DeliveryFacts] | tuple = ()) -> tuple[list[LineResult], list[Finding]]:
     results: list[LineResult] = []
     findings: list[Finding] = []
-    billed: dict[tuple[int, str], LineFacts] = {}
+    # (shift, kind, project): project is None when a line bills the whole shift, or that
+    # project's id when it bills its share of a split shift.
+    billed: dict[tuple[int, str, int | None], LineFacts] = {}
+    share_billed: dict[tuple[int, str], LineFacts] = {}   # (shift, kind): the first line billing any project's share
     billed_deliveries: dict[int, LineFacts] = {}
     by_day: dict[tuple[int, date], list[ShiftFacts]] = {}
     for s in shifts:
@@ -225,7 +244,22 @@ def reconcile(lines: list[LineFacts], shifts: list[ShiftFacts],
                                                 "The line can be checked once it's approved.", **base))
             results.append(LineResult(line.invoice_id, line.line_no, "not_approved", shift.id, None, None))
             continue
-        first = billed.get((shift.id, line.kind))
+        share = _share(shift, line.project_id)
+        if share is not None and (shift.standby or shift.top_up):
+            # Which project's invoice bills the standby or the minimum isn't recorded: a person checks.
+            findings.append(Finding(key=f"H{line.invoice_id}:{line.line_no}:split", category="needs_review", shift_id=shift.id,
+                                    title=f"Split shift with standby or a minimum: {where}",
+                                    explanation=f"Truck {shift.truck}'s shift on {shift.work_date.isoformat()} is split across projects "
+                                                "and includes standby or a minimum charge. Which project's invoice bills those isn't "
+                                                "recorded, so compare this line with the shift's allocation by hand.", **base))
+            results.append(LineResult(line.invoice_id, line.line_no, "needs_review", shift.id, None, None))
+            continue
+        portion = line.project_id if share is not None else None
+        first = billed.get((shift.id, line.kind, portion))
+        if first is None and share is not None:
+            first = billed.get((shift.id, line.kind, None))  # the whole shift was already billed
+        if first is None and share is None:
+            first = share_billed.get((shift.id, line.kind))  # a project's share of it was already billed
         if first is not None:
             findings.append(Finding(key=f"H{line.invoice_id}:{line.line_no}:repeat", category="duplicate", shift_id=shift.id,
                                     title=f"Billed again: {where}", amount=line.amount, expected=Decimal(0),
@@ -233,9 +267,14 @@ def reconcile(lines: list[LineFacts], shifts: list[ShiftFacts],
                                                 f"was already billed on invoice {first.invoice_number}, line {first.line_no}.", **base))
             results.append(LineResult(line.invoice_id, line.line_no, "repeat", shift.id, Decimal(0), line.amount))
             continue
-        billed[(shift.id, line.kind)] = line
+        billed[(shift.id, line.kind, portion)] = line
+        if portion is not None:
+            share_billed.setdefault((shift.id, line.kind), line)
         hours, rate = _approved(shift, line.kind)
         expected = to_cents(hours * rate) if rate is not None else Decimal(0)
+        if share is not None and line.kind == "hours":
+            # This project's share: its allocated hours, at the cost its allocation carries in every report.
+            hours, expected = share
         difference = line.amount - expected
         group = f"H{line.invoice_id}:{line.line_no}"
         causes: list[tuple[str, str, Decimal, str]] = []
@@ -262,7 +301,8 @@ def reconcile(lines: list[LineFacts], shifts: list[ShiftFacts],
                                     shift_id=shift.id, amount=effect, expected=expected, group=group, **base))
         results.append(LineResult(line.invoice_id, line.line_no, "differs" if difference else "matched", shift.id, expected, difference))
 
-    billed_shifts = {shift_id for shift_id, _kind in billed}
+    billed_whole = {shift_id for shift_id, _kind, part in billed if part is None}
+    billed_parts = {(shift_id, part) for shift_id, _kind, part in billed if part is not None}
     periods: dict[int, list[LineFacts]] = {}
     for line in lines:
         periods.setdefault(line.hauler_id, []).append(line)
@@ -285,23 +325,30 @@ def reconcile(lines: list[LineFacts], shifts: list[ShiftFacts],
         else:
             not_covered.setdefault((d.hauler_id, d.project_id), []).append((d.delivery_date, "delivery"))
     for s in shifts:
-        if s.status != "approved" or s.id in billed_shifts:
+        if s.status != "approved" or s.id in billed_whole:
             continue
-        if s.hauler_id not in periods:
-            not_covered.setdefault((s.hauler_id, s.project_id), []).append((s.work_date, "shift"))
-            continue
-        # An invoice for one project covers only that project's shifts: a hauler billing each job
-        # separately hasn't left another job's shift off this one.
-        covering = [line for line in periods[s.hauler_id] if line.period_from <= s.work_date <= line.period_to
-                    and (line.project_id is None or line.project_id == s.project_id)]
-        if not covering:
-            not_covered.setdefault((s.hauler_id, s.project_id), []).append((s.work_date, "shift"))
-            continue
-        findings.append(Finding(key=f"HS{s.id}", category="not_invoiced", shift_id=s.id, project_id=s.project_id,
-                                hauler=covering[0].hauler, invoice_id=covering[0].invoice_id, invoice_number=covering[0].invoice_number,
-                                title=f"Approved shift not billed: truck {s.truck}, {s.work_date.isoformat()}",
-                                explanation=f"Inside invoice {covering[0].invoice_number}'s period, but no line bills it. "
-                                            "Expect it on a later invoice, or ask whether it was missed."))
+        # A split shift is owed in parts, one per project; any other shift as a whole.
+        split = len(s.shares) > 1
+        for project_id in ([pid for pid, _hours, _cost in s.shares] if split else [s.project_id]):
+            if (s.id, project_id) in billed_parts:
+                continue
+            if s.hauler_id not in periods:
+                not_covered.setdefault((s.hauler_id, project_id), []).append((s.work_date, "shift"))
+                continue
+            # An invoice for one project covers only that project's shifts: a hauler billing each job
+            # separately hasn't left another job's shift off this one.
+            covering = [line for line in periods[s.hauler_id] if line.period_from <= s.work_date <= line.period_to
+                        and (line.project_id is None or line.project_id == project_id)]
+            if not covering:
+                not_covered.setdefault((s.hauler_id, project_id), []).append((s.work_date, "shift"))
+                continue
+            findings.append(Finding(key=f"HS{s.id}" if project_id == s.project_id else f"HS{s.id}:{project_id}",
+                                    category="not_invoiced", shift_id=s.id, project_id=project_id,
+                                    hauler=covering[0].hauler, invoice_id=covering[0].invoice_id, invoice_number=covering[0].invoice_number,
+                                    title=f"Approved shift not billed{', its share for this project' if split else ''}: "
+                                          f"truck {s.truck}, {s.work_date.isoformat()}",
+                                    explanation=f"Inside invoice {covering[0].invoice_number}'s period, but no line bills it. "
+                                                "Expect it on a later invoice, or ask whether it was missed."))
     # Approved hauling no invoice covers yet: one finding per hauler and project, so the
     # list stays short and nothing approved is forgotten. Owed later, never an overcharge.
     for (hauler_id, project_id), items in sorted(not_covered.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
@@ -377,11 +424,12 @@ def _unit_line(line: LineFacts, base: dict, where: str, deliveries, billed_deliv
             problems.append(("needs_review", f"Delivery not approved yet: {where}",
                              f"Ticket {number} isn't approved yet. The line can be checked once it is."))
         elif d.method == "hourly":
-            problems.append(("duplicate", f"Already paid by the hour: {where}",
-                             f"Ticket {number} was carried on an hourly truck shift, which pays for it. Billing it {method.replace('_', ' ')} too would pay twice."))
+            problems.append(("duplicate", f"Already covered by an hourly shift: {where}",
+                             f"Ticket {number} was carried on an hourly truck shift, whose hours already cover it. "
+                             f"Billing it {method.replace('_', ' ')} too would charge for it twice."))
         elif d.method == "freight_included":
             problems.append(("duplicate", f"Freight already in the material price: {where}",
-                             f"Ticket {number}'s material price includes freight, so its hauling is already paid through the supplier."))
+                             f"Ticket {number}'s material price includes freight, so its hauling is already billed through the supplier."))
         elif d.method in ("unpriced", "ambiguous"):
             problems.append(("needs_review", f"No agreed hauling rate: {where}",
                              f"Ticket {number} has no {'single ' if d.method == 'ambiguous' else ''}hauling rate on file, so what it "
@@ -391,7 +439,13 @@ def _unit_line(line: LineFacts, base: dict, where: str, deliveries, billed_deliv
                              f"Ticket {number}'s hauling is agreed {d.method.replace('_', ' ')}, not {method.replace('_', ' ')}."))
         else:
             supported.append(d)
-    # When nothing on the line can be paid, its whole amount is explained by the first problem that
+            if d.delivery_date is not None and not (line.period_from <= d.delivery_date <= line.period_to):
+                # Owed once whichever invoice bills it, so it stays supported; a person checks it belongs here.
+                problems.append(("needs_review", f"Delivered outside the invoice period: {where}",
+                                 f"Ticket {number} was delivered on {d.delivery_date.isoformat()}, outside invoice "
+                                 f"{line.invoice_number}'s period ({line.period_from.isoformat()} to {line.period_to.isoformat()}). "
+                                 "Check it belongs on this invoice."))
+    # When nothing on the line can be supported, its whole amount is explained by the first problem that
     # isn't "not approved yet": one exception per problem, carrying its dollars, not a second vague one.
     carries = None if supported else next((i for i, (c, _, _) in enumerate(problems) if c != "needs_review"), None)
     for i, (category, title, text) in enumerate(problems):
@@ -471,11 +525,14 @@ def load(db, organization_id: int) -> tuple[list[LineFacts], list[ShiftFacts]]:
                        quantity=line.quantity, tickets=ticket_keys(line.tickets), chosen_shift_id=line.shift_id)
              for i, line in db.execute(select(HaulingInvoice, HaulingInvoiceLine).join(HaulingInvoiceLine, HaulingInvoiceLine.invoice_id == HaulingInvoice.id)
                                        .where(HaulingInvoice.organization_id == organization_id))]
-    split: dict[int, set[int]] = {}
-    for shift_id, project_id in db.execute(select(ShiftAllocation.shift_id, ShiftAllocation.project_id)
-                                           .join(TruckShift, TruckShift.id == ShiftAllocation.shift_id)
-                                           .where(TruckShift.organization_id == organization_id)):
-        split.setdefault(shift_id, set()).add(project_id)
+    split: dict[int, dict[int, list[Decimal]]] = {}
+    for shift_id, project_id, hours, cost in db.execute(
+            select(ShiftAllocation.shift_id, ShiftAllocation.project_id, ShiftAllocation.hours, ShiftAllocation.cost)
+            .join(TruckShift, TruckShift.id == ShiftAllocation.shift_id)
+            .where(TruckShift.organization_id == organization_id)):
+        part = split.setdefault(shift_id, {}).setdefault(project_id, [Decimal(0), Decimal(0)])
+        part[0] += hours  # one project can hold several allocations, one per cost code
+        part[1] += cost
     shifts = []
     for s in db.scalars(select(TruckShift).where(TruckShift.organization_id == organization_id)):
         approved = s.status == "approved"
@@ -484,5 +541,6 @@ def load(db, organization_id: int) -> tuple[list[LineFacts], list[ShiftFacts]]:
                                  work_date=s.work_date, project_id=s.project_id, status=s.status,
                                  work=s.approved_work_hours, standby=s.approved_standby_hours, top_up=top_up,
                                  hourly=s.applied_hourly_rate, standby_rate=s.applied_standby_rate, hauler=haulers.get(s.hauler_id, ""),
-                                 projects=frozenset({s.project_id, *split.get(s.id, ())})))
+                                 projects=frozenset(split.get(s.id) or {s.project_id}),
+                                 shares=tuple((pid, h, c) for pid, (h, c) in sorted(split.get(s.id, {}).items()))))
     return lines, shifts

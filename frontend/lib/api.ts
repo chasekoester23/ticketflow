@@ -1054,7 +1054,7 @@ export type HaulingInvoiceLine = {
   quantity?: string | null; tickets?: string | null;
   /** The shift a person chose when the line matched more than one. */
   chosen_shift_id?: number | null;
-  result?: "matched" | "differs" | "repeat" | "no_shift" | "no_delivery" | "not_approved" | "ambiguous" | "fee" | "credit" | null;
+  result?: "matched" | "differs" | "repeat" | "no_shift" | "no_delivery" | "not_approved" | "ambiguous" | "needs_review" | "fee" | "credit" | null;
   shift_id?: number | null; supported?: string | null; difference?: string | null;
   ticket_ids?: number[]; candidates?: { id: number; truck: string; hours: string | null; project: string | null }[];
 };
