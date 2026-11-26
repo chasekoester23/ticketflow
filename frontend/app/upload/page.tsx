@@ -19,7 +19,7 @@ import {
   moveBatch,
   recordReviewTiming,
   retryBatch,
-  ticketImageUrl, type BatchProgress,
+  ticketImageUrl, type BatchProgress, type BulkResult, bulkEditTickets,
 } from "../../lib/api";
 import { isSigningOut, removeTicketDrafts } from "../../lib/drafts";
 import { lastPlace, rememberPlace } from "../../lib/places";
@@ -31,7 +31,7 @@ import { withTicketStates } from "./manifestState";
 import { ScanCheck } from "./ScanCheck";
 import { ScanViewer, zoomIn, zoomOut } from "./ScanViewer";
 import { ImportedRow, isImportBatch } from "./import/ImportedRow";
-import { QueueFilter, TicketQueue, pendingStatus } from "./TicketQueue";
+import { Issue, QueueFilter, TicketQueue, bulkEditable, hasIssue, pendingStatus } from "./TicketQueue";
 import { UploadPanel } from "./UploadPanel";
 
 const BATCH_LABEL: Record<string, string> = {
@@ -66,19 +66,71 @@ const reuseUnchanged = (old: Ticket[], fresh: Ticket[]) => {
 const altArrowsGoBack = () => !/Mac|iPhone|iPad/.test(navigator.platform);
 
 const SHORTCUTS: [string, string][] = [
-  ["⌘/Ctrl + Enter", "Accept (or save) and go to the next ticket"],
-  ["Enter", "Next field, then the Accept button"],
+  ["Enter on Accept", "A clean ticket opens with the cursor on Accept: one key approves it and opens the next"],
+  ["⌘/Ctrl + Enter", "Accept (or save) and go to the next ticket, from anywhere"],
+  ["Enter in a field", "This field is checked: on to the next field needing you, then Accept"],
   ["Alt + D", "Material, supplier and job: same as previous ticket"],
   ["Alt + ↑ / ↓", "Previous or next ticket, even while typing"],
   ["J / K, Alt + ← / →", "Next or previous ticket"],
   ["N", "Next ticket that still needs review"],
+  ["I", "Next open ticket with an issue (the queue's issue filter, if one is chosen)"],
   ["F", "Next flagged ticket"],
+  ["X", "Flag this ticket for later, with the note typed"],
+  ["S", "Skip this as not a ticket (asks first)"],
   ["+ / −  ·  0", "Zoom the scan in or out  ·  fit to width"],
-  ["R", "Rotate the view (the stored scan isn't changed)"],
+  ["R  ·  Shift + R", "Rotate the view right or left (the stored scan isn't changed)"],
   ["/", "Search the ticket queue"],
   ["Esc", "Leave the current field"],
   ["?", "Show or hide this list"],
 ];
+const NO_PICKS: ReadonlySet<number> = new Set();
+const BULK_FIELDS: [string, string][] = [["supplier", "Supplier"], ["material_type", "Material"], ["job_location", "Job location"], ["delivery_date", "Delivery date"]];
+const minutes = (seconds: number) => seconds < 90 ? "about a minute" : seconds < 5400 ? `about ${Math.round(seconds / 60)} min` : `about ${(seconds / 3600).toFixed(1)} h`;
+
+/**
+ * Scans fetched ahead of time and held as object URLs. The API marks every response
+ * no-store, so an image fetched early can't be reused from the browser's cache: without
+ * this the next ticket's scan is downloaded twice and the person waits for the second.
+ */
+function useScanCache(version: number) {
+  const store = useRef(new Map<string, { url: string | null; failed: boolean }>());
+  const [, setLoaded] = useState(0);
+  const key = (id: number) => `${id}:${version}`;
+  /** Fetch `ahead`; keep `keep` too if already held (the scan on screen, the one before). Drop the rest. */
+  const fetchAhead = useCallback((ahead: number[], keep: number[]) => {
+    const wanted = new Set([...ahead, ...keep].map(key));
+    for (const [k, entry] of store.current) {
+      if (wanted.has(k)) continue;
+      if (entry.url) URL.revokeObjectURL(entry.url);
+      store.current.delete(k);
+    }
+    ahead.forEach((id) => {
+      const k = key(id);
+      if (store.current.has(k)) return;
+      const entry = { url: null as string | null, failed: false };
+      store.current.set(k, entry);
+      fetch(ticketImageUrl(id) + (version ? "?v=" + version : ""), { credentials: "include" })
+        .then((response) => response.ok ? response.blob() : Promise.reject(new Error(String(response.status))))
+        .then((blob) => {
+          if (store.current.get(k) !== entry) return;
+          entry.url = URL.createObjectURL(blob);
+          setLoaded((n) => n + 1);
+        })
+        .catch(() => {
+          entry.failed = true;
+          setLoaded((n) => n + 1);
+        });
+    });
+  }, [version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { store.current.forEach((entry) => { if (entry.url) URL.revokeObjectURL(entry.url); }); store.current.clear(); }, []);
+  /** The scan to show: the fetched copy, nothing while it's on its way, or the address itself if fetching failed. */
+  const srcFor = (id: number): string | null => {
+    const entry = store.current.get(key(id));
+    if (!entry || entry.failed) return ticketImageUrl(id) + (version ? "?v=" + version : "");
+    return entry.url;
+  };
+  return { fetchAhead, srcFor };
+}
 
 export default function Home() {
   const { account, can } = useAccount();
@@ -112,6 +164,10 @@ export default function Home() {
     return true;
   }, []);
   const [reviewFilter, setReviewFilter] = useState<QueueFilter>("pending");
+  const [issue, setIssue] = useState<Issue | "">("");
+  // Tickets chosen for one correction together; null when not choosing.
+  const [picked, setPicked] = useState<Set<number> | null>(null);
+  const [bulk, setBulk] = useState({ field: "supplier", value: "", busy: false, result: null as string | null });
   const [queueOpen, setQueueOpen] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -301,16 +357,19 @@ export default function Home() {
     };
   }, []);
 
-  // Fetch the next scans early, so moving on feels instant.
+  // Fetch the next scans early, so moving on feels instant: the next ticket, the next
+  // one Accept would open, and the next open one with the chosen issue.
+  const scans = useScanCache(imageVersion);
+  const { fetchAhead } = scans;
   useEffect(() => {
     const upcoming = [
       tickets[selected + 1],
       tickets.find((t, i) => i > selected && pendingStatus(t)),
+      issue ? tickets.find((t, i) => i > selected && (pendingStatus(t) || t.status === "flagged") && hasIssue(t, issue)) : undefined,
     ];
-    upcoming.forEach((t) => {
-      if (t) new Image().src = ticketImageUrl(t.id);
-    });
-  }, [selected, tickets]);
+    const ahead = [...new Set(upcoming.filter((t): t is Ticket => Boolean(t) && t !== tickets[selected]).map((t) => t.id))];
+    fetchAhead(ahead, [tickets[selected]?.id, tickets[selected - 1]?.id].filter((id): id is number => id !== undefined));
+  }, [selected, tickets, issue, fetchAhead]);
 
   const timingOn = useRef(false);
   timingOn.current = timingEnabled;
@@ -357,9 +416,9 @@ export default function Home() {
   // One listener for the life of the page, reading the current state from here.
   // Re-subscribing on every change left moments when a key saw the old ticket.
   // Callbacks read it too, so they stay the same from one render to the next.
-  const keyState = useRef({ selected, tickets, help });
+  const keyState = useRef({ selected, tickets, help, issue });
   useLayoutEffect(() => {
-    keyState.current = { selected, tickets, help };
+    keyState.current = { selected, tickets, help, issue };
   });
 
   const selectTicket = useCallback((index: number) => {
@@ -370,19 +429,22 @@ export default function Home() {
   }, [mayLeaveTicket, reportDirty]);
   const hideQueue = useCallback(() => setQueueOpen(false), []);
 
-  // N and F: straight to the next ticket that needs a person. Never approves anything.
-  const jumpTo = useCallback((kind: "review" | "flagged") => {
-    const { tickets, selected } = keyState.current;
-    const test = kind === "review" ? pendingStatus : (t: Ticket) => t.status === "flagged";
+  // N, F and I: straight to the next ticket that needs a person. Never approves anything.
+  const jumpTo = useCallback((kind: "review" | "flagged" | "issue") => {
+    const { tickets, selected, issue } = keyState.current;
+    const test = kind === "review" ? pendingStatus : kind === "flagged" ? (t: Ticket) => t.status === "flagged"
+      : (t: Ticket) => (pendingStatus(t) || t.status === "flagged") && hasIssue(t, issue);
     const next = nextMatching(tickets, selected, test);
     if (next < 0) {
       setJumpStatus(kind === "review" ? "No other ticket in this batch needs review."
+        : kind === "issue" ? "No other open ticket in this batch has " + (issue ? "that issue." : "an issue.")
         : tickets[selected] && test(tickets[selected]) ? "This is the only flagged ticket in this batch." : "No flagged tickets in this batch.");
       return;
     }
     if (!mayLeaveTicket()) return;
     setJumpStatus(null);
-    setReviewFilter(kind === "review" ? "pending" : "flagged");
+    if (kind !== "issue") setReviewFilter(kind === "review" ? "pending" : "flagged");
+    else if (!pendingStatus(tickets[next])) setReviewFilter("all");
     setSelected(next);
     reportDirty(false);
   }, [mayLeaveTicket, reportDirty]);
@@ -424,11 +486,16 @@ export default function Home() {
       if (event.key === "j") move(1);
       else if (event.key === "n" || event.key === "N") { event.preventDefault(); jumpTo("review"); }
       else if (event.key === "f" || event.key === "F") { event.preventDefault(); jumpTo("flagged"); }
+      else if (event.key === "i" || event.key === "I") { event.preventDefault(); jumpTo("issue"); }
+      // The same buttons a click would press, with their own checks and questions.
+      else if ((event.key === "x" || event.key === "X") && !event.repeat) document.getElementById("review-flag-button")?.click();
+      else if ((event.key === "s" || event.key === "S") && !event.repeat) document.getElementById("review-skip-button")?.click();
       else if (event.key === "k") move(-1);
       else if (event.key === "+" || event.key === "=") setZoom(zoomIn);
       else if (event.key === "-") setZoom(zoomOut);
       else if (event.key === "0") setZoom(1);
       else if (event.key === "r") setRotation((v) => (v + 90) % 360);
+      else if (event.key === "R") setRotation((v) => (v + 270) % 360);
       else if (event.key === "?") setHelp((v) => !v);
       else if (event.key === "/") {
         event.preventDefault();
@@ -443,12 +510,21 @@ export default function Home() {
   // Complete the pending queue first, then automatically revisit flagged tickets.
   // A ticket is never auto-accepted; only the explicit Accept action verifies.
   const advance = useCallback(() => {
-    const { tickets, selected } = keyState.current;
+    const { tickets, selected, issue } = keyState.current;
     reportDirty(false);
     const findNext = (predicate: (ticket: Ticket) => boolean): number => {
       const later = tickets.findIndex((t, i) => i > selected && predicate(t));
       return later >= 0 ? later : tickets.findIndex((t, i) => i < selected && predicate(t));
     };
+    // Working through one kind of issue: the next ticket with it, until none are left.
+    if (issue) {
+      const same = findNext((t) => pendingStatus(t) && hasIssue(t, issue));
+      if (same >= 0) {
+        setSelected(same);
+        return;
+      }
+      setIssue("");
+    }
     let next = findNext(pendingStatus);
     if (next < 0) {
       next = findNext((t) => t.status === "flagged");
@@ -502,6 +578,51 @@ export default function Home() {
   const project = batch ? projects.find((p) => p.id === batch.project_id) : undefined;
   const failedFiles = batch?.files.filter((f) => f.error) ?? [];
   const pace = session.accepted >= 3 ? Math.round(session.seconds / session.accepted) : null;
+  const openLeft = counts.review + counts.flagged;
+
+  const onPick = useCallback((id: number) => setPicked((old) => {
+    const next = new Set(old ?? []);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  }), []);
+  const onPickMany = useCallback((ids: number[] | null) => {
+    setPicked((old) => ids === null ? null : ids.length === 0 ? (old ?? new Set()) : new Set([...(old ?? []), ...ids]));
+    setBulk((b) => ({ ...b, result: null }));
+  }, []);
+  const canBulk = can("tickets.edit");
+  // One value onto the chosen unapproved tickets. The server leaves approved ones
+  // alone, records each change in its ticket's history, and never approves anything.
+  async function applyBulk() {
+    if (!batch || !picked || !picked.size || !bulk.value.trim() || bulk.busy) return;
+    if (dirtyNow.current && current && picked.has(current.id)) {
+      setBulk((b) => ({ ...b, result: "Save or discard the changes on the open ticket first: it's one of those chosen." }));
+      return;
+    }
+    const ids = tickets.filter((t) => picked.has(t.id) && bulkEditable(t)).map((t) => t.id);
+    if (!ids.length) return;
+    setBulk((b) => ({ ...b, busy: true, result: null }));
+    try {
+      const done: BulkResult = await bulkEditTickets(ids, bulk.field, bulk.value);
+      const left = Object.entries(done.left_alone).map(([status, n]) => `${n} ${(STATUS_LABEL[status] ?? status).toLowerCase()}`);
+      setBulk((b) => ({ ...b, busy: false, value: "", result: `Changed ${done.changed}.`
+        + (done.unchanged ? ` ${done.unchanged} already had that value.` : "")
+        + (left.length ? ` Left alone: ${left.join(", ")}.` : "") + " Each still needs its own Accept." }));
+      setPicked(new Set());
+      await refresh(batch.id);
+    } catch (e) {
+      setBulk((b) => ({ ...b, busy: false, result: (e as Error).message }));
+    }
+  }
+  const pickedOpen = picked ? tickets.filter((t) => picked.has(t.id) && bulkEditable(t)).length : 0;
+  // On a phone an upload error at the page's top is out of sight of the button that caused it.
+  const onUploadError = useCallback((message: string | null) => {
+    // A dropped connection can't say whether the server got the files; a refusal can.
+    const lost = message?.startsWith("Couldn't reach the Quarvera server");
+    setError(message && (lost
+      ? "The upload was interrupted: the connection dropped before Quarvera answered, so it may not have arrived. Your files are still chosen below. Check Upload history first; if the batch isn't there, upload again."
+      : `${message} Your files are still chosen below, so you can correct the choice and upload again.`));
+    if (message) requestAnimationFrame(() => document.getElementById("page-error")?.scrollIntoView({ block: "center" }));
+  }, []);
 
   return (
     <div className="space-y-3 pb-6">
@@ -519,7 +640,7 @@ export default function Home() {
         </p>
       )}
       {error && (
-        <div role="alert" className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+        <div role="alert" id="page-error" className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
           {error} <button type="button" className="ml-3 font-semibold underline" onClick={() => setError(null)}>Dismiss</button>
         </div>
       )}
@@ -546,7 +667,7 @@ export default function Home() {
       {!canUpload && !opening && (
         <p className="tf-notice" role="note">Your role is view-only. You can open batches and ticket images, but uploads and edits are disabled.</p>
       )}
-      {canUpload && !opening && (!batch || showUpload) && <UploadPanel projects={projects} reading={configured} onUploaded={onUploaded} onError={setError} />}
+      {canUpload && !opening && (!batch || showUpload) && <UploadPanel projects={projects} reading={configured} onUploaded={onUploaded} onError={onUploadError} />}
       {!batch && !opening && <BatchQueue />}
 
       {batch && (
@@ -590,7 +711,8 @@ export default function Home() {
             <span className="text-xs text-[#657182]"><strong className="text-[#216c43]">{counts.verified}</strong> accepted · <strong className="text-[#995a18]">{counts.review}</strong> to review · {counts.flagged > 0
               ? <button type="button" className="tf-link text-xs" onClick={() => { setReviewFilter("flagged"); setQueueOpen(true); }}>{counts.flagged} flagged for later</button>
               : <><strong className="text-[#995a18]">0</strong> flagged for later</>}{counts.skipped > 0 && <> · <strong>{counts.skipped}</strong> skipped</>}</span>
-            {pace !== null && <span className="text-xs text-[#657182]" data-testid="session-pace">This session: {session.accepted} accepted, about {pace} s each</span>}
+            {pace !== null && <span className="text-xs text-[#657182]" data-testid="session-pace">This session: {session.accepted} accepted, about {pace} s each
+              {openLeft > 0 && <> · <span data-testid="time-left">{minutes(openLeft * pace)} left for {openLeft} open at this pace (an estimate)</span></>}</span>}
           </div>}
           {batch.progress && batch.status === "processing" && batch.intake_mode !== "manual" && (
             <ReadingProgress progress={batch.progress} />
@@ -639,13 +761,34 @@ export default function Home() {
         <p className="tf-notice text-[#7c4518]">Review flagged tickets before finishing.</p>
       )}
 
+      {picked !== null && tickets.length > 0 && <section className="tf-panel tf-bulk-bar" role="group" aria-label="Correct the chosen tickets together">
+        <span className="tf-bulk-count" data-testid="bulk-count">{pickedOpen} chosen</span>
+        <label className="tf-field-label">Set
+          <select className="tf-field" value={bulk.field} onChange={(e) => setBulk((b) => ({ ...b, field: e.target.value, value: "" }))}>
+            {BULK_FIELDS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </label>
+        <label className="tf-field-label">To
+          <input className="tf-field" type={bulk.field === "delivery_date" ? "date" : "text"} value={bulk.value}
+            list={bulk.field === "supplier" ? "catalog-suppliers" : bulk.field === "material_type" ? "catalog-materials" : undefined}
+            onChange={(e) => setBulk((b) => ({ ...b, value: e.target.value }))}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); void applyBulk(); } }} />
+        </label>
+        <button type="button" className="tf-primary-button" disabled={!pickedOpen || !bulk.value.trim() || bulk.busy} onClick={() => void applyBulk()}>
+          {bulk.busy ? "Applying…" : `Apply to ${pickedOpen} ticket${pickedOpen === 1 ? "" : "s"}`}</button>
+        <button type="button" className="tf-link" onClick={() => onPickMany(null)}>Cancel</button>
+        <p className="tf-bulk-note">Choose tickets in the queue. Approved tickets are never changed, nothing here approves a ticket, and each change goes in that ticket&apos;s history. Ticket numbers and tons are corrected one ticket at a time.</p>
+        {bulk.result && <p role="status" data-testid="bulk-result" className="tf-bulk-note font-semibold">{bulk.result}</p>}
+      </section>}
+
       {tickets.length > 0 && current && (
         <section ref={workspace} className={`tf-review-grid ${queueOpen ? "" : "tf-review-grid-noqueue"}`} aria-label="Ticket review workspace">
           <p className="sr-only" aria-live="polite" data-testid="position-announcement">
             Showing {selected + 1} of {tickets.length}: ticket number {current.ticket_number || "not entered"}, {(STATUS_LABEL[current.status] ?? current.status).toLowerCase()}.
           </p>
           {queueOpen && <TicketQueue key={batch?.id} tickets={tickets} selected={selected} filter={reviewFilter}
-            onFilter={setReviewFilter} onSelect={selectTicket} onHide={hideQueue} />}
+            onFilter={setReviewFilter} onSelect={selectTicket} onHide={hideQueue} issue={issue} onIssue={setIssue}
+            picking={picked !== null} picked={picked ?? NO_PICKS} onPick={onPick} onPickMany={onPickMany} canPick={canBulk} />}
 
           <section className="tf-panel tf-review-pane flex flex-col">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e7eaee] px-3 py-2">
@@ -657,7 +800,10 @@ export default function Home() {
               <div className="flex flex-wrap items-center gap-1.5">
                 {!queueOpen && <button type="button" className="tf-tool" onClick={() => setQueueOpen(true)}>Show queue</button>}
                 <button type="button" onClick={() => setZoom(zoomOut)} disabled={zoom <= 1} className="tf-tool" aria-label="Zoom out">−</button>
-                <span className="w-10 text-center text-[11px] tabular-nums text-[#526273]" data-testid="zoom-level">{Math.round(zoom * 100)}%</span>
+                {/* The level is also the fit control: one press back to the whole ticket. Shift+R rotates left. */}
+                <button type="button" onClick={() => setZoom(1)} disabled={zoom === 1} title="Fit to width (0)"
+                  aria-label={`Fit to width, now ${Math.round(zoom * 100)}%`}
+                  className="w-10 text-center text-[11px] tabular-nums text-[#526273] enabled:underline" data-testid="zoom-level">{Math.round(zoom * 100)}%</button>
                 <button type="button" onClick={() => setZoom(zoomIn)} disabled={zoom >= 4} className="tf-tool" aria-label="Zoom in">+</button>
                 <button type="button" onClick={() => setRotation((v) => (v + 90) % 360)} className="tf-tool">Rotate</button>
                 <a href={ticketImageUrl(current.id)} target="_blank" rel="noreferrer" className="tf-link px-1 text-[11px]">Open full image</a>
@@ -666,7 +812,7 @@ export default function Home() {
                 <button type="button" disabled={selected >= tickets.length - 1} onClick={() => selectTicket(selected + 1)} className="tf-tool">Next</button>
               </div>
             </div>
-            {isImportBatch(batch) ? <ImportedRow batch={batch!} ticket={current} /> : <ScanViewer src={ticketImageUrl(current.id) + (imageVersion ? "?v=" + imageVersion : "")}
+            {isImportBatch(batch) ? <ImportedRow batch={batch!} ticket={current} /> : <ScanViewer src={scans.srcFor(current.id)} ticketId={current.id}
               alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
               zoom={zoom} rotation={rotation} onZoom={setZoom} />}
           </section>

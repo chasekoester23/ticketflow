@@ -319,3 +319,17 @@ a.tf-share-name:hover { text-decoration: underline; }
 .tf-waiting { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 7px 12px; background: white; border: 1px solid var(--tf-border); border-radius: 3px; color: #5f6c7b; font-size: 12.5px; }
 .tf-waiting a { color: #a24b0a; font-weight: 600; text-decoration: none; }
 .tf-waiting a:hover { text-decoration: underline; }
+
+/* Review speed: values to check, choosing tickets to correct together. */
+.tf-rv-check { color: #8a4f14; }
+.tf-rv-check-asked { padding: 3px 6px; background: #fff4e0; border-left: 3px solid #df702f; }
+.tf-queue-pick { display: flex; align-items: stretch; }
+.tf-queue-pick > input { flex: none; width: 16px; margin: 0 0 0 8px; accent-color: #df702f; }
+.tf-queue-pick > input:disabled { opacity: 0.35; }
+.tf-bulk-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; padding: 10px 14px; background: #fff9ed; border-color: #f0d8ad; }
+.tf-bulk-bar .tf-field, .tf-bulk-bar .tf-field-label { min-width: 0; max-width: 100%; }
+.tf-bulk-count { padding-bottom: 8px; color: #754e20; font-size: 12px; font-weight: 700; }
+.tf-bulk-note { flex-basis: 100%; color: #754e20; font-size: 11px; }
+@media (max-width: 560px) {
+  .tf-bulk-bar > label, .tf-bulk-bar .tf-field { width: 100%; }
+}

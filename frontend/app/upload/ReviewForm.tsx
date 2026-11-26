@@ -31,7 +31,7 @@ const FIELDS: { key: FieldKey; label: string; type?: string; flagWords: string[]
   { key: "ticket_number", label: "Ticket number", flagWords: ["Ticket number"], critical: true },
   { key: "delivery_date", label: "Delivery date", type: "date", flagWords: ["Date"], critical: true, repeats: true },
   { key: "material_type", label: "Material", flagWords: ["Material"], repeats: true },
-  { key: "tonnage", label: "Tonnage (tons)", type: "number", flagWords: ["Tonnage"], critical: true },
+  { key: "tonnage", label: "Tonnage (tons)", type: "number", flagWords: ["Tonnage", "Quantity", "Weights"], critical: true },
   { key: "supplier", label: "Supplier", flagWords: ["Supplier"], repeats: true },
   { key: "job_location", label: "Job location", flagWords: ["Job location"], repeats: true },
 ];
@@ -122,6 +122,24 @@ export function previousValues(tickets: Ticket[], index: number): PreviousValues
   return found;
 }
 
+const missingNotice = (flag: string) => /\bmissing\b/i.test(flag);
+/**
+ * Fields holding a value that arrived with a reason to doubt it. Blank fields aren't
+ * here: those already have to be filled before Accept. The server still checks it all.
+ */
+export function attentionFields(ticket: Ticket, saved: Record<string, string>, manual: boolean): FieldKey[] {
+  const flags = manual ? ticket.flags.filter((flag) => !missingNotice(flag)) : ticket.flags;
+  return FIELDS.filter((f) => {
+    const value = saved[f.key];
+    if (!value.trim()) return false;
+    if (flags.some((flag) => f.flagWords.some((word) => flag.startsWith(word)))) return true;
+    if (f.key === "tonnage") return tonsMessage(value, ticket.unit ?? "ton")?.tone === "warning";
+    if (f.key === "delivery_date") return dateMessage(value) !== null;
+    if (f.key === "ticket_number") return Boolean(ticket.number_warning);
+    return false;
+  }).map((f) => f.key);
+}
+
 export const ReviewForm = memo(function ReviewForm({
   ticket, manual, catalog, previous, failure, onChange, onAdvance, onAccepted, onDirtyChange, onBusyChange, onError, onFailure, onStale,
   haulers = [],
@@ -169,6 +187,14 @@ export const ReviewForm = memo(function ReviewForm({
   const [tare, setTare] = useState(saved[TARE_KEY]);
   const [weightUnit, setWeightUnit] = useState(saved[WEIGHT_UNIT_KEY]);
   const [saving, setSaving] = useState(false);
+  // Values that arrived with a warning: the reader's flag, an implausible figure, or a
+  // number that may be the job's. Each needs a person to look at it before Accept works.
+  // Typing in the field, pressing Enter or Tab in it, clicking into it, or "Matches the
+  // scan" counts as looking; the cursor merely landing there doesn't.
+  const [attention] = useState<FieldKey[]>(() => canEdit && ticket.status !== "verified" ? attentionFields(ticket, saved, manual) : []);
+  const [checked, setChecked] = useState<Partial<Record<FieldKey, boolean>>>({});
+  const markChecked = (key: FieldKey) => setChecked((old) => old[key] ? old : { ...old, [key]: true });
+  const openedAt = useRef(0);
   const [leftBlank, setLeftBlank] = useState<Record<string, boolean>>({});
   const [triedAccept, setTriedAccept] = useState(false);
   // Read and set in the same moment as a click. Disabling the button waits for a
@@ -237,10 +263,13 @@ export const ReviewForm = memo(function ReviewForm({
   useLayoutEffect(() => {
     if (!canEdit) return;
     const active = document.activeElement;
+    openedAt.current = performance.now();
     if (active && active !== document.body && !form.current?.contains(active) && active.closest("input, textarea, select, [role=dialog]")) return;
-    const flagged = FIELDS.find((f) => ticket.flags.some((fl) => f.flagWords.some((w) => fl.startsWith(w))));
-    const target = FIELDS.find((f) => !values[f.key]) ?? flagged;
+    // The first field needing a person, in form order: blank, or read with a warning.
+    // A clean ticket opens on Accept, so Enter approves what's on screen.
+    const target = FIELDS.find((f) => !values[f.key] || attention.includes(f.key));
     if (target) document.getElementById("review-" + target.key)?.focus();
+    else if (ticket.status !== "verified") acceptButton.current?.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per ticket shown; the form remounts per ticket
   }, []);
 
@@ -356,6 +385,9 @@ export const ReviewForm = memo(function ReviewForm({
   // and the server still checks everything itself.
   const stopsApproval = (key: FieldKey) => !values[key].trim() || (key === "tonnage" && tons?.tone === "problem");
   const needed = FIELDS.filter((f) => !values[f.key].trim()).map((f) => NEEDED_LABEL[f.key]);
+  // Changing a value is looking at it.
+  const unchecked = (key: FieldKey) => attention.includes(key) && !checked[key] && values[key] === saved[key];
+  const toCheck = canVerify ? FIELDS.filter((f) => unchecked(f.key)).map((f) => NEEDED_LABEL[f.key]) : [];
 
   // A message appearing pushes the form down. If that happened mid-click, the
   // click would land on something else, so it waits for the pointer to come up.
@@ -379,7 +411,7 @@ export const ReviewForm = memo(function ReviewForm({
   }
 
   function accept() {
-    const first = FIELDS.find((f) => stopsApproval(f.key));
+    const first = FIELDS.find((f) => stopsApproval(f.key)) ?? FIELDS.find((f) => unchecked(f.key));
     if (first) {
       setTriedAccept(true);
       document.getElementById("review-" + first.key)?.focus();
@@ -403,13 +435,21 @@ export const ReviewForm = memo(function ReviewForm({
     });
   }
 
-  // Enter moves down the form, like a spreadsheet; the last field lands on Accept.
+  // Enter confirms this field and moves down to the next one still needing a person
+  // (blank, or read with a warning), then to Accept. Tab still visits every field.
   function nextOnEnter(event: KeyboardEvent<HTMLInputElement>, index: number) {
+    if (event.key === "Tab" && !event.shiftKey) markChecked(FIELDS[index].key);
     if (event.key !== "Enter" || event.metaKey || event.ctrlKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    const next = FIELDS[index + 1];
+    if (event.repeat) return;
+    markChecked(FIELDS[index].key);
+    const next = FIELDS.slice(index + 1).find((f) => !values[f.key].trim() || unchecked(f.key));
     if (next) document.getElementById("review-" + next.key)?.focus();
     else acceptButton.current?.focus();
+  }
+  // A held Enter repeats. Without this it would approve the next ticket the moment it opened.
+  function guardAcceptKey(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "Enter" && (event.repeat || performance.now() - openedAt.current < 350)) event.preventDefault();
   }
 
   useEffect(() => {
@@ -482,7 +522,8 @@ export const ReviewForm = memo(function ReviewForm({
         {FIELDS.map((f, index) => {
           const said = message(f.key);
           const showsAsRead = ticket.as_read?.[f.key] !== undefined && ticket.as_read[f.key] !== values[f.key];
-          const describedBy = [said && "message-" + f.key, showsAsRead && "as-read-" + f.key].filter(Boolean).join(" ") || undefined;
+          const describedBy = [said && "message-" + f.key, showsAsRead && "as-read-" + f.key, canVerify && unchecked(f.key) && "check-" + f.key]
+            .filter(Boolean).join(" ") || undefined;
           const notes = <>
             <div aria-live="polite">{said && <p id={"message-" + f.key} data-testid={"message-" + f.key}
               className={"tf-rv-note " + (said.tone === "problem" ? "text-red-700" : "text-amber-800")}>{said.text}</p>}</div>
@@ -500,6 +541,13 @@ export const ReviewForm = memo(function ReviewForm({
                 Did you mean {ticket.similar[f.key]}? Use the catalog name
               </button>
             )}
+            {canVerify && attention.includes(f.key) && values[f.key] === saved[f.key] && (unchecked(f.key)
+              ? <p className={"tf-rv-note tf-rv-check" + (triedAccept ? " tf-rv-check-asked" : "")} id={"check-" + f.key} data-testid={"check-" + f.key}>
+                Check this against the scan, then press Enter.{" "}
+                {/* Named without the field's label, so the label still names only its field. It sits just under that field. */}
+                <button type="button" className="tf-link" data-testid={"confirm-" + f.key} onClick={() => markChecked(f.key)}>Matches the scan</button>
+              </p>
+              : <p className="tf-rv-note tf-rv-muted" data-testid={"checked-" + f.key}>Checked against the scan.</p>)}
             {canEdit && f.key === "delivery_date" && !values[f.key] && previous[f.key] && (
               <button type="button" className="tf-link tf-rv-note"
                 onClick={() => setValues({ ...values, [f.key]: previous[f.key] as string })}>
@@ -523,6 +571,7 @@ export const ReviewForm = memo(function ReviewForm({
                 value={values[f.key]}
                 readOnly={!canEdit || saving}
                 onKeyDown={(event) => nextOnEnter(event, index)}
+                onPointerDown={() => markChecked(f.key)}
                 onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
                 onBlur={() => leftField(f.key)}
                 data-state={said?.tone === "problem" ? "problem" : said?.tone === "warning" || flaggedFor(f.flagWords) ? "warn" : undefined}
@@ -640,13 +689,16 @@ export const ReviewForm = memo(function ReviewForm({
       {dirty && <p className="tf-rv-unsaved" role="status">Unsaved changes — save or accept before leaving this ticket.</p>}
       {canEdit && <div className="tf-rv-actions">
         {canVerify && needed.length > 0 && <p id="accept-needs" data-testid="accept-needs" className="tf-rv-needs">Still needed to accept: {needed.join(", ")}.</p>}
+        {canVerify && needed.length === 0 && toCheck.length > 0 && <p id="accept-checks" data-testid="accept-checks" className="tf-rv-needs">
+          Check against the scan before accepting: {toCheck.join(", ")}.</p>}
         <div className="tf-rv-buttons">
           <button disabled={saving || !dirty || cannotSave} onClick={() => void attempt("save")} className="tf-secondary-button">Save changes</button>
-          {canFlag && <button disabled={saving} onClick={() => void attempt("flag", note, true)} className="tf-secondary-button">Flag for later</button>}
+          {canFlag && <button id="review-flag-button" disabled={saving} onClick={() => void attempt("flag", note, true)} className="tf-secondary-button">Flag for later</button>}
           {canVerify ? <button
             ref={acceptButton}
-            title="Review and accept ticket (Cmd/Ctrl + Enter)"
-            aria-describedby={needed.length > 0 ? "accept-needs" : undefined}
+            title="Review and accept ticket (Enter here, or Cmd/Ctrl + Enter anywhere)"
+            aria-describedby={needed.length > 0 ? "accept-needs" : toCheck.length > 0 ? "accept-checks" : undefined}
+            onKeyDown={guardAcceptKey}
             onClick={accept}
             className="tf-primary-button tf-rv-accept"
             disabled={saving || cannotSave || (ticket.status === "verified" && !dirty)}
@@ -664,7 +716,7 @@ export const ReviewForm = memo(function ReviewForm({
         </div>
         <div className="tf-rv-foot">
           <span>{canVerify ? "Accepting records your name and counts these values toward totals." : "A manager or owner approves these before they count."}</span>
-          {canSkip && <button disabled={saving} onClick={() => {
+          {canSkip && <button id="review-skip-button" disabled={saving} onClick={() => {
             if (!window.confirm("Skip this ticket? Skipped tickets are excluded from exports and financial totals.")) return;
             void attempt("skip", undefined, true);
           }} className="tf-link">Skip non-ticket</button>}
