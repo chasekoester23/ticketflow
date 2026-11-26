@@ -67,7 +67,7 @@ test("every link on the site goes somewhere", async ({ page, request }) => {
   await mockPublic(page);
   await page.goto("/welcome");
   const hrefs = await page.locator("a[href]").evaluateAll((links) => [...new Set(links.map((link) => link.getAttribute("href")))]);
-  expect(hrefs).toEqual(expect.arrayContaining(["/login", "/demo", "/welcome", "#how", "#intake", "#reconcile", "#trucking", "#costs"]));
+  expect(hrefs).toEqual(expect.arrayContaining(["/login", "/demo", "/welcome", "#platform", "#intake", "#reconcile", "#trucking", "#costs"]));
   for (const href of hrefs) {
     if (href.startsWith("#")) await expect(page.locator(href)).toHaveCount(1);
     else expect((await request.get(href)).status(), href).toBe(200);
@@ -80,7 +80,6 @@ test("the site says signing up is gated, labels its examples, and loads nothing 
   await mockPublic(page);
   await page.goto("/welcome");
   await page.evaluate(() => document.fonts.ready);
-  await expect(page.getByRole("main").getByText("We're working with a small number of contractors to start.", { exact: false })).toBeVisible();
   await expect(page.getByRole("contentinfo").getByText("fictional demo company", { exact: false })).toBeVisible();
   await expect(page.getByRole("img", { name: /review screen/ })).toBeVisible();
   expect(await page.locator("img[src^='/site/']").first().evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
@@ -92,11 +91,11 @@ test("the site can be walked from the keyboard, with a visible focus ring", asyn
   await mockPublic(page);
   await page.goto("/welcome");
   const seen = [];
-  for (let press = 0; press < 7; press += 1) {
+  for (let press = 0; press < 9; press += 1) {
     await page.keyboard.press("Tab");
     seen.push(await page.evaluate(() => ({ text: document.activeElement.textContent.trim(), outline: getComputedStyle(document.activeElement).outlineStyle })));
   }
-  expect(seen.map((item) => item.text)).toEqual(expect.arrayContaining(["Platform", "How it works", "Sign in", "Request a demo"]));
+  expect(seen.map((item) => item.text)).toEqual(expect.arrayContaining(["Platform", "Invoices", "Sign in", "Request a demo"]));
   expect(seen.every((item) => item.outline !== "none")).toBe(true);
 });
 
@@ -259,7 +258,7 @@ test("the public pages have no automatically detectable accessibility problems",
   }
 });
 
-test("a demo request is sent with what the contractor told us, and says what happens next", async ({ page }) => {
+test("a demo request asks only for what's needed, and says what happens next", async ({ page }) => {
   const log = await mockPublic(page);
   await page.goto("/demo");
   await page.getByRole("button", { name: "Request a demo" }).click();
@@ -268,13 +267,9 @@ test("a demo request is sent with what the contractor told us, and says what hap
   await page.getByLabel("Your name").fill("Pat Example");
   await page.getByLabel("Company").fill("Example Sitework LLC");
   await page.getByLabel("Work email").fill("pat@example.com");
-  await page.getByLabel("Your role").selectOption("Controller or finance");
-  await page.getByLabel("Delivery tickets a month").selectOption("500_2000");
-  await page.getByLabel("Hourly trucking").check();
+  await page.getByLabel("Anything we should know?").fill("About 200 tickets a week, hourly trucking.");
   await page.getByRole("button", { name: "Request a demo" }).click();
   await expect(page.getByRole("heading", { name: /We'll be in touch/ })).toBeVisible();
-  expect(log.requests[0]).toMatchObject({ company_name: "Example Sitework LLC", contact_name: "Pat Example", email: "pat@example.com",
-    monthly_tickets: "500_2000", website: "" });
-  expect(log.requests[0].message).toContain("Role: Controller or finance.");
-  expect(log.requests[0].message).toContain("Hourly trucking");
+  expect(log.requests[0]).toMatchObject({ company_name: "Example Sitework LLC", contact_name: "Pat Example", email: "pat@example.com", website: "" });
+  expect(log.requests[0].message).toBe("Demo request. About 200 tickets a week, hourly trucking.");
 });

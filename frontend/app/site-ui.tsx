@@ -10,9 +10,10 @@ export function SiteLogo({ className = "" }: { className?: string }) {
 
 const LINKS = [
   { href: "/welcome#platform", label: "Platform" },
-  { href: "/welcome#how", label: "How it works" },
+  { href: "/welcome#reconcile", label: "Invoices" },
   { href: "/welcome#trucking", label: "Trucking" },
-  { href: "/welcome#founder", label: "Our story" },
+  { href: "/welcome#how", label: "How it works" },
+  { href: "/welcome#mission", label: "Mission" },
 ];
 
 export function SiteNav() {
@@ -47,7 +48,7 @@ export function SiteFooter() {
             <li><a href="/welcome#costs">Project costs</a></li>
           </ul></div>
           <div><h2>Company</h2><ul>
-            <li><a href="/welcome#founder">Our story</a></li>
+            <li><a href="/welcome#mission">Mission</a></li>
             <li><Link href="/demo">Request a demo</Link></li>
             <li><Link href="/login">Sign in</Link></li>
           </ul></div>
