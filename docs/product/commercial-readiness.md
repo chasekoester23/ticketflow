@@ -143,8 +143,8 @@ The starting status is the audit of commit `e19433d`. The current status is upda
 
 | Check | Result |
 |---|---|
-| Backend, SQLite (final code) | 1,534 passed, 37 skipped, 3 xfailed |
-| Backend, PostgreSQL (final code) | 1,558 passed, 13 skipped, 3 xfailed. An earlier run had 1 concurrency failure while a second test run shared the database; it passes alone and in this clean run. |
+| Backend, SQLite (final code) | 1,553 passed, 37 skipped, 3 xfailed (includes 7 edge-case and 9 + 3 wording tests added at the end) |
+| Backend, PostgreSQL (final code) | 1,577 passed, 13 skipped, 3 xfailed. An earlier run had 1 concurrency failure while a second test run shared the database; it passes alone and in this clean run. |
 | Browser (mock API, production build, final code) | 341 passed, 1 skipped (includes 5 new: pounds/weights and whole loads on review, rate unit, per-ton line entry, choosing the shift) |
 | Real stack (`tests/e2e/run.sh`) | 7 + 1 passed. The project-report step followed the old `/reports/project` page, which now redirects into the project workspace; the test now checks the redirect and the report. |
 | Type check | Clean |
@@ -178,6 +178,7 @@ The starting status is the audit of commit `e19433d`. The current status is upda
 | P1 | An hours line on a project's invoice matched a shift worked for another project without saying so | Flagged "Billed against another project", not paid; the project's own shift is preferred, so the line isn't ambiguous either |
 | P1 | The demo server reads `backend/.env`, so "Read automatically" in the demo could spend on AI | `AI_READING_ENABLED=false`: uploads to be read are refused, the worker never builds a reader, and the status endpoint says so |
 | P2 | The pilot report's verified tons added every unit | Tons only |
+| P2 | Supplier-invoice exports, the differences CSV, paste errors and per-ticket notes said "tons" for a line in another unit | Worded in the line's unit; ton lines unchanged; a Unit column in the differences CSV (`tests/test_invoice_units_wording.py`) |
 
 ### Still open
 
@@ -186,5 +187,4 @@ The starting status is the audit of commit `e19433d`. The current status is upda
 | P1 | M1: a person walks each billing method through the browser (founder review steps) |
 | P2 | One rate per supplier, material, scope and date: quoting one material both per ton and per yard needs two catalog materials |
 | P2 | Volume-to-weight factor per material, under contract |
-| P2 | Some supplier-invoice exports and the CSV of differences still say "tons" in their headers for a line in another unit |
 | P3 | Metric tonnes and kilograms |
