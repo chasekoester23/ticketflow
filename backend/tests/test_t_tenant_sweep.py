@@ -189,6 +189,7 @@ def _body(method: str, path: str, ids: dict):
         ("POST", "/api/name-aliases"): {"kind": "supplier", "alias": "Sweep Alias", "target_id": ids["supplier"]},
         ("PUT", "/api/rates"): {"supplier_id": ids["supplier"], "material_id": ids["material"], "unit_price": "12"},
         ("POST", "/api/rates/import"): {"text": "Example Aggregates,Sand,12", "apply": False},
+        ("POST", "/api/rates/apply-to-unpriced"): {"apply": False},
         ("POST", "/api/setup/import/suppliers"): {"text": "Sweep Supplier Co", "apply": False},
         ("POST", "/api/setup/import/materials"): {"text": "Sweep Material", "apply": False},
         ("POST", "/api/setup/import/haulers"): {"text": "Sweep Hauling", "apply": False},
