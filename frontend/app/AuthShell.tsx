@@ -112,7 +112,9 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   const sessionCheckedAt = useRef(0);
   const shownBefore = useRef(false);
   const pathname = usePathname();
-  const isPublic = PUBLIC_PATHS.includes(pathname);
+  // The marketing website has no application: every page it serves is public. The browser
+  // still shows "/" after middleware.ts rewrites it to /welcome, so the path alone can't say.
+  const isPublic = process.env.NEXT_PUBLIC_SITE_MODE === "marketing" || PUBLIC_PATHS.includes(pathname);
   const section = sectionOf(pathname);
   const [pending, setPending] = useState<{ review: number } | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
