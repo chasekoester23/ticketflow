@@ -35,7 +35,9 @@ test("a stale approval is refused, even with two people on the real server", asy
   const after = await (await manager.request.get(`${API}/api/tickets/${ticket.id}/audit`)).json();
   expect(after.some((event) => event.new === "verified")).toBeFalsy();
 
-  // Now they've seen it, approving works and names them.
+  // Now they've seen it, approving works and names them. 99.125 t is above the plausible-load
+  // warning, so the reviewer checks that value against the scan first (clicking into it counts).
+  await manager.getByLabel("Tonnage (tons)").click();
   await manager.getByRole("button", { name: "Accept & next" }).click();
   await expect.poll(async () => (await (await manager.request.get(`${API}/api/tickets/${ticket.id}/audit`)).json())
     .some((event) => event.new === "verified")).toBeTruthy();
