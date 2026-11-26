@@ -342,7 +342,7 @@ test("a finished batch says so and points to the next job", async ({ page }) => 
   await page.goto("/upload?batch=5");
   const done = page.getByTestId("batch-complete");
   await expect(done).toContainText("All tickets have been resolved.");
-  await expect(done.getByRole("link", { name: "Compare an invoice" })).toHaveAttribute("href", "/invoices");
+  await expect(done.getByRole("link", { name: "Compare an invoice" })).toHaveAttribute("href", "/invoices/lines");
 });
 
 test("a scan that can't load says not to approve without it", async ({ page }) => {

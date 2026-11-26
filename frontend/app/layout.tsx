@@ -10,7 +10,11 @@ import "./public.css";
 import type { ReactNode } from "react";
 import AuthShell from "./AuthShell";
 
-export const metadata = { title: "TicketFlow", description: "Verify delivered material and reconcile supplier invoices." };
+export const metadata = {
+  title: "Quarvera",
+  description: "Construction material and trucking cost management, from the field to the invoice. Every delivery. Every truck. Every dollar.",
+  applicationName: "Quarvera",
+};
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return <html lang="en"><body><AuthShell>{children}</AuthShell></body></html>;

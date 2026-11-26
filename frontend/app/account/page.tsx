@@ -49,7 +49,7 @@ export default function AccountPage() {
 
     {required && <div role="alert" className="rounded border border-[#f2d6aa] bg-[#fff8ec] px-4 py-3 text-[13px] leading-6 text-[#7a4a12]">
       <strong>Set your own password to continue.</strong> You signed in with a temporary password from your company’s owner.
-      Choose a new one only you know; TicketFlow is unavailable until you do.
+      Choose a new one only you know; Quarvera is unavailable until you do.
     </div>}
 
     <section className="tf-panel">

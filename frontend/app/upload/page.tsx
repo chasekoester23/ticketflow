@@ -11,6 +11,7 @@ import {
   Manifest,
   getStatus,
   listMaterials,
+  listHaulers,
   listProjects,
   listSuppliers,
   Project,
@@ -84,7 +85,8 @@ export default function Home() {
   const canUpload = can("tickets.upload");
   const [batch, setBatch] = useState<Batch | null>(null);
   const [opening, setOpening] = useState(false);
-  const [showUpload, setShowUpload] = useState(false);
+  // The Upload menu's "Delivery tickets" opens here with ?new=1: the upload form, ready.
+  const [showUpload, setShowUpload] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("new") === "1");
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState(0);
   const [formDirty, setFormDirty] = useState(false);
@@ -130,6 +132,8 @@ export default function Home() {
   const canMove = can("projects.manage");
   const openedAt = useRef<Record<number, number>>({});
   const [catalog, setCatalog] = useState<{ suppliers: string[]; materials: string[] }>({ suppliers: [], materials: [] });
+  const [haulers, setHaulers] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => { listHaulers().then((h) => setHaulers(h.map(({ id, name }) => ({ id, name })))).catch(() => setHaulers([])); }, []);
 
   useEffect(() => {
     listProjects().then(setProjects).catch((e) => setError(e.message));
@@ -502,15 +506,15 @@ export default function Home() {
     <div className="space-y-3 pb-6">
       {!batch && !opening && <div className="tf-page-heading">
         <div>
-          <h1 className="tf-page-title">Ticket intake & review</h1>
-          <p className="tf-page-description">Upload delivery scans, compare extracted information with the original, and approve each ticket.</p>
+          <h1 className="tf-page-title">Document Intake</h1>
+          <p className="tf-page-description">Every document received: originals, processing status and anything that failed. Tickets ready to check also appear in the <a className="tf-link" href="/review">Review Queue</a>.</p>
         </div>
         <div className="tf-status tf-status-attention">Human verification required</div>
       </div>}
 
       {configured === false && (!batch || showUpload) && (
         <p className="tf-notice" role="note">
-          AI extraction is not configured. <strong>Manual entry works without an API key.</strong> Select “Manual entry” below, then run the local processing worker to prepare your scans. AI extraction requires a provider key in backend/.env.
+          Automatic reading isn&apos;t set up for this workspace, so <strong>tickets are entered by hand</strong> beside each scan. An administrator can turn it on; System health shows what it needs.
         </p>
       )}
       {error && (
@@ -541,8 +545,8 @@ export default function Home() {
       {!canUpload && !opening && (
         <p className="tf-notice" role="note">Your role is view-only. You can open batches and ticket images, but uploads and edits are disabled.</p>
       )}
+      {canUpload && !opening && (!batch || showUpload) && <UploadPanel projects={projects} reading={configured} onUploaded={onUploaded} onError={setError} />}
       {!batch && !opening && <BatchQueue />}
-      {canUpload && !opening && (!batch || showUpload) && <UploadPanel projects={projects} onUploaded={onUploaded} onError={setError} />}
 
       {batch && (
         <section className="tf-panel px-3 py-2" aria-label="Batch summary">
@@ -594,7 +598,7 @@ export default function Home() {
             <p className={workerRunning === false ? "mt-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900" : "tf-notice mt-3"} role="status" data-testid="queue-status">
               {workerRunning === false && <strong>The processing worker isn&apos;t running, so this upload is waiting. </strong>}
               {workerRunning === true && <strong>The worker is running, and will pick this up shortly. </strong>}
-              Your files are saved in the processing queue. A separate TicketFlow worker must be running
+              Your files are saved in the processing queue. A separate Quarvera worker must be running
               to {batch.intake_mode === "manual" ? "prepare ticket images for manual entry" : "extract ticket fields"}.
               From the backend folder, run <code>python scripts/run_worker.py</code>.
               The upload remains queued even if you close this page.
@@ -625,7 +629,7 @@ export default function Home() {
             {manifest?.status === "count_not_confirmed" && <span className="ml-1 font-normal">Enter your paper count in the scan check to confirm nothing was missed.</span>}
           </p>
           <div className="flex flex-wrap gap-2">
-            <a className="tf-secondary-button" href="/invoices">Compare an invoice</a>
+            <a className="tf-secondary-button" href="/invoices/lines">Compare an invoice</a>
             <a className="tf-secondary-button" href="/upload">All uploads</a>
           </div>
         </section>
@@ -669,6 +673,7 @@ export default function Home() {
           <ReviewForm
             key={current.id + "-" + (current.revision ?? `${current.status}-${current.tonnage}-${current.ticket_number}-${current.unit_price}-${current.cost}`)}
             ticket={current}
+            haulers={haulers}
             manual={batch?.intake_mode === "manual"}
             catalog={catalog}
             previous={previous}

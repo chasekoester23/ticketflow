@@ -46,7 +46,7 @@ function backend(): string | null {
 async function proxy(request: Request): Promise<Response> {
   const base = backend();
   if (base === null) {
-    return Response.json({ detail: "The TicketFlow API isn't configured for this site (API_INTERNAL_URL)." },
+    return Response.json({ detail: "The Quarvera API isn't configured for this site (API_INTERNAL_URL)." },
       { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "30" } });
   }
   const incoming = new URL(request.url);
@@ -88,7 +88,7 @@ async function proxy(request: Request): Promise<Response> {
       signal: request.signal,
     } as RequestInit);
   } catch {
-    return Response.json({ detail: "Couldn't reach the TicketFlow API. Try again in a moment." },
+    return Response.json({ detail: "Couldn't reach the Quarvera API. Try again in a moment." },
       { status: 502, headers: { "Cache-Control": "no-store", "Retry-After": "5" } });
   }
 

@@ -77,6 +77,12 @@ class TicketOut(BaseModel):
     # What the reader returned, kept separate from the current values.
     as_read: dict[str, str] = {}
     flag_note: str | None = None
+    # Who hauled it and the hauling charge locked at approval (see services/haul_billing.py).
+    hauler_id: int | None = None
+    truck_number: str | None = None
+    haul_billing: str | None = None
+    haul_unit_rate: Decimal | None = None
+    haul_cost: Decimal | None = None
     # Changes whenever anything a reviewer relies on changes. Send it back in
     # If-Match, so nobody approves values they weren't looking at.
     revision: str = ""
@@ -138,6 +144,8 @@ class TicketPatch(BaseModel):
     supplier: str | None = Field(default=None, max_length=200)
     job_location: str | None = Field(default=None, max_length=200)
     unit_price_override: Decimal | None = Field(default=None, ge=0)
+    hauler_id: int | None = Field(default=None, gt=0)  # who hauled it, when billed per ton or per load
+    truck_number: str | None = Field(default=None, max_length=50)
 
     @field_validator("tonnage", "unit_price_override")
     @classmethod

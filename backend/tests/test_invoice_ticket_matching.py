@@ -361,7 +361,7 @@ def test_report_csv_shows_mode_and_every_ticket_check(client):
     by_number = {r[1]: r for r in rows if len(r) == 13}
     assert by_number["010482"][3] == "Matched"
     assert by_number["010482"][7] == "010482"
-    assert by_number["'=99"][3] == "Not found in TicketFlow"  # formula neutralized
+    assert by_number["'=99"][3] == "Not found in Quarvera"  # formula neutralized
     missing = [r for r in rows if r and r[0] == "NOT ON INVOICE"]
     assert len(missing) == 1 and missing[0][7] == "10483"
 

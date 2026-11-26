@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BulkResult, Filters, Project, RecordsPage as RecordsResult, RecordsSort, SavedView, Ticket, bulkEditTickets,
-  createSavedView, deleteSavedView, listMaterials, listProjects, listSavedViews, listSuppliers, recordsExportUrl,
+  BulkResult, Filters, RecordsPage as RecordsResult, RecordsSort, SavedView, Ticket, bulkEditTickets,
+  createSavedView, deleteSavedView, listMaterials, listSavedViews, listSuppliers, recordsExportUrl,
   searchRecords,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
 import { Dialog } from "../Dialog";
+import { useProject } from "../project-context";
 
 const STATUS_LABEL: Record<string, string> = {
   needs_review: "Needs review", verified: "Verified", flagged: "Flagged",
@@ -26,6 +27,7 @@ const EXPORT_COLUMNS: [string, string][] = [
   ["supplier", "Supplier"], ["job_location", "Job location"], ["unit_price", "Unit price"], ["cost", "Cost"],
   ["status", "Status"], ["source", "Source file"], ["approved_by", "Approved by"], ["approved_at", "Approved at"],
   ["project", "Project"], ["batch", "Batch"], ["price_basis", "Price basis"],
+  ["hauler", "Hauler"], ["truck", "Truck"], ["haul_basis", "Hauling billed"], ["haul_cost", "Hauling cost"],
 ];
 const DEFAULT_EXPORT = EXPORT_COLUMNS.slice(0, 12).map(([key]) => key);
 
@@ -54,7 +56,7 @@ export default function RecordsPage() {
   const [sort, setSort] = useState<RecordsSort>("date");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const [result, setResult] = useState<RecordsResult | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { projectId, setProjectId } = useProject();
   const [views, setViews] = useState<SavedView[]>([]);
   const [viewId, setViewId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +77,6 @@ export default function RecordsPage() {
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
-    listProjects(true).then(setProjects).catch(() => {});
     listSavedViews().then(setViews).catch(() => {});
     Promise.all([listSuppliers(), listMaterials()])
       .then(([s, m]) => setCatalog({ suppliers: s.map((x) => x.name), materials: m.map((x) => x.name) })).catch(() => {});
@@ -85,6 +86,9 @@ export default function RecordsPage() {
       const value = params.get(key);
       if (value) next[key] = value;
     }
+    // The project comes from the top bar. A link to a project's records chooses that project there.
+    if (next.project_id) setProjectId(next.project_id);
+    else if (projectId) next.project_id = projectId;
     setFilters(next);
     setApplied(next);
     setInitialized(true);
@@ -116,6 +120,19 @@ export default function RecordsPage() {
   }, [applied, page, pageSize, sort, direction, initialized, reload]);
 
   useEffect(() => { setSelected(new Set()); }, [applied]);
+
+  // The top bar's project and this list's project are one choice.
+  useEffect(() => {
+    if (!initialized || (applied.project_id ?? "") === projectId) return;
+    const next = (old: Filters) => ({ ...old, project_id: projectId || undefined });
+    setFilters(next);
+    setApplied(next);
+    setPage(1);
+  }, [projectId, initialized]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A saved view that names a project chooses it in the top bar too.
+  useEffect(() => {
+    if (initialized && (applied.project_id ?? "") !== projectId) setProjectId(applied.project_id ?? "");
+  }, [applied.project_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (key: keyof Filters) => (e: { target: { value: string } }) => {
     setViewId("");
@@ -217,10 +234,6 @@ export default function RecordsPage() {
     <div className="tf-page-heading">
       <div><h1 className="tf-page-title">Delivery records</h1>
         <p className="tf-page-description">Search, audit, and export material delivery tickets by project and status.</p></div>
-      <div className="flex flex-wrap gap-2">
-        {canEdit && <Link prefetch={false} href="/records/names" className="tf-secondary-button">Name cleanup</Link>}
-        {canUpload && <Link prefetch={false} href="/upload" className="tf-primary-button"><span aria-hidden="true">+</span> New ticket upload</Link>}
-      </div>
     </div>
     {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
     {notice && <div role="status" className="rounded border border-[#cce4d2] bg-[#f3f9f4] p-3 text-sm text-[#216c43]">{notice}</div>}
@@ -239,18 +252,12 @@ export default function RecordsPage() {
           {hasFilter && <button type="button" onClick={() => { setViewId(""); setFilters({}); }} className="tf-link">Clear filters</button>}
         </div>
       </div>
-      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <label className="tf-field-label">Search
           <input type="search" className="tf-field w-full" placeholder="Number, supplier, job…" value={filters.q ?? ""} onChange={set("q")} />
         </label>
         <button type="button" className="tf-link text-left sm:hidden" aria-expanded={moreFilters} onClick={() => setMoreFilters((v) => !v)}>{moreFilters ? "Fewer filters" : "More filters"}</button>
         <div className={`${moreFilters ? "grid" : "hidden"} gap-3 sm:contents`}>
-        <label className="tf-field-label">Project
-          <select className="tf-field w-full" value={filters.project_id ?? ""} onChange={set("project_id")}>
-            <option value="">All projects</option>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
-          </select>
-        </label>
         <label className="tf-field-label">Supplier
           <input className="tf-field w-full" placeholder="Supplier name" value={filters.supplier ?? ""} onChange={set("supplier")} />
         </label>

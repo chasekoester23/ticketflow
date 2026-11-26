@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
     required = {"price_snapshot_state", "applied_unit_price", "applied_price_source"}
     if not required.issubset(columns):
         raise RuntimeError(
-            "TicketFlow database migration required. Back up backend/ticketflow.db, "
+            "Quarvera database migration required. Back up backend/ticketflow.db, "
             "then run 'cd backend && alembic upgrade head'. Do not delete your database."
         )
     for name in ("users", "login_sessions"):
@@ -128,7 +128,7 @@ def _documentation() -> dict:
     return {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
 
-app = FastAPI(title="TicketFlow", lifespan=lifespan, **_documentation())
+app = FastAPI(title="Quarvera", lifespan=lifespan, **_documentation())
 _PLAIN_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 

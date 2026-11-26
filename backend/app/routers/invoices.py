@@ -573,6 +573,73 @@ def overview(db: Session = Depends(get_db), organization_id: int = Depends(curre
     }
 
 
+@router.get("/register", dependencies=[Depends(limited("reports"))])
+def invoice_register(project_id: int | None = None, db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
+    """Supplier and trucking invoices in one list, one row per invoice.
+
+    A supplier invoice is its lines grouped by project, supplier and invoice number;
+    a trucking invoice is checked line by line against approved shifts. Amounts are
+    added here, exactly. ``compared`` is None when any part can't be priced yet, so
+    an incomplete comparison is never shown as a difference. ``ticket_level`` is
+    false when any line was entered as a total only: those deliveries are compared
+    in total, not ticket by ticket. Nothing here approves a payment.
+    """
+    from .trucking import _invoices_out
+    codes = {p.id: (p.code, p.name) for p in db.scalars(select(Project).where(Project.organization_id == organization_id))}
+    if project_id is not None and project_id not in codes:
+        raise HTTPException(404, "Project not found")
+    query = select(InvoiceComparison).where(InvoiceComparison.organization_id == organization_id)
+    if project_id is not None:
+        query = query.where(InvoiceComparison.project_id == project_id)
+    items = list(db.scalars(query.order_by(InvoiceComparison.id)))
+    context = LineContext(db, organization_id, items)
+    groups: dict[tuple, dict] = {}
+    for item in items:
+        line = _line_out(db, item, organization_id, context)
+        key = (line.project_id, norm(line.supplier_name), norm(line.invoice_number))
+        group = groups.setdefault(key, {"lines": [], "first_id": line.id})
+        group["lines"].append(line)
+
+    def project(pid):
+        return {"id": pid, "code": codes[pid][0], "name": codes[pid][1]} if pid in codes else None
+
+    rows = []
+    for (pid, _, _), group in groups.items():
+        lines = group["lines"]
+        billed = sum((ln.billed_subtotal for ln in lines), Decimal(0))
+        known = all(ln.verified_subtotal is not None for ln in lines)
+        compared = sum((ln.verified_subtotal for ln in lines if ln.verified_subtotal is not None), Decimal(0)) if known else None
+        statuses = {ln.status for ln in lines}
+        status = ("discrepancy" if "discrepancy" in statuses else "incomplete" if statuses - {"matches"} else "matched")
+        rows.append({
+            "kind": "supplier", "id": group["first_id"], "invoice_number": lines[0].invoice_number, "company": lines[0].supplier_name,
+            "project": project(pid), "period_from": min(ln.date_from for ln in lines).isoformat(),
+            "period_to": max(ln.date_to for ln in lines).isoformat(), "lines": len(lines),
+            "billed": str(billed), "compared": str(compared) if compared is not None else None,
+            "difference": str(billed - compared) if compared is not None else None, "status": status,
+            "ticket_level": all(ln.comparison_mode == "itemized" for ln in lines),
+            "has_document": any(ln.source_document_id for ln in lines),
+            "href": f"/invoices/lines?line={group['first_id']}",
+        })
+    for inv in _invoices_out(db, organization_id):
+        if project_id is not None and inv["project_id"] != project_id:
+            continue
+        open_ = inv["exceptions"]
+        status = ("incomplete" if inv["supported"] is None else "discrepancy" if open_ or Decimal(inv["difference"]) != 0 else "matched")
+        rows.append({
+            "kind": "trucking", "id": inv["id"], "invoice_number": inv["invoice_number"], "company": inv["hauler"],
+            "project": project(inv["project_id"]), "period_from": inv["period_from"], "period_to": inv["period_to"],
+            "lines": len(inv["lines"]), "billed": inv["billed"], "compared": inv["supported"], "difference": inv["difference"],
+            "status": status, "ticket_level": True, "has_document": inv["document"] is not None,
+            "href": f"/trucking?tab=invoices&invoice={inv['id']}",
+        })
+    rows.sort(key=lambda r: (r["period_to"], r["kind"], r["id"]), reverse=True)
+    totals = {"invoices": len(rows), "billed": str(sum((Decimal(r["billed"]) for r in rows), Decimal(0))),
+              "with_differences": sum(1 for r in rows if r["status"] == "discrepancy"),
+              "incomplete": sum(1 for r in rows if r["status"] == "incomplete")}
+    return {"totals": totals, "invoices": rows}
+
+
 @router.get("/discrepancies.csv", dependencies=[Depends(limited("exports"))])
 def discrepancies_csv(project_id: str | None = None, supplier: str | None = None, db: Session = Depends(get_db),
                       organization_id: int = Depends(current_organization_id)):
@@ -744,7 +811,7 @@ MODE_LABELS = {
 RESULT_LABELS = {
     "matched": "Matched",
     "tons_differ": "Tons differ",
-    "not_found": "Not found in TicketFlow",
+    "not_found": "Not found in Quarvera",
     "outside_scope": "Outside this invoice line",
     "ambiguous": "Ambiguous - several records",
     "needs_review": "Delivery not verified or incomplete",
@@ -774,7 +841,7 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     result = _line_out(db, item, organization_id)
     output = StringIO(newline="")
     writer = csv.writer(output)
-    writer.writerow(["TicketFlow invoice comparison — NOT approval for payment"])
+    writer.writerow(["Quarvera invoice comparison — NOT approval for payment"])
     writer.writerow(["Invoice number", _csv_text(result.invoice_number)])
     writer.writerow(["Project ID", result.project_id])
     writer.writerow(["Supplier", _csv_text(result.supplier_name)])
@@ -829,7 +896,7 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     if result.ticket_links:
         writer.writerow([])
         writer.writerow(["Ticket evidence confirmed by people"])
-        writer.writerow(["Ticket number", "TicketFlow ticket ID", "Tons when confirmed", "State", "Confirmed by", "Confirmed at (UTC)", "Reasons"])
+        writer.writerow(["Ticket number", "Quarvera ticket ID", "Tons when confirmed", "State", "Confirmed by", "Confirmed at (UTC)", "Reasons"])
         for link in result.ticket_links:
             writer.writerow([_csv_text(link.listed_number), link.ticket_id, str(link.verified_tons), link.state,
                              _csv_text(link.confirmed_by or "Not recorded"), link.confirmed_at.isoformat(),
@@ -838,7 +905,7 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
         writer.writerow([])
         writer.writerow(["Ticket-by-ticket check"])
         writer.writerow(["Invoice line", "Invoice ticket number", "Billed tons", "Result", "Flags",
-                         "TicketFlow ticket ID", "Batch ID", "Recorded ticket number", "Delivery date",
+                         "Quarvera ticket ID", "Batch ID", "Recorded ticket number", "Delivery date",
                          "Review status", "Verified tons", "Billed minus verified tons", "Notes"])
         for row in result.ticket_check:
             t = row.ticket
@@ -860,6 +927,6 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     return Response(
         output.getvalue(),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="ticketflow-invoice-{line_id}.csv"',
+        headers={"Content-Disposition": f'attachment; filename="quarvera-invoice-{line_id}.csv"',
                  "Cache-Control": "no-store"},
     )

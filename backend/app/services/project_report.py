@@ -125,7 +125,9 @@ def _sheet(wb: Workbook, title: str, headers: list[str], rows: list[list], forma
     return ws
 
 
-def workbook(report: dict) -> bytes:
+def workbook(report: dict, costs: dict | None = None, deliveries: list[list] | None = None) -> bytes:
+    """``costs`` is the shared cost report for the project (all dates, by month); ``deliveries``
+    the approved tickets as rows. Both come from the same calculations as the screens."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
@@ -141,6 +143,8 @@ def workbook(report: dict) -> bytes:
         ("Approved tickets with no locked price", totals["unpriced"]),
         ("Tickets not yet approved (excluded above)", totals["pending_tickets"]),
         ("Tons not yet approved (excluded above)", Decimal(totals["pending_tons"])),
+        *([("Approved hauling cost (hourly trucking)", Decimal(costs["costs"]["trucking"])),
+           ("Combined approved cost (material + hauling)", Decimal(costs["costs"]["total"]))] if costs else []),
         ("Invoice material billed", Decimal(report["invoices"]["billed_total"])),
         ("Approved cost on invoice lines with a known figure", Decimal(report["invoices"]["verified_total"])),
         ("Invoice lines with an unresolved figure", report["invoices"]["lines_unresolved"]),
@@ -178,6 +182,20 @@ def workbook(report: dict) -> bytes:
             for r in report["invoices"]["lines"]],
            {7: _TONS, 8: _TONS, 9: _TONS, 10: _MONEY, 11: _MONEY, 12: _MONEY},
            [16, 26, 24, 12, 12, 18, 12, 12, 12, 14, 14, 14])
+    if costs:
+        _sheet(wb, "Costs by month", ["Month", "Tickets", "Approved tons", "Material cost", "No locked price", "Truck hours", "Loads",
+                                      "Hauling cost", "Combined cost"],
+               [[r["period"], r["tickets"], Decimal(r["tons"]), Decimal(r["material"]), r["unpriced"], Decimal(r["hours"]), r["loads"],
+                 Decimal(r["trucking"]), Decimal(r["total"])] for r in costs["by_period"]],
+               {3: _TONS, 4: _MONEY, 8: _MONEY, 9: _MONEY}, [12, 10, 14, 14, 12, 12, 8, 14, 14])
+        _sheet(wb, "Trucking by hauler", ["Hauler", "Approved shifts", "Approved hours", "Loads", "Hauling cost", "Cost per hour"],
+               [[safe(r["name"]), r["shifts"], Decimal(r["hours"]), r["loads"], Decimal(r["cost"]),
+                 Decimal(r["per_hour"]) if r["per_hour"] else None] for r in costs["trucking"]["by_hauler"]],
+               {5: _MONEY, 6: _MONEY}, [30, 14, 14, 8, 14, 12])
+    if deliveries is not None:
+        _sheet(wb, "Approved deliveries", ["Ticket", "Delivered", "Supplier", "Material", "Approved tons", "Locked rate", "Material cost",
+                                           "Approved by", "Approved at (UTC)"],
+               deliveries, {5: _TONS, 6: _MONEY, 7: _MONEY}, [14, 12, 28, 26, 14, 12, 14, 20, 20])
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()

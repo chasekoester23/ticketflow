@@ -1,18 +1,31 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useProject } from "../project-context";
 import { Batch, Project, uploadBatch } from "../../lib/api";
 
 /** New uploads. Every selected file must pass or none are processed. */
-export function UploadPanel({ projects, onUploaded, onError }: {
+export function UploadPanel({ projects, reading, onUploaded, onError }: {
   projects: Project[];
+  /** Whether automatic reading is set up for this workspace; null while unknown. */
+  reading?: boolean | null;
   onUploaded: (batch: Batch) => void | Promise<void>;
   onError: (message: string | null) => void;
 }) {
   const [layout, setLayout] = useState<"single" | "grid_2x2">("grid_2x2");
-  const [intakeMode, setIntakeMode] = useState<"extract" | "manual">("manual");
+  // Read automatically when it's set up; entry by hand stays a deliberate choice.
+  const [intakeMode, setIntakeMode] = useState<"extract" | "manual">(reading ? "extract" : "manual");
+  const chosenMode = useRef(false);
+  useEffect(() => { if (!chosenMode.current) setIntakeMode(reading ? "extract" : "manual"); }, [reading]);
+  const choose = (mode: "extract" | "manual") => { chosenMode.current = true; setIntakeMode(mode); };
   const [files, setFiles] = useState<File[]>([]);
-  const [projectId, setProjectId] = useState("");
+  // Starts on the project chosen in the top bar, when it's still taking uploads.
+  const chosen = useProject();
+  const [projectId, setProjectId] = useState(chosen.project?.status === "active" ? chosen.projectId : "");
+  const pickedProject = useRef(false);
+  useEffect(() => {
+    if (!pickedProject.current && chosen.project?.status === "active") setProjectId(chosen.projectId);
+  }, [chosen.project, chosen.projectId]);
   const [expected, setExpected] = useState("");
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -87,7 +100,7 @@ export function UploadPanel({ projects, onUploaded, onError }: {
       <div className="flex flex-col justify-between gap-4">
         <div className="space-y-3">
           <label className="tf-field-label">Project
-            <select className="tf-field w-full" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <select className="tf-field w-full" value={projectId} onChange={(e) => { pickedProject.current = true; setProjectId(e.target.value); }}>
               <option value="">Select a project...</option>
               {projects.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
             </select>
@@ -96,13 +109,15 @@ export function UploadPanel({ projects, onUploaded, onError }: {
           <fieldset className="rounded border border-[#dce1e6] p-3">
             <legend className="px-1 text-xs font-bold text-[#425060]">How should these tickets be entered?</legend>
             <div className="mt-1 grid gap-2">
-              <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
-                <input type="radio" name="intake-mode" value="manual" checked={intakeMode === "manual"} onChange={() => setIntakeMode("manual")} />
-                <span><strong>Manual entry</strong><span className="mt-0.5 block text-[#5f6c7b]">Create blank fields beside each scan. No AI calls.</span></span>
+              <label className={`flex items-start gap-2 text-xs text-[#334355] ${reading === false ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}>
+                <input type="radio" name="intake-mode" value="extract" checked={intakeMode === "extract"} disabled={reading === false} onChange={() => choose("extract")} />
+                <span><strong>Read automatically</strong>{reading && <span className="font-normal text-[#216c43]"> · recommended</span>}
+                  <span className="mt-0.5 block text-[#5f6c7b]">{reading === false ? "Not set up for this workspace yet."
+                    : "Each ticket is read and filled in beside its scan. A person checks it before it counts."}</span></span>
               </label>
               <label className="flex cursor-pointer items-start gap-2 text-xs text-[#334355]">
-                <input type="radio" name="intake-mode" value="extract" checked={intakeMode === "extract"} onChange={() => setIntakeMode("extract")} />
-                <span><strong>AI extraction</strong><span className="mt-0.5 block text-[#5f6c7b]">Requires a configured provider key. Always review before approval.</span></span>
+                <input type="radio" name="intake-mode" value="manual" checked={intakeMode === "manual"} onChange={() => choose("manual")} />
+                <span><strong>Enter by hand</strong><span className="mt-0.5 block text-[#5f6c7b]">Blank fields beside each scan, for paper that&apos;s hard to read.</span></span>
               </label>
             </div>
           </fieldset>
@@ -118,11 +133,11 @@ export function UploadPanel({ projects, onUploaded, onError }: {
           </label>
           <label className="tf-field-label">Paper tickets in this upload (optional)
             <input className="tf-field w-full" inputMode="numeric" pattern="[0-9]*" value={expected} onChange={(e) => setExpected(e.target.value)} />
-            <span className="font-normal text-[#657182]">Count the paper. TicketFlow checks it against the tickets it finds.</span>
+            <span className="font-normal text-[#657182]">Count the paper. Quarvera checks it against the tickets it finds.</span>
           </label>
         </div>
         <button type="button" disabled={!files.length || !projectId || busy} onClick={submit} className="tf-primary-button w-full">
-          {busy ? "Uploading..." : intakeMode === "manual" ? "Queue for manual entry" : "Queue for AI extraction"}
+          {busy ? "Uploading…" : intakeMode === "manual" ? "Upload for entry by hand" : "Upload and read automatically"}
         </button>
       </div>
     </div>

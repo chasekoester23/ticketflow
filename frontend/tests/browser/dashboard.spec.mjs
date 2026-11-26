@@ -1,80 +1,69 @@
 import { expect, test } from "@playwright/test";
 import { json, mockWorkspace } from "./f_helpers.mjs";
 
-const byPath = (handlers) => (_request, path) => handlers[path];
-
-const DASHBOARD = {
-  tickets: 412, needs_review: 37, flagged: 4, failed: 2, verified: 360, total_tons: "8412.250", pending_tons: "801.000",
-  total_cost: "155626.63", unpriced_tickets: 6, pending_cost_tickets: 52,
-  by_supplier: [{ name: "Example Aggregates", tickets: 412, tons: "8412.250", cost: "155626.63" }], by_material: [],
-  recent_batches: [{ id: 42, status: "ready_for_review", created_at: new Date(Date.now() - 20 * 60000).toISOString(), files: 3, project: "Fictional Road Job" }],
-  projects: [
-    { id: 1, code: "24-115", name: "Fictional Road Job", tickets: 300, open: 31, verified_tons: "6200.500", last_upload: new Date(Date.now() - 20 * 60000).toISOString() },
-    { id: 2, code: "24-130", name: "Fictional Bridge Deck", tickets: 112, open: 6, verified_tons: "2211.750", last_upload: null },
-  ],
-  activity: [
-    { at: new Date(Date.now() - 3 * 60000).toISOString(), action: "approved", ticket_id: 901, ticket_number: "48213", batch_id: 42, by: "Dana Reyes" },
-    { at: new Date(Date.now() - 9 * 60000).toISOString(), action: "flagged", ticket_id: 902, ticket_number: "48214", batch_id: 42, by: "Cal Clerk" },
-  ],
+const SUMMARY = {
+  period: "week", date_from: null, date_to: null,
+  material: { tickets: 412, tons: "8412.250", cost: "155626.63", unpriced: 6, waiting: 37, undated: { tickets: 0, tons: "0.000", cost: "0.00", unpriced: 0 },
+    by_material: [{ name: "No. 57 Stone", tickets: 300, tons: "6200.500", cost: "114709.25", unpriced: 0 }, { name: "Rip Rap", tickets: 6, tons: "120.000", cost: "0.00", unpriced: 6 }],
+    by_supplier: [{ name: "Example Aggregates", tickets: 412, tons: "8412.250", cost: "155626.63", unpriced: 6 }] },
+  trucking: { shifts: 40, hours: "380.00", cost: "41800.00", loads: 260, by_hauler: [], billing_methods: [{ method: "hourly", cost: "41800.00" }] },
+  costs: { material: "155626.63", trucking: "41800.00", total: "197426.63", complete: false, unpriced: 6 },
+  by_period: [{ period: "2026-11-02", tickets: 200, tons: "4100.000", material: "75850.00", unpriced: 0, hours: "190.00", trucking: "20900.00", loads: 130, total: "96750.00" },
+    { period: "2026-11-09", tickets: 212, tons: "4312.250", material: "79776.63", unpriced: 6, hours: "190.00", trucking: "20900.00", loads: 130, total: "100676.63" }],
+  by_project: [{ id: 1, code: "24-115", name: "Fictional Road Job", status: "active", tickets: 300, tons: "6200.500", material: "114709.25", unpriced: 0, hours: "300.00", trucking: "33000.00", total: "147709.25" }],
+  unit_prices: [],
+  invoices: { invoices: 0, billed: "0", matched: 0, with_differences: 0, incomplete: 0, difference: "0", totals_only: 0, rows: [] },
 };
+const QUEUE = { summary: { tickets: 37, failed_files: 1, truck_shifts: 3, invoice_lines: 0, total: 41 }, items: [] };
+const EXCEPTIONS = { summary: { open: 7, by_category: {}, by_severity: { high: 2, medium: 3, low: 2 }, potential_overcharge: "1240.50",
+  billed_below_approved: "0", disputed_amount: "0", recovered: "0", money_unknown: 0, unassigned: 4 }, items: [] };
 
-test("the dashboard leads with what needs doing, by real counts, and links to each", async ({ page }) => {
-  await mockWorkspace(page, { extra: byPath({
-    "/api/dashboard": (route) => json(route, DASHBOARD),
-    "/api/onboarding": (route) => json(route, { complete: false, steps: [{ key: "approve", title: "Approve", detail: "", href: "/upload", done: true }] }),
-    "/api/invoice-comparisons/overview": (route) => json(route, { lines: 9, by_status: { discrepancy: 3, matches: 6 }, billed: "0", verified: "0", lines_unresolved: 0, by_supplier: [], exceptions: [] }),
-  }) });
-  await page.goto("/");
-  const attention = page.getByRole("region", { name: "Needs attention" });
-  await expect(attention).toContainText("46 open");
-  for (const [label, count, href] of [["Awaiting verification", "31", "/records?status=needs_review"], ["Flagged for follow-up", "4", "/records?status=flagged"],
-    ["Couldn't be read", "2", "/records?status=failed"], ["Approved without a rate", "6", "/pricing"], ["Invoice lines with differences", "3", "/invoices"]]) {
-    const row = attention.getByRole("link", { name: new RegExp(label) });
-    await expect(row).toContainText(count);
-    await expect(row).toHaveAttribute("href", href);
-  }
-  const projects = page.getByRole("table", { name: "Active projects" });
-  await expect(projects.getByRole("row").nth(1)).toContainText("24-115");
-  await expect(projects.getByRole("row").nth(1)).toContainText("6,200.5");
-  await expect(projects.getByRole("row").nth(2)).toContainText("No uploads");
-  await expect(projects.getByRole("link", { name: "24-115" })).toHaveAttribute("href", "/records?project_id=1");
-  const activity = page.getByRole("region", { name: "Recent activity" });
-  await expect(activity.getByRole("listitem").first()).toContainText("Approved ticket 48213 · Dana Reyes");
-  await expect(activity.getByRole("link", { name: "ticket 48213" })).toHaveAttribute("href", "/upload?batch=42&ticket=901");
-  await expect(page.getByRole("region", { name: "Setup checklist" })).toHaveCount(0);
-});
-
-test("an older server without the new sections still shows a working dashboard", async ({ page }) => {
-  const { projects, activity, failed, ...older } = DASHBOARD;
-  await mockWorkspace(page, { extra: byPath({ "/api/dashboard": (route) => json(route, older) }) });
-  await page.goto("/");
-  await expect(page.getByRole("region", { name: "Needs attention" })).toContainText("Awaiting verification");
-  await expect(page.getByRole("region", { name: "Active projects" })).toContainText("No active projects");
-  await expect(page.getByRole("region", { name: "Recent activity" })).toContainText("will appear here");
-});
-
-test("the invoice check shows exceptions money as potential, apart from credits a person recorded", async ({ page }) => {
-  const requested = [];
-  const summary = { open: 7, by_category: {}, by_severity: { high: 2, medium: 3, low: 2 }, potential_overcharge: "1240.50",
-    billed_below_approved: "0", disputed_amount: "310.00", recovered: "95.25", money_unknown: 0, unassigned: 4 };
+async function mock(page, overrides = {}) {
+  const log = [];
   await mockWorkspace(page, { extra: (request, path) => {
-    if (path === "/api/exceptions") { requested.push(new URL(request.url()).search); return (route) => json(route, { summary, items: [] }); }
-    return {
-      "/api/dashboard": (route) => json(route, DASHBOARD),
-      "/api/onboarding": (route) => json(route, { complete: true, steps: [] }),
-      "/api/invoice-comparisons/overview": (route) => json(route, { lines: 9, by_status: {}, billed: "48210.00", verified: "0", lines_unresolved: 0, by_supplier: [], exceptions: [] }),
-    }[path];
+    if (path === "/api/reports/summary") { log.push(new URL(request.url()).search); return (route) => json(route, overrides.summary ?? SUMMARY, overrides.status ?? 200); }
+    return { "/api/review-queue": (route) => json(route, QUEUE), "/api/exceptions": (route) => json(route, EXCEPTIONS),
+      "/api/onboarding": (route) => json(route, { complete: true, steps: [] }) }[path];
   } });
+  return log;
+}
+
+test("the overview leads with approved material and hauling cost, and discloses missing rates", async ({ page }) => {
+  await mock(page);
   await page.goto("/");
-  const check = page.getByRole("region", { name: "Invoice check" });
-  await expect(check).toContainText("$48,210.00");
-  await expect(check).toContainText("$1,240.50");
-  await expect(check).toContainText("not yet confirmed");
-  await expect(check).toContainText("$95.25");
-  const row = page.getByRole("region", { name: "Needs attention" }).getByRole("link", { name: /Invoice exceptions/ });
-  await expect(row).toContainText("7");
-  await expect(row).toHaveAttribute("href", "/invoices/exceptions");
-  await page.locator("#dashboard-project").selectOption("1");
-  await expect.poll(() => requested.at(-1)).toBe("?project_id=1");
-  await expect(check).not.toContainText("$48,210.00"); // company-wide invoicing isn't shown as one project's
+  const figures = page.getByRole("region", { name: "Approved costs" });
+  await expect(figures).toContainText("8,412.3 t");
+  await expect(figures).toContainText("$155,626.63");
+  await expect(figures).toContainText("Incomplete: 6 approved without a rate");
+  await expect(figures).toContainText("$41,800.00");
+  await expect(figures).toContainText("$197,426.63");
+  await expect(page.getByRole("figure", { name: "Spending over time" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Material cost by material" })).toContainText("6 without a rate");
+});
+
+test("work waiting for people is one line that leads to where it's done", async ({ page }) => {
+  await mock(page);
+  await page.goto("/");
+  const waiting = page.getByLabel("Waiting for people");
+  await expect(waiting.getByRole("link", { name: "41 items in the Review Queue" })).toHaveAttribute("href", "/review");
+  await expect(waiting.getByRole("link", { name: "7 open invoice exceptions" })).toHaveAttribute("href", "/invoices/exceptions");
+  await expect(waiting.getByRole("link", { name: /6 approved deliveries without a rate/ })).toHaveAttribute("href", "/pricing");
+  await expect(page.getByRole("region", { name: "Needs attention" })).toHaveCount(0);
+});
+
+test("each project row opens that project's workspace, and the date range is sent to the server", async ({ page }) => {
+  const log = await mock(page);
+  await page.goto("/");
+  const row = page.getByRole("table", { name: "Project performance" }).getByRole("row").nth(1);
+  await expect(row).toContainText("$147,709.25");
+  await expect(row.getByRole("link", { name: "24-115" })).toHaveAttribute("href", "/projects/1");
+  await page.getByRole("button", { name: "All dates" }).click();
+  await expect.poll(() => log.at(-1)).toBe("?period=month");
+});
+
+test("if the figures can't be loaded, it says so instead of showing zero", async ({ page }) => {
+  await mock(page, { summary: { detail: "Server unavailable" }, status: 503 });
+  await page.goto("/");
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Approved costs" })).toHaveCount(0);
 });

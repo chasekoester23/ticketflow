@@ -181,3 +181,14 @@ def test_dashboard_and_pilot_totals_unchanged_by_lightweight_rows(client):
     report = client.get("/api/reports/pilot").json()
     assert report["review"]["verified"] == 1
     assert Decimal(report["review"]["verified_tons"]) == Decimal("15.02")
+
+
+def test_records_page_query_count_does_not_grow_with_rows(client):
+    """A 50-row page used to run 3 lookups per row (161 statements in all)."""
+    _seed(120)
+    with _Count() as few:
+        assert len(client.get("/api/records/search", params={"page_size": 5}).json()["rows"]) == 5
+    with _Count() as many:
+        assert len(client.get("/api/records/search", params={"page_size": 100}).json()["rows"]) == 100
+    assert many.statements == few.statements
+    assert many.statements < 20

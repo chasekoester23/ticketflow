@@ -95,3 +95,18 @@ def test_only_managers_enter_hauling_invoices(client, yard):
     response = client.post("/api/hauling-invoices", json={"hauler_id": yard["hauler"], "invoice_number": "X", "period_from": "2026-11-01",
                                                            "period_to": "2026-11-30", "lines": [{"kind": "fee", "amount": "1.00"}]})
     assert response.status_code == 403
+
+
+def test_an_invoice_for_one_project_doesnt_answer_for_another_projects_shifts(client, yard):
+    on_p1 = _approve(client, _shift(client, yard), work_hours="9", standby_hours="0").json()
+    on_p2 = _approve(client, _shift(client, yard, truck=1, project_id=yard["other"]), work_hours="9", standby_hours="0").json()
+    created = client.post("/api/hauling-invoices", json={
+        "hauler_id": yard["hauler"], "project_id": yard["project"], "invoice_number": "P1-NOV", "period_from": "2026-11-01",
+        "period_to": "2026-11-30", "lines": [{"kind": "hours", "truck_identifier": "T-12", "work_date": "2026-11-03", "hours": "9",
+                                              "rate": "110", "amount": "990.00"}]})
+    assert created.status_code == 201, created.text
+    invoice = created.json()
+    assert invoice["difference"] == "0.00" and invoice["exceptions"] == 0  # P2's shift isn't this P1 invoice's omission
+    register = client.get("/api/invoice-comparisons/register").json()["invoices"]
+    assert [(r["invoice_number"], r["status"]) for r in register] == [("P1-NOV", "matched")]
+    assert on_p1["status"] == on_p2["status"] == "approved"

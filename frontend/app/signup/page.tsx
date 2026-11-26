@@ -50,10 +50,10 @@ function SetupForm({ onAlreadySetUp }: { onAlreadySetUp: (message: string) => vo
   }
 
   return <>
-    <h1 className="tf-pub-title">Set up TicketFlow</h1>
+    <h1 className="tf-pub-title">Set up Quarvera</h1>
     <p className="tf-pub-lead">No one has an account on this server yet. Name your company and create the first account, which is its owner.</p>
     {error && <div role="alert" className="tf-pub-banner tf-pub-banner-error">{error}</div>}
-    <form className="tf-pub-form" onSubmit={submit} aria-label="Set up TicketFlow">
+    <form className="tf-pub-form" onSubmit={submit} aria-label="Set up Quarvera">
       <TextField id="setup-company" name="company_name" label="Company name" autoComplete="organization" maxLength={200} value={form.company_name} onChange={set("company_name")} />
       <TextField id="setup-name" name="display_name" label="Your name" autoComplete="name" maxLength={100} value={form.display_name} onChange={set("display_name")} help="Shown on every ticket you approve." />
       <TextField id="setup-username" name="username" label="Username" autoComplete="username" maxLength={100} autoCapitalize="none" spellCheck={false} value={form.username} onChange={set("username")} />
@@ -129,7 +129,7 @@ function RequestAccessForm() {
 
   return <>
     <h1 className="tf-pub-title">Request your company&apos;s workspace</h1>
-    <p className="tf-pub-lead">TicketFlow is in a private pilot, so each workspace is set up with the company using it. Send your details to request one. This doesn&apos;t create an account yet.</p>
+    <p className="tf-pub-lead">Quarvera is in a private pilot, so each workspace is set up with the company using it. Send your details to request one. This doesn&apos;t create an account yet.</p>
     {error && <div role="alert" className="tf-pub-banner tf-pub-banner-error">{error}</div>}
     <form className="tf-pub-form" onSubmit={submit} aria-label="Request access" noValidate>
       <TextField id="request-company" name="company_name" label="Company name" autoComplete="organization" maxLength={200} value={form.company_name} onChange={set("company_name")} error={problems.company_name} inputRef={companyRef} />
@@ -157,7 +157,7 @@ function RequestAccessForm() {
       </div>
       <SubmitButton pending={pending} pendingText="Sending…">Request access</SubmitButton>
     </form>
-    <p className="tf-pub-footnote">We use these details only to follow up about TicketFlow. Please don&apos;t include ticket images or financial records.</p>
+    <p className="tf-pub-footnote">We use these details only to follow up about Quarvera. Please don&apos;t include ticket images or financial records.</p>
     <p className="tf-pub-switch">Already have an account? <Link href="/login">Sign in</Link></p>
   </>;
 }
@@ -188,7 +188,7 @@ export default function SignupPage() {
       <li>You change the temporary password, add your office staff, and set up your first job.</li>
     </ul>
   </>}>
-    {mode === "checking" && <p role="status" className="tf-pub-lead">Connecting to TicketFlow…</p>}
+    {mode === "checking" && <p role="status" className="tf-pub-lead">Connecting to Quarvera…</p>}
     {mode === "setup" && <SetupForm onAlreadySetUp={alreadySetUp} />}
     {mode === "request" && <RequestAccessForm />}
   </PublicFrame>;

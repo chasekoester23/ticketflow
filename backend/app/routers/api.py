@@ -15,10 +15,11 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..config import settings
 from ..db import SessionLocal, get_db
-from ..models import AuditEvent, Batch, InvoiceTicketLink, Project, ScanEvent, ScanSlot, Ticket, UploadedFile, User, as_utc
+from ..models import AuditEvent, Batch, Hauler, InvoiceTicketLink, Project, ScanEvent, ScanSlot, Ticket, UploadedFile, User, as_utc
 from ..permissions import has_permission, require
 from ..rate_limit import limited
 from ..schemas import BatchOut, BatchProgress, BatchQueueRow, FlagIn, TicketOut, TicketPatch, VerifyIn
+from ..services import haul_billing as haul_svc
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
 from ..services import consistency, pipeline, jobqueue, scan_manifest, storage
@@ -402,6 +403,7 @@ def ticket_revision(t: Ticket, price: Decimal | None) -> str:
         f"{t.unit_price_override:.4f}" if t.unit_price_override is not None else None,
         f"{price:.4f}" if price is not None else None,
         t.status, bool(t.tonnage_confirmed),
+        *([t.hauler_id, t.truck_number] if t.hauler_id is not None or t.truck_number else []),
     ]
     return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
 
@@ -431,6 +433,11 @@ def _verified_by(db: Session, t: Ticket, organization_id: int,
     if people is None:
         people = names_by_id(db, organization_id)
     return people.get(t.verified_by_user_id)
+
+
+def _clear_haul(t: Ticket) -> None:
+    """The locked hauling charge goes with the approval; it's worked out again at the next one."""
+    t.haul_billing = t.haul_rate_id = t.haul_unit_rate = t.haul_cost = None
 
 
 def _withdraw_approval(t: Ticket) -> None:
@@ -487,6 +494,9 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
     t = _ticket_or_404(db, ticket_id, organization_id, lock=True)
     _require_revision(db, t, organization_id, if_match)
     changes = patch.model_dump(exclude_unset=True)
+    if changes.get("hauler_id") is not None and not db.scalar(select(Hauler.id).where(
+            Hauler.id == changes["hauler_id"], Hauler.organization_id == organization_id)):
+        raise HTTPException(404, "Hauler not found")
     if (
         "unit_price_override" in changes
         and changes["unit_price_override"] != t.unit_price_override
@@ -526,6 +536,7 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
         t.applied_unit_price = None
         t.applied_price_source = None
         t.approved_cost = None
+        _clear_haul(t)
     _refresh_flags(t)
     db.commit()
     return _out(db, t, organization_id)
@@ -582,9 +593,17 @@ def verify_ticket(ticket_id: int, body: VerifyIn | None = Body(default=None), db
         if t.price_snapshot_state in ("priced", "unpriced"):
             return _out(db, t, organization_id)  # repeated verify must not reprice an approved ticket
 
-    price, source = pricing_svc.unit_price_for(t, pricing_svc.rate_table(db, organization_id))
+    table = pricing_svc.rate_table(db, organization_id)
+    price, source = pricing_svc.unit_price_for(t, table)
     _audit(db, t, user, "status", t.status, "verified")
     _audit(db, t, user, "verified_unit_price", None, price)
+    # Hauling, once: never on top of a delivered (freight-included) price or an hourly shift.
+    freight = table.for_ticket(t).freight if source in ("rate", "project_rate") else None
+    haul = haul_svc.charge_for(t, project_id=db.scalar(select(Batch.project_id).where(Batch.id == t.batch_id)),
+                               freight=freight, rates=haul_svc.unit_rates(db, organization_id) if t.hauler_id else [])
+    t.haul_billing, t.haul_rate_id, t.haul_unit_rate, t.haul_cost = haul.billing, haul.rate_id, haul.unit_rate, haul.cost
+    if haul.billing:
+        _audit(db, t, user, "haul_charge", None, f"{haul.billing}{f' {haul.cost}' if haul.cost is not None else ''}")
     t.applied_unit_price = price
     t.applied_price_source = source
     t.price_snapshot_state = "priced" if price is not None else "unpriced"
@@ -619,6 +638,7 @@ def flag_ticket(ticket_id: int, body: FlagIn | None = Body(default=None), db: Se
     t.applied_unit_price = None
     t.applied_price_source = None
     t.approved_cost = None
+    _clear_haul(t)
     db.commit()
     return _out(db, t, organization_id)
 
@@ -637,6 +657,7 @@ def skip_ticket(ticket_id: int, db: Session = Depends(get_db),
     t.applied_unit_price = None
     t.applied_price_source = None
     t.approved_cost = None
+    _clear_haul(t)
     db.commit()
     return _out(db, t, organization_id)
 

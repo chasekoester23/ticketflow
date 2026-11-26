@@ -247,7 +247,7 @@ def authenticated_user(request: Request, db: Session = Depends(get_db)) -> User:
     """
     token = _presented_token(request)
     if token is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in to access TicketFlow")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in to access Quarvera")
     session = db.get(LoginSession, digest_token(token))
     now = _naive_utc_now()
     if not session or session.expires_at <= now:

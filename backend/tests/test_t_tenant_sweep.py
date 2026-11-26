@@ -281,7 +281,7 @@ def _companys_view(client, org: int) -> list:
     _as(client, org)
     views = [client.get(path).json() for path in ("/api/projects", "/api/batches", "/api/records", "/api/suppliers", "/api/materials",
                                                    "/api/rates", "/api/name-aliases", "/api/saved-views", "/api/invoice-comparisons",
-                                                   "/api/invoice-documents", "/api/team/members", "/api/dashboard")]
+                                                   "/api/invoice-documents", "/api/team/members", "/api/dashboard", "/api/projects/directory", "/api/review-queue", "/api/invoice-comparisons/register", "/api/reports/summary")]
     _as(client, 1)
     return views
 

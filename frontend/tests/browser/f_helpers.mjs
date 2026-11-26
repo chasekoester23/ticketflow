@@ -105,14 +105,14 @@ const INVOICE_LINE = {
   date_from: "2026-10-01", date_to: "2026-10-31", billed_tons: "61.500", billed_unit_price: "30.00", billed_subtotal: "1845.00",
   ticket_list: "", billed_extension: "1845.00", invoice_arithmetic_difference: "0.00", verified_tons: "41.000", verified_subtotal: "1230.00",
   quantity_difference: "20.500", subtotal_difference: "615.00", verified_count: 2, pending_count: 1, unclassified_count: 0, unpriced_count: 0,
-  rate_mismatch_count: 0, status: "discrepancy", comparison_mode: "itemized", warnings: ["1 ticket on the invoice is not in TicketFlow."],
+  rate_mismatch_count: 0, status: "discrepancy", comparison_mode: "itemized", warnings: ["1 ticket on the invoice is not in Quarvera."],
   tickets: [], ticket_check: [
     { result: "matched", line: 1, invoice_ticket_number: "11002", billed_tons: "20.500", ticket: { ticket_id: 1002, batch_id: 5, ticket_number: "11002", delivery_date: "2026-10-15", supplier: "Example Aggregates", material: "No. 57 Stone", tons: "20.500", review_status: "verified", project: "24-115" }, candidates: [], verified_tons: "20.500", tons_difference: "0.000", flags: [], notes: [], evidence: "confirmed", link_id: 3 },
-    { result: "not_found", line: 2, invoice_ticket_number: "99999", billed_tons: "20.500", ticket: null, candidates: [], verified_tons: null, tons_difference: null, flags: [], notes: ["No ticket with this number in TicketFlow."], evidence: "unmatched", link_id: null },
+    { result: "not_found", line: 2, invoice_ticket_number: "99999", billed_tons: "20.500", ticket: null, candidates: [], verified_tons: null, tons_difference: null, flags: [], notes: ["No ticket with this number in Quarvera."], evidence: "unmatched", link_id: null },
   ],
   ticket_check_counts: { matched: 1, not_found: 1 }, itemized_billed_tons: "41.000",
   evidence: { listed_tickets: 2, confirmed: 1, candidates: 0, conflicting: 0, invalidated: 0, unmatched: 1, confirmed_tons: "20.500" },
-  diagnosis: { headline: "The invoice bills 20.500 tons more than approved deliveries.", tons: { start: "41.000", billed: "61.500", complete: true, rows_without_tons: 0, unexplained: "0.000", items: [{ kind: "not_found", label: "Billed, not in TicketFlow", tons: "20.500", count: 1, tickets: ["99999"] }] }, money: null, money_unresolved_reason: "One billed ticket has no approved record.", next_steps: [{ text: "Ask the supplier for ticket 99999", href: null }] },
+  diagnosis: { headline: "The invoice bills 20.500 tons more than approved deliveries.", tons: { start: "41.000", billed: "61.500", complete: true, rows_without_tons: 0, unexplained: "0.000", items: [{ kind: "not_found", label: "Billed, not in Quarvera", tons: "20.500", count: 1, tickets: ["99999"] }] }, money: null, money_unresolved_reason: "One billed ticket has no approved record.", next_steps: [{ text: "Ask the supplier for ticket 99999", href: null }] },
   revision: "l9-1", created_at: "2026-11-01T00:00:00Z",
 };
 
@@ -120,6 +120,12 @@ const INVOICE_LINE = {
  * Every page's API, with fictional data or none (`empty`). Returns 404 for anything
  * else, which is what a server without a newer endpoint answers.
  */
+/** Choose a project in the top bar, as a person does. */
+export async function chooseProject(page, code) {
+  await page.getByTestId("project-picker").click();
+  await page.getByRole("dialog", { name: "Choose a project" }).getByRole("button", { name: new RegExp(code) }).first().click();
+}
+
 export async function mockWorkspace(page, { role = "owner", empty = false, extra } = {}) {
   const log = [];
   await page.route("**/api/**", async (route) => {
@@ -137,6 +143,30 @@ export async function mockWorkspace(page, { role = "owner", empty = false, extra
       "/api/setup/status": { needed: false },
       "/api/status": { extraction_configured: false, model: "none", worker_running: true },
       "/api/projects": empty ? [] : [PROJECT],
+      "/api/projects/directory": empty ? [] : [{ ...PROJECT, created_at: "2026-10-01T00:00:00Z", tickets: 4, open_tickets: 1, open_shifts: 0,
+        verified_tickets: 3, verified_tons: "61.500", material_cost: "1845.00", unpriced_tickets: 0, trucking_cost: "0.00", verified_cost: "1845.00",
+        last_activity: "2026-10-15T11:00:00Z" }],
+      "/api/review-queue": empty ? { summary: { tickets: 0, failed_files: 0, truck_shifts: 0, invoice_lines: 0, total: 0 }, items: [] }
+        : { summary: { tickets: 4, failed_files: 0, truck_shifts: 0, invoice_lines: 0, total: 4 }, items: [{ kind: "tickets", id: 5,
+          title: "Delivery tickets · batch #5", detail: "3 to check · 1 flagged", count: 4, attention: true,
+          project: { id: 1, code: "24-115", name: "Fictional Road Job" }, created_at: "2026-10-15T11:00:00Z", href: "/upload?batch=5" }] },
+      "/api/invoice-comparisons/register": empty ? { totals: { invoices: 0, billed: "0", with_differences: 0, incomplete: 0 }, invoices: [] }
+        : { totals: { invoices: 1, billed: "1845.00", with_differences: 1, incomplete: 0 }, invoices: [{ kind: "supplier", id: 9,
+          invoice_number: "INV-4401", company: "Example Aggregates", project: { id: 1, code: "24-115", name: "Fictional Road Job" },
+          period_from: "2026-10-01", period_to: "2026-10-20", lines: 1, billed: "1845.00", compared: "1230.00", difference: "615.00",
+          status: "discrepancy", ticket_level: true, has_document: false, href: "/invoices/lines?line=9" }] },
+      "/api/reports/summary": { period: "week", date_from: null, date_to: null,
+        material: { tickets: 3, tons: "61.500", cost: "1845.00", unpriced: 0, waiting: 1, undated: { tickets: 0, tons: "0.000", cost: "0.00", unpriced: 0 },
+          by_material: [{ name: "No. 57 Stone", tickets: 3, tons: "61.500", cost: "1845.00", unpriced: 0 }],
+          by_supplier: [{ name: "Example Aggregates", tickets: 3, tons: "61.500", cost: "1845.00", unpriced: 0 }] },
+        trucking: { shifts: 0, hours: "0.00", cost: "0.00", loads: 0, by_hauler: [], billing_methods: [{ method: "hourly", cost: "0.00" }] },
+        costs: { material: "1845.00", trucking: "0.00", total: "1845.00", complete: true, unpriced: 0 },
+        by_period: [{ period: "2026-10-12", tickets: 3, tons: "61.500", material: "1845.00", unpriced: 0, hours: "0.00", trucking: "0.00", loads: 0, total: "1845.00" }],
+        by_project: [{ id: 1, code: "24-115", name: "Fictional Road Job", status: "active", tickets: 3, tons: "61.500", material: "1845.00", unpriced: 0, hours: "0.00", trucking: "0.00", total: "1845.00" }],
+        unit_prices: [{ supplier: "Example Aggregates", material: "No. 57 Stone", tons: "61.500", cost: "1845.00", average: "30.00", low: "30.00", high: "30.00" }],
+        invoices: { invoices: 1, billed: "1845.00", matched: 0, with_differences: 1, incomplete: 0, difference: "615.00", totals_only: 0, rows: [] } },
+      "/api/haulers": [],
+      "/api/hauling-rates": [],
       "/api/suppliers": empty ? [] : [{ id: 1, name: "Example Aggregates", contact: null }],
       "/api/materials": empty ? [] : [{ id: 2, name: "No. 57 Stone", unit: "ton" }],
       "/api/rates": empty ? [] : [{ id: 3, supplier_id: 1, material_id: 2, unit_price: "30.0000" }],

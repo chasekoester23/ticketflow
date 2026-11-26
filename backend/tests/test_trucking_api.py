@@ -174,7 +174,7 @@ def test_the_dashboard_counts_approved_hauling_per_project_through_allocations(c
     _shift(client, yard, truck=1)  # waiting for approval: not a cost yet
     everything = client.get("/api/dashboard").json()["hauling"]
     assert everything == {"approved_cost": "990.00", "approved_hours": "9.00", "approved_with_material": "990.00",
-                          "awaiting_approval": 1, "disputed": 0}
+                          "per_unit_cost": "0.00", "rate_missing": 0, "awaiting_approval": 1, "disputed": 0}
     p1 = client.get("/api/dashboard", params={"project_id": yard["project"]}).json()["hauling"]
     p2 = client.get("/api/dashboard", params={"project_id": yard["other"]}).json()["hauling"]
     assert (p1["approved_cost"], p2["approved_cost"]) == ("660.00", "330.00")  # the shift counted once, in its parts

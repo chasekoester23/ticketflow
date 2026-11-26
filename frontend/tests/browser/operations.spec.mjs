@@ -68,7 +68,7 @@ test("a new company's setup is one line that says what's next, and goes away whe
   await expect(strip.getByRole("listitem")).toHaveCount(3);
   state.complete = true;
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Delivery operations" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
   await expect(strip).toHaveCount(0);
 });
 
@@ -80,7 +80,7 @@ test("the setup line can be dismissed, stays dismissed, and can be brought back"
   await strip.getByRole("button", { name: "Dismiss" }).click();
   await expect(strip).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Delivery operations" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
   await expect(strip).toHaveCount(0);
   await page.getByRole("button", { name: "Show the setup checklist" }).click();
   await expect(strip).toBeVisible();
@@ -93,7 +93,7 @@ test("a company that has approved tickets doesn't see the setup checklist", asyn
   ] };
   await mock(page, "owner", { "/api/onboarding": (route) => json(route, state) });
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "Needs attention" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Setup checklist" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Show the setup checklist" })).toHaveCount(0);
 });

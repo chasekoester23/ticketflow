@@ -24,7 +24,7 @@ async function mockSetup(page, { needed = true, answer } = {}) {
 }
 
 async function fillSetup(page, password = "a long fictional passphrase") {
-  const form = page.getByRole("form", { name: "Set up TicketFlow" });
+  const form = page.getByRole("form", { name: "Set up Quarvera" });
   await form.getByLabel("Company name").fill("Fictional Paving Co");
   await form.getByLabel("Your name").fill("Fictional Owner");
   await form.getByLabel("Username").fill("owner");
@@ -36,8 +36,8 @@ async function fillSetup(page, password = "a long fictional passphrase") {
 test("a server with no accounts leads to setup, which creates the owner and signs them in", async ({ page }) => {
   const log = await mockSetup(page);
   await page.goto("/login");
-  await expect(page.getByRole("heading", { name: "Set up TicketFlow" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Sign in to TicketFlow" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Set up Quarvera" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in to Quarvera" })).toHaveCount(0);
   const form = await fillSetup(page);
   await form.getByRole("button", { name: "Create company and sign in" }).click();
   await expect(page).toHaveURL("/");
@@ -64,37 +64,37 @@ test("setup checks the password before sending anything", async ({ page }) => {
 });
 
 test("if someone set it up meanwhile, setup says so and offers sign-in", async ({ page }) => {
-  await mockSetup(page, { answer: (route) => json(route, { detail: { code: "already_set_up", message: "TicketFlow was just set up by someone else. Sign in, or ask them to add you." } }, 409) });
+  await mockSetup(page, { answer: (route) => json(route, { detail: { code: "already_set_up", message: "Quarvera was just set up by someone else. Sign in, or ask them to add you." } }, 409) });
   await page.goto("/login");
   const form = await fillSetup(page);
   await form.getByRole("button", { name: "Create company and sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Sign in to TicketFlow" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in to Quarvera" })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "just set up by someone else" })).toBeVisible();
 });
 
 test("a refusal from another computer is shown as the server words it", async ({ page }) => {
-  await mockSetup(page, { answer: (route) => json(route, { detail: { code: "setup_local_only", message: "First-time setup only works from the computer TicketFlow runs on. Open it there, or set ALLOW_REMOTE_SETUP=true for this one step." } }, 403) });
+  await mockSetup(page, { answer: (route) => json(route, { detail: { code: "setup_local_only", message: "First-time setup only works from the computer Quarvera runs on. Open it there, or set ALLOW_REMOTE_SETUP=true for this one step." } }, 403) });
   await page.goto("/login");
   const form = await fillSetup(page);
   await form.getByRole("button", { name: "Create company and sign in" }).click();
-  await expect(page.getByRole("alert").filter({ hasText: "First-time setup" })).toContainText("only works from the computer TicketFlow runs on");
+  await expect(page.getByRole("alert").filter({ hasText: "First-time setup" })).toContainText("only works from the computer Quarvera runs on");
 });
 
 for (const [name, needed] of [["already has accounts", false], ["doesn't offer setup yet", 404]]) {
   test(`a server that ${name} shows the usual sign-in`, async ({ page }) => {
     await mockSetup(page, { needed });
     await page.goto("/login");
-    await expect(page.getByRole("heading", { name: "Sign in to TicketFlow" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Set up TicketFlow" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Sign in to Quarvera" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Set up Quarvera" })).toHaveCount(0);
   });
 }
 
 const EMPTY_STATES = [
-  ["/projects", "projects-empty", "Add your first job above", "A manager or owner adds each job here"],
+  ["/projects", "projects-empty", "Add your first job with the number", "A manager or owner adds each job here"],
   ["/pricing", "suppliers-empty", "Add each company that delivers", "A manager or owner sets up suppliers"],
   ["/pricing", "rates-empty", "Add a supplier and a material above first", "Approved tickets show no cost until a manager or owner sets the rate"],
   ["/records", "records-empty", "Upload a batch of scanned tickets", "once someone on your team uploads and enters them"],
-  ["/invoices", "invoices-empty", "create a project", "A manager or owner records each supplier invoice line"],
+  ["/invoices/lines", "invoices-empty", "create a project", "A manager or owner records each supplier invoice line"],
 ];
 for (const [path, id, forManager, forViewer] of EMPTY_STATES) {
   for (const [role, text] of [["owner", forManager], ["viewer", forViewer]]) {
@@ -108,7 +108,7 @@ for (const [path, id, forManager, forViewer] of EMPTY_STATES) {
 
 test("empty invoices, once a project exists, say how to start", async ({ page }) => {
   await mockWorkspace(page, { empty: true, extra: (request, path) => path === "/api/projects" ? (route) => json(route, [{ id: 1, code: "24-115", name: "Fictional Road Job", job_location: null, description: null, status: "active" }]) : null });
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   await expect(page.getByTestId("invoices-empty")).toContainText("upload the invoice PDF");
   await expect(page.getByTestId("invoices-empty")).toContainText("Include the invoice's ticket numbers");
 });
@@ -170,11 +170,11 @@ test("with a saved view open, exports carry its id, so its column names apply", 
 test("a viewer isn't offered actions their role can't take", async ({ page }) => {
   await mockWorkspace(page, { role: "viewer" });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Delivery operations" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /New ticket upload/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Upload" })).toHaveCount(0);
   await page.goto("/records");
   await expect(page.getByTestId("records-summary")).toContainText("3 records");
-  await expect(page.getByRole("link", { name: /New ticket upload/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Upload" })).toHaveCount(0);
   await page.getByLabel("Saved view").selectOption({ label: "October stone" });
   await expect(page.getByRole("button", { name: "Remove view" })).toHaveCount(0);
 });

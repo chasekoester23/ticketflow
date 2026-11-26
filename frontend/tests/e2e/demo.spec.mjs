@@ -37,7 +37,7 @@ test("upload, reconcile the scan, approve, export, draft an invoice, and catch t
   await page.locator("input[type=file]").setInputFiles(`${KIT}/demo-tickets.pdf`);
   await page.getByLabel("Project").selectOption({ index: 1 });
   await page.getByLabel("Paper tickets in this upload (optional)").fill("3");
-  await page.getByRole("button", { name: "Queue for manual entry" }).click();
+  await page.getByRole("button", { name: "Upload for entry by hand" }).click();
 
   // 2. The scan check catches the faint ticket before any total looks complete.
   const check = page.getByRole("region", { name: "Scan check" });
@@ -75,12 +75,12 @@ test("upload, reconcile the scan, approve, export, draft an invoice, and catch t
   await expect(review.getByText("Saved as comparison")).toBeVisible();
 
   // 6. Totals agree, but the wrong ticket number is caught.
-  await page.goto("/invoices");
+  await page.goto("/invoices/lines");
   const line = page.getByRole("row").filter({ hasText: "EA-2026-1107" });
   await expect(line).toContainText("Difference found");
   await line.getByRole("button", { name: "Details" }).click();
   const table = page.getByRole("table", { name: "Ticket-by-ticket check" });
-  await expect(table.getByRole("row").filter({ hasText: "55999" })).toContainText("Not in TicketFlow");
+  await expect(table.getByRole("row").filter({ hasText: "55999" })).toContainText("Not in Quarvera");
   await expect(table.getByRole("row").filter({ hasText: "55120" })).toContainText("Delivered, not on invoice");
   await expect(table.getByRole("row").filter({ hasText: "10482" })).toContainText("Matched");
   await expect(page.getByText("Billed minus verified tons:", { exact: false }).locator("strong")).toHaveText("0.000");
@@ -90,7 +90,7 @@ test("upload, reconcile the scan, approve, export, draft an invoice, and catch t
   await expect(page.getByTestId("evidence-summary")).toContainText("2 of 3 invoice tickets confirmed by a person");
 
   // 8. The pilot report tells the same story, with links to where to look.
-  await page.goto("/reports");
+  await page.goto("/reports/pilot");
   await expect(page.getByTestId("unresolved")).toBeVisible();
   await expect(page.getByRole("region", { name: "Invoice reconciliation" })).toContainText("Verified tickets linked to an invoice");
   await expect(page.getByRole("region", { name: "Intake" })).toContainText("Physical slots");

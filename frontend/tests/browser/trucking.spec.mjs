@@ -90,6 +90,8 @@ test("a hauling invoice shows billed against supported, line by line, and a new 
   const posted = [];
   await mock(page, "manager", { posted });
   await page.goto("/trucking");
+  await page.getByRole("tab", { name: "Hauling invoices" }).click();
+  await expect(page).toHaveURL(/\/trucking\?tab=invoices$/);
   const invoices = page.getByRole("region", { name: "Hauling invoices" });
   const row = invoices.getByRole("table", { name: "Hauling invoice list" }).getByRole("row").nth(1);
   await expect(row).toContainText("$1,455.00");

@@ -58,8 +58,8 @@ export default function LoginPage() {
     <p className="tf-pub-statement">Every load.<br />Every ticket.<br />Accounted for.</p>
     <p className="tf-pub-aside-note">Everyone signs in with their own account, so every approval carries a name.</p>
   </>}>
-    <h1 className="tf-pub-title">Sign in to TicketFlow</h1>
-    <p className="tf-pub-lead">Use the username and password from your company&apos;s TicketFlow owner.</p>
+    <h1 className="tf-pub-title">Sign in to Quarvera</h1>
+    <p className="tf-pub-lead">Use the username and password from your company&apos;s Quarvera owner.</p>
     {notice && <div role="status" className="tf-pub-banner tf-pub-banner-notice">{notice}</div>}
     {error && <div role="alert" className="tf-pub-banner tf-pub-banner-error">{error}</div>}
     <form className="tf-pub-form" onSubmit={submit} noValidate>
@@ -71,6 +71,6 @@ export default function LoginPage() {
       <SubmitButton pending={pending} pendingText="Signing in…">Sign in</SubmitButton>
     </form>
     <p className="tf-pub-footnote">Forgot your password? An owner at your company can reset it from the Team page.</p>
-    <p className="tf-pub-switch">New to TicketFlow? <Link href="/signup">Request access</Link></p>
+    <p className="tf-pub-switch">New to Quarvera? <Link href="/signup">Request access</Link></p>
   </PublicFrame>;
 }

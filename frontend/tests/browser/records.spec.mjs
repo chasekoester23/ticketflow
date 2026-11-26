@@ -191,34 +191,30 @@ test("name cleanup explains each spelling and only changes what someone applies"
   expect(aliases).toEqual([{ kind: "supplier", alias: "Examle Agregates", target_id: 4 }]);
 });
 
-test("the project report separates approved from unapproved and marks unknown figures", async ({ page }) => {
+test("the project report leaves out unapproved work and marks a missing rate as incomplete", async ({ page }) => {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
     if (path === "/api/auth/me") return json(route, profile("viewer"));
     if (path === "/api/projects") return json(route, [{ id: 1, code: "24-115", name: "Fictional Road Job", job_location: null, description: null, status: "active" }]);
-    if (path === "/api/reports/project/1") {
-      const group = { tickets: 10, verified_tickets: 8, verified_tons: "164.000", cost: "4920.00", unpriced: 1, pending_tickets: 2, pending_tons: "41.000" };
-      return json(route, {
-        project: { id: 1, code: "24-115", name: "Fictional Road Job", status: "active" }, first_delivery: "2026-10-01", last_delivery: "2026-10-31",
-        totals: group, by_supplier_material: [{ supplier: "Example Aggregates", material: "No. 57 Stone", ...group }], by_month: [{ month: "2026-10", ...group }],
-        invoices: { billed_total: "5000.00", verified_total: "0", lines_unresolved: 1, by_status: { incomplete: 1 }, lines: [{
-          id: 9, invoice_number: "EA-1107", supplier: "Example Aggregates", material: "No. 57 Stone", date_from: "2026-10-01", date_to: "2026-10-31",
-          status: "incomplete", comparison_mode: "itemized", billed_tons: "164.000", verified_tons: "164.000", tons_difference: "0.000",
-          billed_subtotal: "5000.00", verified_subtotal: null, subtotal_difference: null }] },
-      });
-    }
+    if (path === "/api/reports/summary") return json(route, {
+      period: "month", date_from: null, date_to: null,
+      material: { tickets: 8, tons: "164.000", cost: "4920.00", unpriced: 1, waiting: 2, undated: { tickets: 0, tons: "0.000", cost: "0.00", unpriced: 0 },
+        by_material: [{ name: "No. 57 Stone", tickets: 8, tons: "164.000", cost: "4920.00", unpriced: 1 }], by_supplier: [{ name: "Example Aggregates", tickets: 8, tons: "164.000", cost: "4920.00", unpriced: 1 }] },
+      trucking: { shifts: 0, hours: "0.00", cost: "0.00", loads: 0, by_hauler: [], billing_methods: [] },
+      costs: { material: "4920.00", trucking: "0.00", total: "4920.00", complete: false, unpriced: 1 },
+      by_period: [{ period: "2026-10", tickets: 8, tons: "164.000", material: "4920.00", unpriced: 1, hours: "0.00", trucking: "0.00", loads: 0, total: "4920.00" }],
+      by_project: [], unit_prices: [], invoices: { invoices: 1, billed: "5000.00", matched: 0, with_differences: 0, incomplete: 1, difference: "0", totals_only: 0, rows: [] } });
     return json(route, { detail: "Unmocked " + path }, 404);
   });
-  await page.goto("/reports/project?project_id=1");
-  const totals = page.getByRole("region", { name: "Project totals" });
-  await expect(totals).toContainText("164");
-  await expect(totals).toContainText("1 approved with no locked price");
-  await expect(totals).toContainText("41.00 t");
-  await expect(page.getByText("Not an approval for payment.")).toBeVisible();
-  const lines = page.getByRole("region", { name: "Invoice lines" });
-  await expect(lines.getByRole("row").filter({ hasText: "EA-1107" })).toContainText("Unresolved");
-  await expect(lines).toContainText("1 line(s) with an unresolved figure are left out");
-  await expect(page.getByRole("link", { name: "Download Excel" })).toHaveAttribute("href", /\/api\/reports\/project\/1\/report\.xlsx$/);
+  await page.goto("/projects/1");
+  const figures = page.getByRole("region", { name: "Approved costs" });
+  await expect(figures).toContainText("164 t");
+  await expect(figures).toContainText("Incomplete: 1 approved without a rate");
+  await expect(figures).toContainText("Incomplete until every rate is set");
+  await expect(page.getByText("2 tickets waiting for review are not included")).toBeVisible();
+  await expect(page.getByText(/not an approval for payment/i)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Invoices" })).toContainText("never added to project cost");
+  await expect(page.getByRole("link", { name: "Download project workbook" })).toHaveAttribute("href", /\/api\/reports\/project\/1\/report\.xlsx$/);
 });

@@ -38,14 +38,14 @@ test("manual scan upload is visibly non-AI and sends deliberate intake mode", as
     return json(route, { detail: "Unmocked" }, 404);
   });
   await page.goto("/upload");
-  await expect(page.getByText("Manual entry works without an API key.")).toBeVisible();
-  await expect(page.getByRole("radio", { name: /Manual entry/ })).toBeChecked();
+  await expect(page.getByText("tickets are entered by hand")).toBeVisible();
+  await expect(page.getByRole("radio", { name: /Enter by hand/ })).toBeChecked();
   await page.getByRole("combobox", { name: "Project" }).selectOption("1");
   await page.locator('input[type="file"]').setInputFiles({
     name: "demo.pdf", mimeType: "application/pdf",
     buffer: Buffer.from("%PDF-1.4\nMock synthetic PDF\n"),
   });
-  await page.getByRole("button", { name: "Queue for manual entry" }).click();
+  await page.getByRole("button", { name: "Upload for entry by hand" }).click();
   await expect(page.getByText("Batch #83", { exact: false })).toBeVisible();
   await expect(page.getByText("prepare ticket images for manual entry", { exact: false })).toBeVisible();
   expect(received).toHaveLength(1);

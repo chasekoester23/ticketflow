@@ -2,8 +2,8 @@ import Link from "next/link";
 import { Brand } from "../public-ui";
 
 export const metadata = {
-  title: "TicketFlow · Delivery tickets and supplier invoices for contractors",
-  description: "TicketFlow reads your material delivery tickets, puts each one beside its scan for your office to check, and compares approved tons with the supplier's invoice.",
+  title: "Quarvera · Construction material and trucking cost management",
+  description: "Quarvera reads your material delivery tickets, puts each one beside its scan for your office to check, and compares approved tons with the supplier's invoice.",
 };
 
 const WIDTH = 1960;
@@ -14,7 +14,7 @@ const INVOICE: { ticket: string; date: string; billed: string; approved: string 
   { ticket: "48208", date: "11/03", billed: "20.64", approved: "20.64", result: "Matched" },
   { ticket: "48213", date: "11/03", billed: "22.41", approved: "22.41", result: "Matched" },
   { ticket: "48214", date: "11/03", billed: "21.87", approved: "19.87", result: "Tons differ", over: "+$37.00" },
-  { ticket: "48219", date: "11/04", billed: "18.30", approved: null, result: "Not in TicketFlow", over: "+$338.55" },
+  { ticket: "48219", date: "11/04", billed: "18.30", approved: null, result: "Not in Quarvera", over: "+$338.55" },
   { ticket: "48221", date: "11/04", billed: "23.02", approved: "23.02", result: "Matched" },
   { ticket: "48221", date: "11/04", billed: "23.02", approved: null, result: "Repeated on this invoice", over: "+$425.87" },
   { ticket: "48226", date: "11/05", billed: "19.75", approved: "19.75", result: "Matched" },
@@ -67,7 +67,7 @@ export default function WelcomePage() {
           <div className="tf-s-hero-lower">
             <div className="tf-s-hero-copy">
               <div>
-                <p className="tf-s-hero-text">TicketFlow reads your delivery tickets, puts each one beside its scan for your office to check, then compares the approved tons with the supplier&apos;s invoice.</p>
+                <p className="tf-s-hero-text">Quarvera reads your delivery tickets, puts each one beside its scan for your office to check, then compares the approved tons with the supplier&apos;s invoice.</p>
                 <div className="tf-s-hero-actions">
                   <Link href="/signup" className="tf-pub-button tf-pub-button-primary">Request access</Link>
                   <Link href="/login" className="tf-s-text-link">Sign in</Link>
@@ -78,9 +78,9 @@ export default function WelcomePage() {
             <figure className="tf-s-shot">
               <picture>
                 <source media="(max-width: 620px)" srcSet="/site/review-phone.webp" />
-                <img src="/site/review.webp" width={WIDTH} height={HEIGHT} alt="TicketFlow's review screen: a scanned delivery ticket beside the values read from it, with an Accept button." />
+                <img src="/site/review.webp" width={WIDTH} height={HEIGHT} alt="Quarvera's review screen: a scanned delivery ticket beside the values read from it, with an Accept button." />
               </picture>
-              <figcaption className="tf-s-caption">TicketFlow&apos;s review screen, with fictional data.</figcaption>
+              <figcaption className="tf-s-caption">Quarvera&apos;s review screen, with fictional data.</figcaption>
             </figure>
           </div>
         </div>
@@ -89,7 +89,7 @@ export default function WelcomePage() {
       <section id="tickets" className="tf-s-wrap tf-s-tickets" aria-labelledby="tickets-title">
         <header>
           <h2 id="tickets-title">Paper delivery tickets pile up fast. Your office shouldn&apos;t have to key every load into a spreadsheet just to check an invoice.</h2>
-          <p className="tf-s-lead">Scan the stack. TicketFlow reads each ticket and shows the values beside the original. Nothing counts toward your tons until someone in your office approves it.</p>
+          <p className="tf-s-lead">Scan the stack. Quarvera reads each ticket and shows the values beside the original. Nothing counts toward your tons until someone in your office approves it.</p>
         </header>
         <div className="tf-s-stage">
           <Ticket />
@@ -141,7 +141,7 @@ export default function WelcomePage() {
               <p className="tf-s-body">A tonnage that doesn&apos;t match, a ticket you never received, a load billed twice. Each one shows up by line and in dollars, before you pay. So do approved deliveries nobody has billed yet.</p>
             </div>
           </div>
-          <p className="tf-s-caption">Fictional invoice and figures, using TicketFlow&apos;s own result labels.</p>
+          <p className="tf-s-caption">Fictional invoice and figures, using Quarvera&apos;s own result labels.</p>
         </div>
       </section>
 
@@ -172,13 +172,13 @@ export default function WelcomePage() {
     <footer className="tf-s-footer">
       <div className="tf-s-wrap">
         <div className="tf-s-footer-top">
-          <div><Brand /><p>Delivery tickets and supplier invoices for contractors.</p></div>
+          <div><Brand /><p>Construction material and trucking cost management, from the field to the invoice. Every delivery. Every truck. Every dollar.</p></div>
           <nav aria-label="Footer">
             <div><h2>Product</h2><ul><li><a href="#tickets">Reading tickets</a></li><li><a href="#invoices">Checking invoices</a></li></ul></div>
             <div><h2>Account</h2><ul><li><Link href="/login">Sign in</Link></li><li><Link href="/signup">Request access</Link></li></ul></div>
           </nav>
         </div>
-        <div className="tf-s-footer-end"><span>© {new Date().getFullYear()} TicketFlow</span><span>Companies, tickets and figures on this page are fictional examples.</span></div>
+        <div className="tf-s-footer-end"><span>© {new Date().getFullYear()} Quarvera</span><span>Companies, tickets and figures on this page are fictional examples.</span></div>
       </div>
     </footer>
   </div>;
