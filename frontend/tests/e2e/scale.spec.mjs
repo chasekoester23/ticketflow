@@ -125,8 +125,11 @@ test("the invoice result and actions are on screen at laptop width without sidew
 
 test("the project report and system health load on the real stack", async ({ page }) => {
   await signIn(page);
-  await page.goto("/reports/project");
-  await expect(page.getByRole("region", { name: "Project totals" })).toContainText("Approved tons");
+  // The old project report link lands in the project's own workspace, which holds the report now.
+  await page.goto("/reports/project?project_id=1");
+  await expect(page).toHaveURL(/\/projects\/1$/);
+  await expect(page.getByText("Verified material", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download project workbook" })).toBeVisible();
   await page.goto("/system");
   const worker = page.getByRole("row").filter({ hasText: "Processing worker" });
   await expect(worker).toContainText("OK"); // The run script started a real worker.
