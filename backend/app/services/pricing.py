@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Batch, Material, NameAlias, Supplier, SupplierRate, Ticket, normal_name
-from . import units
+from . import supplier_memory, units
 
 CENTS = Decimal("0.01")
 
@@ -173,21 +173,32 @@ def alias_suggestions(
     db: Session, organization_id: int, catalog: tuple[set[str], set[str]] | None = None,
 ) -> dict[tuple[str, str], str]:
     """{(kind, alias key): catalog name} for active aliases whose target still
-    exists. One query per list, however many tickets are displayed."""
+    exists, plus what each catalog supplier's approved tickets always say
+    (supplier_memory, keyed ("usual:<field>", supplier key)). One query each per
+    list, however many tickets are displayed. This company's rows only."""
     catalog = catalog if catalog is not None else catalog_names(db, organization_id)
     current = {"supplier": catalog[0], "material": catalog[1]}
     rows = db.execute(select(NameAlias.kind, NameAlias.alias_key, NameAlias.target_key, NameAlias.target_name).where(
         NameAlias.organization_id == organization_id, NameAlias.removed_at.is_(None)))
-    return {(kind, key): name for kind, key, target, name in rows if target in current.get(kind, ())}
+    found = {(kind, key): name for kind, key, target, name in rows if target in current.get(kind, ())}
+    return {**supplier_memory.usual_values(db, organization_id, catalog[0]), **found}
 
 
 def suggestions_for(t: Ticket, aliases: dict[tuple[str, str], str]) -> dict[str, str]:
-    """Exact alias matches only: never fuzzy, and only ever a suggestion."""
+    """Exact alias matches only: never fuzzy, and only ever a suggestion. Keys are
+    the field ("supplier", "material_type") for a catalog name, and "usual_<field>"
+    for what this catalog supplier's approved tickets always say."""
     found = {}
     for field, kind, value in (("supplier", "supplier", t.supplier), ("material_type", "material", t.material_type)):
         name = aliases.get((kind, norm(value))) if value else None
         if name:
             found[field] = name
+    supplier = found.get("supplier") or t.supplier
+    if supplier:
+        usual = supplier_memory.suggestions(t, aliases, norm(supplier), norm)
+        if "material_type" in found:
+            usual.pop(supplier_memory.LABEL + "material_type", None)  # the catalog name comes first
+        found.update(usual)
     return found
 
 
