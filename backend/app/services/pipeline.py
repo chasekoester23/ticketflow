@@ -11,18 +11,20 @@ read, and the list of tickets only ever grows at the end.
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 from decimal import Decimal
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import Batch, Material, Supplier, Ticket, UploadedFile, normal_name
-from . import scan_manifest, splitter, storage, ticket_text, units, usage
+from ..models import Batch, Material, ScanEvent, ScanSlot, Supplier, Ticket, UploadedFile, normal_name
+from . import scan_manifest, segmentation, splitter, storage, ticket_text, units, usage
 from .extraction import ExtractionError, Extractor
 from .validation import (compute_flags, parse_amount, parse_date, parse_tonnage, same_number_in_batch_flag,
                          unit_not_stated_flag)
@@ -177,6 +179,8 @@ class _FileState:
     any_failure: bool = False
     prepared: bool = False
     aborted: bool = False
+    # Auto layout: (page, position) -> why a person should check that region's crop.
+    notes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -381,6 +385,7 @@ def finish_file(db: Session, state: _FileState) -> None:
     """A file's status, once everything it holds has been read."""
     if not state.prepared or state.pending or state.aborted:
         return
+    flag_layout_notes(db, state)
     file = db.get(UploadedFile, state.file_id)
     # Never report an all-white (or effectively empty) upload as completed.
     # A contractor must see an explicit failure instead of an empty "success"
@@ -395,6 +400,56 @@ def finish_file(db: Session, state: _FileState) -> None:
     file.status = "failed" if failed else "ready_for_review"
     file.error = scan_manifest.SOME_FAILED_ERROR if failed else None
     db.commit()
+
+
+LAYOUT_REVIEW_EVENT = "auto_layout_review"
+
+
+def flag_layout_notes(db: Session, state: _FileState) -> None:
+    """Put each auto-layout review note on its ticket once it has been read (reading
+    resets a ticket's flags). An approved ticket is never changed. A note is a prompt to
+    look, never a value, so failing to add one is logged rather than failing the file."""
+    if not state.notes:
+        return
+    try:
+        for (page, position), note in state.notes.items():
+            ticket = db.scalar(select(Ticket).where(
+                Ticket.file_id == state.file_id, Ticket.source_page == page, Ticket.position == position))
+            if ticket is not None and ticket.status != "verified" and note not in (ticket.flags or []):
+                ticket.flags = [*(ticket.flags or []), note]
+        db.commit()
+    except Exception:
+        logger.exception("layout_note_failed", extra={"batch_id": state.batch_id, "file_id": state.file_id})
+        db.rollback()
+
+
+def layout_notes(db: Session, file: UploadedFile) -> dict[int, str]:
+    """Review notes recorded when a file's auto-layout regions were first found, by slot id."""
+    rows = db.execute(select(ScanEvent.slot_id, ScanEvent.new_value).join(ScanSlot, ScanSlot.id == ScanEvent.slot_id)
+                      .where(ScanSlot.file_id == file.id, ScanEvent.action == LAYOUT_REVIEW_EVENT))
+    return {slot_id: segmentation.REVIEW_NOTES[code] for slot_id, code in rows if code in segmentation.REVIEW_NOTES}
+
+
+def page_crops(page_img, page_no: int, layout: str, slots: dict, notes: dict[int, str]) -> list[splitter.Crop]:
+    """The crops of one page. With the auto layout, a page already on record keeps the
+    regions found the first time and its stored crops are read again, so a retry (or a
+    later change to detection) never renumbers or re-cuts tickets people have seen.
+    That includes any region a person added by hand."""
+    if layout == "auto":
+        known = sorted((position, slot) for (page, position), slot in slots.items() if page == page_no)
+        if known:
+            store = storage.current()
+            crops = []
+            for position, slot in known:
+                box = tuple(slot.crop_box)
+                try:
+                    with Image.open(io.BytesIO(store.read(slot.crop_path))) as stored:
+                        image = stored.convert("RGB")
+                except OSError:  # the stored crop is gone: cut it again from the page
+                    image = page_img.crop(box)
+                crops.append(splitter.Crop(position, box, image, notes.get(slot.id)))
+            return crops
+    return splitter.split_page(page_img, layout)
 
 
 def prepare_file(db: Session, reader: _Reader, file: UploadedFile, layout: str, *, manual: bool) -> _FileState | None:
@@ -419,12 +474,19 @@ def prepare_file(db: Session, reader: _Reader, file: UploadedFile, layout: str, 
     # tickets on retry would also delete a user's edits and verification history.
     state = _FileState(file.id, file.batch_id, {(t.source_page, t.position): t for t in file.tickets})
     slots = scan_manifest.slots_by_position(db, file.id)
+    notes = layout_notes(db, file) if layout == "auto" else {}
     to_read = []
 
     for page_no, page_img in enumerate(pages, start=1):
-        for crop in splitter.split_page(page_img, layout):
+        for crop in page_crops(page_img, page_no, layout, slots, notes):
+            fresh = (page_no, crop.position) not in slots
             # Every slot goes on record, including blank-looking ones.
             slot = scan_manifest.record_slot(db, file, slots, page_no, crop, sha256_bytes)
+            if fresh and crop.review:
+                # Kept with the slot, so the note survives a retry. No actor: the system.
+                db.flush()
+                scan_manifest.record_event(db, file.batch_id, None, LAYOUT_REVIEW_EVENT, slot_id=slot.id,
+                                           new=segmentation.REVIEW_CODES.get(crop.review))
             key = (page_no, crop.position)
             ticket = state.existing.get(key)
             if slot.detection != "content" and slot.decision != "real_ticket" and ticket is None:
@@ -449,6 +511,8 @@ def prepare_file(db: Session, reader: _Reader, file: UploadedFile, layout: str, 
             # The unrotated crop's hash: rotating must not defeat the check
             # that an identical scan cannot be approved twice.
             ticket.crop_sha256 = slot.crop_sha256
+            if crop.review:
+                state.notes[key] = crop.review
 
             if manual:
                 # Manual intake creates real, unapproved records with actual
@@ -456,6 +520,8 @@ def prepare_file(db: Session, reader: _Reader, file: UploadedFile, layout: str, 
                 # Never replace an existing reviewed/approved ticket.
                 ticket.error = None
                 set_blank_fields(ticket)
+                if crop.review:
+                    ticket.flags = [*ticket.flags, crop.review]
                 db.add(ticket)
                 continue
             # A new ticket is saved only once it has been read. One being read

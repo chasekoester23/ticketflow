@@ -227,6 +227,7 @@ def _body(method: str, path: str, ids: dict):
         ("PATCH", "/api/team/members/{member_id}"): {"display_name": "Swept"},
         ("PUT", "/api/batches/{batch_id}/expected-count"): {"expected_ticket_count": 4},
         ("POST", "/api/scan-slots/{slot_id}/rotate"): {"rotation": 90},
+        ("POST", "/api/files/{file_id}/pages/{page_no}/regions"): {"crop_box": [10, 10, 300, 300]},
         ("POST", "/api/invoice-documents"): (None, {"project_id": str(ids["project"])}, {"file": ("i.pdf", INVOICE, "application/pdf")}, None),
         ("POST", "/api/invoice-documents/{document_id}/lines"): (None, None, None, {"page": 1}),
         ("PATCH", "/api/invoice-documents/{document_id}/lines/{line_id}"): {"billed_quantity": "7"},

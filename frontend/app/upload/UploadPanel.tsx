@@ -12,7 +12,7 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
   onUploaded: (batch: Batch) => void | Promise<void>;
   onError: (message: string | null) => void;
 }) {
-  const [layout, setLayout] = useState<"single" | "grid_2x2">("grid_2x2");
+  const [layout, setLayout] = useState<"auto" | "single" | "grid_2x2">("auto");
   // Read automatically when it's set up; entry by hand stays a deliberate choice.
   const [intakeMode, setIntakeMode] = useState<"extract" | "manual">(reading ? "extract" : "manual");
   const chosenMode = useRef(false);
@@ -81,7 +81,7 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
         >
           <span className="mb-2 flex h-10 w-10 items-center justify-center rounded border border-[#dce1e6] bg-white text-xl text-[#657182]" aria-hidden="true">↑</span>
           <span className="text-sm font-semibold text-[#263442]">Drop scanned tickets here, or browse files</span>
-          <span className="mt-1 text-xs text-[#657182]">Single tickets or four tickets per page</span>
+          <span className="mt-1 text-xs text-[#657182]">One or more tickets per page, placed any way</span>
           <input ref={input} type="file" multiple accept=".pdf,.jpg,.jpeg,.png" className="hidden"
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
@@ -131,7 +131,8 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
             </div>
           </fieldset>
           <label className="tf-field-label">Document layout
-            <select className="tf-field w-full" value={layout} onChange={(e) => setLayout(e.target.value as "single" | "grid_2x2")}>
+            <select className="tf-field w-full" value={layout} onChange={(e) => setLayout(e.target.value as "auto" | "single" | "grid_2x2")}>
+              <option value="auto">Find the tickets on each page (recommended)</option>
               <option value="grid_2x2">Four tickets per page (2×2)</option>
               <option value="single">One ticket per page</option>
             </select>
