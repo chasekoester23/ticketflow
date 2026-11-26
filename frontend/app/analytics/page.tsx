@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { costReportXlsxUrl } from "../../lib/api";
+import { costReportXlsxUrl, quantityText, UNIT_LABEL } from "../../lib/api";
 import { useProject } from "../project-context";
 import { PeriodTable, Range, RangeControls, ShareList, TrendChart, hours, money, queryFor, rangeFor, tons, useCostReport } from "./report-parts";
 
@@ -73,13 +73,13 @@ export default function AnalyticsPage() {
 
       {tab === "materials" && <section className="tf-panel" aria-labelledby="prices-title">
         <div className="tf-panel-heading"><div><h2 id="prices-title" className="tf-panel-title">Unit prices by material</h2>
-          <p className="tf-panel-description">Average approved price per ton from each supplier, from priced deliveries only; low and high show the range of locked rates.</p></div></div>
+          <p className="tf-panel-description">Average approved price per unit (per ton, per cubic yard…) from each supplier, from priced deliveries only; low and high show the range of locked rates.</p></div></div>
         {byMaterial.size ? <div className="tf-table-wrap"><table className="tf-table" aria-label="Unit prices by material">
-          <thead><tr><th>Material</th><th>Supplier</th><th className="text-right">Tons</th><th className="text-right">Avg $/t</th><th className="text-right">Low</th><th className="text-right">High</th><th className="text-right">Cost</th></tr></thead>
-          <tbody>{[...byMaterial.entries()].map(([material, rows]) => rows.map((u, n) => <tr key={material + u.supplier}>
+          <thead><tr><th>Material</th><th>Supplier</th><th className="text-right">Quantity</th><th className="text-right">Average price</th><th className="text-right">Low</th><th className="text-right">High</th><th className="text-right">Cost</th></tr></thead>
+          <tbody>{[...byMaterial.entries()].map(([material, rows]) => rows.map((u, n) => <tr key={material + u.supplier + (u.unit ?? "")}>
             <td className="font-semibold text-[#041d2f]">{n === 0 ? material : ""}</td>
             <td><Link prefetch={false} href={recordsFor({ ...dates, material, supplier: u.supplier })}>{u.supplier}</Link></td>
-            <td className="text-right">{tons(u.tons)}</td><td className="text-right font-semibold">{money(u.average)}</td>
+            <td className="text-right">{tons(u.tons)} {UNIT_LABEL[u.unit ?? "ton"]?.short}</td><td className="text-right font-semibold">{money(u.average)}/{UNIT_LABEL[u.unit ?? "ton"]?.short}</td>
             <td className="text-right">{money(u.low)}</td><td className="text-right">{money(u.high)}</td><td className="text-right">{money(u.cost)}</td></tr>))}</tbody>
         </table></div> : <p className="tf-empty">No priced deliveries in these dates.</p>}
         {r.material.by_material.some((m) => m.unpriced) && <p className="border-t border-[#dce1e6] px-4 py-2 text-[12px] text-[#995a18]">Not compared (no rate yet): {r.material.by_material.filter((m) => m.unpriced).map((m) => `${m.name} (${m.unpriced})`).join(", ")}.</p>}
@@ -89,7 +89,7 @@ export default function AnalyticsPage() {
         <section className="tf-panel" aria-labelledby="share-title">
           <div className="tf-panel-heading"><h2 id="share-title" className="tf-panel-title">Share of material spend</h2></div>
           <ShareList label="Material spend by supplier" total={r.costs.material}
-            rows={r.material.by_supplier.map((s) => ({ name: s.name, value: s.cost, note: `${tons(s.tons)} t`, warn: s.unpriced ? `${s.unpriced} without a rate` : undefined }))}
+            rows={r.material.by_supplier.map((s) => ({ name: s.name, value: s.cost, note: quantityText(s.tons, s.other_units), warn: s.unpriced ? `${s.unpriced} without a rate` : undefined }))}
             href={(name) => recordsFor({ ...dates, supplier: name })} />
         </section>
         <section className="tf-panel" aria-labelledby="supplier-title">

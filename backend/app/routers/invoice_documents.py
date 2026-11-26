@@ -28,6 +28,7 @@ from ..models import (
 )
 from ..permissions import require
 from ..rate_limit import limited
+from ..services import units
 from ..services import invoice_extraction, pipeline, splitter, storage
 from ..services.accounts import names_by_id
 from ..services.invoice_extraction import InvoiceExtractionError
@@ -93,8 +94,9 @@ def _blockers(line: InvoiceDraftLine) -> list[str]:
     quantity in any other unit is never converted."""
     problems = [f"{label} is missing" for name, label in _REQUIRED.items()
                 if getattr(line, name) in (None, "")]
-    if line.unit and line.unit.strip().lower() != "ton":
-        problems.append(f"billed in '{line.unit}': comparison works in tons only, and units are never converted")
+    if line.unit and units.canonical(line.unit) is None:
+        problems.append(f"billed in '{line.unit}': a material line is compared in tons, cubic yards, loads, each or "
+                        "gallons, and units are never converted")
     return problems
 
 
@@ -381,6 +383,7 @@ def confirm_line(document_id: int, line_id: int, db: Session = Depends(get_db),
             material_name=line.material_name, date_from=line.date_from, date_to=line.date_to,
             billed_tons=line.billed_quantity, billed_unit_price=line.billed_unit_price,
             billed_subtotal=line.billed_subtotal, ticket_list=line.ticket_list,
+            unit=units.canonical(line.unit) or "ton",
         )
     except ValidationError as exc:
         raise HTTPException(422, "This line has values a comparison can't accept: " + "; ".join(

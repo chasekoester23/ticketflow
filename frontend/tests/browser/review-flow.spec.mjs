@@ -332,7 +332,7 @@ test("bad tons are caught before saving, and units are not converted", async ({ 
   const log = await mock(page, [ticket(101)]);
   await page.goto("/upload?batch=5&ticket=101");
   await page.getByLabel("Tonnage (tons)").fill("48000 lbs");
-  await expect(page.getByText("Don't convert pounds or yards here.")).toBeVisible();
+  await expect(page.getByText("If the ticket is in pounds or yards, choose its unit below instead of converting.", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "Accept & next" })).toBeDisabled();
   expect(log.patched).toEqual([]);
 });

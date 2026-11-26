@@ -339,6 +339,8 @@ def status():
 
 
 def _extraction_status():
+    if not settings.ai_reading_enabled:
+        return {"extraction_configured": False, "model": "Automatic reading is turned off", "reading_disabled": True}
     if settings.extraction_provider == "gemini":
         return {"extraction_configured": bool(settings.gemini_api_key), "model": settings.gemini_model}
     if settings.extraction_provider == "anthropic":

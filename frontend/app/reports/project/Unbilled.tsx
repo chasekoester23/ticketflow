@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { UnbilledReport, downloadFile, getUnbilled, ticketImageUrl, unbilledCsvUrl } from "../../../lib/api";
+import { UnbilledReport, downloadFile, getUnbilled, ticketImageUrl, unbilledCsvUrl, otherUnitsText, unitSuffix } from "../../../lib/api";
 
 const money = (v: string | null) => v === null ? "Unresolved" : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const tons = (v: string | null) => v === null ? "—" : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 });
@@ -73,6 +73,7 @@ export function Unbilled({ projectId }: { projectId: string }) {
             <p className="text-[11px] text-[#5b6878]">Each one is listed below and in the CSV</p></div>
           <div className="px-4 py-2.5"><p className="tf-stat-label">Tons</p>
             <p className="mt-1 text-[20px] font-bold tabular-nums">{tons(report.total_tons)}</p>
+            {report.other_units?.length ? <p className="text-[11px] text-[#5b6878]">plus {otherUnitsText(report.other_units)}, not added to tons</p> : null}
             <p className="text-[11px] text-[#5b6878]">Approved tons, as entered</p></div>
           <div className="px-4 py-2.5"><p className="tf-stat-label">Approved cost</p>
             <p className="mt-1 text-[20px] font-bold tabular-nums">{money(report.total_cost)}</p>
@@ -87,7 +88,7 @@ export function Unbilled({ projectId }: { projectId: string }) {
             <tbody>{report.gaps.map((gap) => <tr key={[gap.supplier, gap.material, gap.date_from].join("|")}>
               <td className="font-semibold">{gap.supplier}</td><td>{gap.material}</td>
               <td className="whitespace-nowrap tabular-nums">{gap.date_from === gap.date_to ? gap.date_from : `${gap.date_from} to ${gap.date_to}`}</td>
-              <td className="text-right tabular-nums">{gap.tickets}</td><td className="text-right tabular-nums">{tons(gap.tons)}</td>
+              <td className="text-right tabular-nums">{gap.tickets}</td><td className="text-right tabular-nums">{tons(gap.tons)}{unitSuffix(gap.unit)}</td>
               <td className="whitespace-nowrap"><a href={recordsLink(projectId, { supplier: gap.supplier, material: gap.material, date_from: gap.date_from, date_to: gap.date_to })}>In records →<span className="sr-only"> approved {gap.supplier} {gap.material} tickets, {gap.date_from} to {gap.date_to}</span></a></td>
             </tr>)}</tbody>
           </table></div>
@@ -99,7 +100,7 @@ export function Unbilled({ projectId }: { projectId: string }) {
             <td className="font-semibold tabular-nums">{row.ticket_number ?? "Unnumbered"}</td>
             <td className="whitespace-nowrap tabular-nums">{row.delivery_date ?? "—"}</td>
             <td>{row.supplier ?? "—"}</td><td>{row.material ?? "—"}</td>
-            <td className="text-right tabular-nums">{tons(row.tons)}</td><td className="text-right tabular-nums">{money(row.cost)}</td>
+            <td className="text-right tabular-nums">{tons(row.tons)}{unitSuffix(row.unit)}</td><td className="text-right tabular-nums">{money(row.cost)}</td>
             <td className="whitespace-nowrap">
               <a href={ticketImageUrl(row.ticket_id)} target="_blank" rel="noreferrer">Scan<span className="sr-only"> of ticket {row.ticket_number ?? row.ticket_id}</span></a>
               {" · "}

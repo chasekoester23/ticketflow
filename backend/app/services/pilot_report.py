@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from statistics import median
 
-from sqlalchemy import String, and_, cast, exists, func, or_, select
+from sqlalchemy import String, and_, case, cast, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -88,7 +88,8 @@ def build_report(db: Session, organization_id: int, project_id: int | None, comp
 
     counted = and_(Ticket.batch_id.in_(in_scope), Ticket.status == "verified", Ticket.tonnage_confirmed.is_(True))
     linked = exists().where(InvoiceTicketLink.ticket_id == Ticket.id, InvoiceTicketLink.released_at.is_(None))
-    tons_all = exact_sum(Ticket.tonnage, 3)
+    # Tons only: a delivery in cubic yards or loads is counted, but never added to the tons.
+    tons_all = exact_sum(case((Ticket.unit == "ton", Ticket.tonnage), else_=0), 3)
     verified_row = db.execute(select(func.count().label("n"), tons_all.label("tons")).where(counted)).one()
     linked_row = db.execute(select(func.count().label("n"), tons_all.label("tons")).where(counted, linked)).one()
     unpriced_count = db.scalar(select(func.count()).select_from(Ticket).where(

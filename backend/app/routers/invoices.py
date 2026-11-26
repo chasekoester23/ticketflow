@@ -30,6 +30,7 @@ from ..models import (
     InvoiceComparison, InvoiceComparisonEvent, InvoiceTicketLink, InvoiceTicketRef,
     Project, Ticket, User, as_utc,
 )
+from ..services import units
 from ..services import billing_exceptions, invoice_bridge, ticket_evidence
 from ..services.locks import take_turn
 from ..services.accounts import names_by_id
@@ -51,7 +52,9 @@ class InvoiceLineIn(BaseModel):
     material_name: str = Field(min_length=1, max_length=200)
     date_from: date
     date_to: date
-    billed_tons: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
+    billed_tons: Decimal = Field(gt=0, max_digits=12, decimal_places=3)  # the quantity, in `unit`
+    # The unit the line bills in. Compared only with deliveries measured in the same unit.
+    unit: Literal["ton", "cy", "load", "each", "gal"] = "ton"
     billed_unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=4)
     billed_subtotal: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     # Optional: the invoice's ticket numbers, one per line, each optionally
@@ -196,6 +199,7 @@ class InvoiceLineOut(BaseModel):
     date_from: date
     date_to: date
     billed_tons: Decimal
+    unit: str = "ton"
     billed_unit_price: Decimal
     billed_subtotal: Decimal
     billed_extension: Decimal
@@ -326,10 +330,14 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
     """One line's comparison, always recomputed from current tickets. Pass one
     LineContext across a list, so each line doesn't re-read the same rows."""
     context = context or LineContext(db, organization_id, [item])
-    all_tickets = [
+    in_period = [
         t for t in context.in_scope(item.project_id, item.supplier_key, item.material_key)
         if t.delivery_date is not None and item.date_from <= t.delivery_date <= item.date_to
     ]
+    # Tons are compared with tons, yards with yards: never converted, never added together.
+    line_unit = item.unit or "ton"
+    all_tickets = [t for t in in_period if (t.unit or "ton") == line_unit]
+    other_units = [t for t in in_period if (t.unit or "ton") != line_unit]
     verified = [
         t for t in all_tickets
         if t.status == "verified" and t.tonnage_confirmed
@@ -350,6 +358,8 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
         if norm(ticket.supplier) not in ("", item.supplier_key):
             continue
         if norm(ticket.material_type) not in ("", item.material_key):
+            continue
+        if (ticket.unit or "ton") != line_unit:
             continue
         unclassified.append(ticket)
     verified_tons = sum((t.tonnage or Decimal(0) for t in verified), Decimal(0))
@@ -419,6 +429,11 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
             f"{len(unclassified)} unreviewed project ticket(s) lack enough date/supplier/material "
             "information to rule out this invoice; classification is required."
         )
+    if other_units:
+        found = sorted({units.long(t.unit) for t in other_units})
+        warnings.append(f"{len(other_units)} delivery ticket(s) for this supplier and material are measured in "
+                        f"{' and '.join(found)}, not {units.long(line_unit)}. They aren't part of this line; "
+                        "if the invoice bills them, enter them as their own line in that unit.")
     if unpriced:
         warnings.append(f"{len(unpriced)} verified ticket(s) have no locked unit price.")
     if rate_mismatch:
@@ -483,7 +498,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
         invoice_number=item.invoice_number,
         supplier_name=item.supplier_name, material_name=item.material_name,
         date_from=item.date_from, date_to=item.date_to,
-        billed_tons=item.billed_tons, billed_unit_price=item.billed_unit_price,
+        billed_tons=item.billed_tons, unit=line_unit, billed_unit_price=item.billed_unit_price,
         billed_subtotal=item.billed_subtotal, billed_extension=billed_extension,
         invoice_arithmetic_difference=arithmetic_difference,
         verified_tons=verified_tons, verified_subtotal=verified_subtotal,

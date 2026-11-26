@@ -10,6 +10,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import units
 from ..models import InvoiceComparison, InvoiceTicketRef
 
 _MAX_SHOWN = 100
@@ -45,14 +46,15 @@ def find(db: Session, organization_id: int, items: list[InvoiceComparison]) -> l
     for item in items:
         # Same delivery window too. Fixed loads make equal amounts common across
         # different months, and a false alarm on every invoice gets ignored.
-        same_bill[(item.supplier_key, item.material_key, item.date_from, item.date_to, item.billed_tons, item.billed_unit_price, item.billed_subtotal)].append(item)
+        same_bill[(item.supplier_key, item.material_key, item.date_from, item.date_to, item.billed_tons, item.unit,
+                   item.billed_unit_price, item.billed_subtotal)].append(item)
         same_number[(item.supplier_key, item.material_key, item.invoice_number.strip().upper())].append(item)
     for group in same_bill.values():
         if len({item.invoice_number for item in group}) > 1:
             found.append({
                 "kind": "same_amounts_new_number",
                 "title": f"Identical amounts on {len(group)} invoice lines",
-                "detail": f"{group[0].supplier_name}, {group[0].material_name}: {group[0].billed_tons} tons, ${group[0].billed_subtotal} on "
+                "detail": f"{group[0].supplier_name}, {group[0].material_name}: {group[0].billed_tons} {units.long(group[0].unit)}, ${group[0].billed_subtotal} on "
                           + ", ".join(item.invoice_number for item in group) + ". It may be the same bill sent again.",
                 "line_ids": sorted(item.id for item in group),
             })

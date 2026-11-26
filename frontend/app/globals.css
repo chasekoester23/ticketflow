@@ -214,6 +214,8 @@ a { text-underline-offset: 3px; }
 .tf-rv-override label { color: #566575; font-size: 11.5px; font-weight: 500; }
 .tf-rv-override .tf-rv-input { width: 92px; height: 28px; font-size: 13px; text-align: right; }
 .tf-rv-history { font-size: 12px; }
+.tf-rv-units { font-size: 12px; }
+.tf-rv-units summary { width: fit-content; margin-bottom: 4px; color: #46566a; font-weight: 500; cursor: pointer; user-select: none; }
 .tf-rv-history summary { width: fit-content; color: #46566a; font-weight: 500; cursor: pointer; user-select: none; }
 .tf-rv-unsaved { padding: 3px 12px; border-top: 1px solid #f0dcb4; background: #fff8ea; color: #7a4a12; font-size: 12px; font-weight: 500; }
 .tf-rv-actions { display: flex; flex-direction: column; gap: 5px; padding: 8px 12px; border-top: 1px solid var(--tf-border); background: white; }

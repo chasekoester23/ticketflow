@@ -78,5 +78,22 @@ def charge_for(t: Ticket, *, project_id: int | None, freight: str | None, rates:
     if rate.billing_method == "per_ton":
         if t.tonnage is None:
             return HaulCharge("unpriced", reason="Per-ton hauling needs the delivery's tons.")
+        if (t.unit or "ton") != "ton":
+            # Never converted: the weight of a cubic yard or a load depends on the material.
+            return HaulCharge("unpriced", reason="This hauler charges per ton, but the delivery isn't measured in tons. "
+                                                 "Correct the ticket's unit or add the hauling rate that applies.")
         return HaulCharge("per_ton", rate.id, rate.unit_rate, to_cents(t.tonnage * rate.unit_rate))
-    return HaulCharge("per_load", rate.id, rate.unit_rate, to_cents(rate.unit_rate))
+    loads = loads_of(t)
+    if loads is None:
+        return HaulCharge("unpriced", reason="A ticket measured in loads needs a whole number of loads.")
+    return HaulCharge("per_load", rate.id, rate.unit_rate, to_cents(loads * rate.unit_rate))
+
+
+def loads_of(t) -> Decimal | None:
+    """Loads a delivery is: its quantity when the ticket counts loads, else one truckload."""
+    if (getattr(t, "unit", None) or "ton") != "load":
+        return Decimal(1)
+    quantity = t.tonnage if hasattr(t, "tonnage") else t.quantity
+    if quantity is None or quantity <= 0 or quantity != quantity.to_integral_value():
+        return None
+    return quantity

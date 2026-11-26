@@ -65,6 +65,9 @@ def test_billing_a_delivery_twice_is_a_duplicate_and_unsupported(client, yard):
     [line] = second["lines"]
     assert (line["result"], line["supported"], line["difference"]) == ("repeat", "0.00", "100.00")
     assert ("duplicate", "Hauling per ton") in _findings(client, "HV-2")
+    # One problem, one exception, carrying the line's dollars: not a second "amount differs" beside it.
+    items = [i for i in client.get("/api/exceptions").json()["items"] if "HV-2" in i["invoice_numbers"]]
+    assert [(i["category"], i["amount"]) for i in items] == [("duplicate", "100.00")]
 
 
 def test_a_delivery_on_another_project_is_flagged_not_supported(client, yard):
@@ -75,6 +78,8 @@ def test_a_delivery_on_another_project_is_flagged_not_supported(client, yard):
     [line] = _invoice(client, yard, [_tons("80001", quantity="25.000", amount="100.00")])["lines"]
     assert line["supported"] == "0.00" and line["difference"] == "100.00"
     assert ("wrong_project", "Hauling per ton") in _findings(client, "HV-1")
+    items = [i for i in client.get("/api/exceptions").json()["items"] if "HV-1" in i["invoice_numbers"]]
+    assert [(i["category"], i["amount"]) for i in items] == [("wrong_project", "100.00")]
 
 
 def test_hauling_already_paid_elsewhere_is_never_supported_again(client, yard):
@@ -176,3 +181,20 @@ def test_lines_billed_per_ton_or_per_load_must_say_what_they_bill(client, yard):
         response = client.post("/api/hauling-invoices", json={"hauler_id": yard["hauler"], "invoice_number": "X", "period_from": "2026-11-01",
                                                               "period_to": "2026-11-30", "lines": [line]})
         assert response.status_code == 422, line
+
+
+def test_an_hours_line_for_a_shift_worked_on_another_project_is_flagged_and_not_paid(client, yard):
+    _approve(client, _shift(client, yard, project_id=yard["other"]), work_hours="9", standby_hours="0")
+    invoice = _invoice(client, yard, [{"kind": "hours", "truck_identifier": "T-12", "work_date": "2026-11-03", "hours": "9",
+                                       "rate": "110", "amount": "990.00"}])
+    [line] = invoice["lines"]
+    assert (line["supported"], line["difference"]) == ("0.00", "990.00")
+    items = [i for i in client.get("/api/exceptions").json()["items"] if "HV-1" in i["invoice_numbers"]]
+    assert [(i["category"], i["amount"]) for i in items] == [("wrong_project", "990.00")]
+
+
+def test_on_a_projects_invoice_the_projects_own_shift_is_the_match_not_a_question(client, yard):
+    _approve(client, _shift(client, yard), work_hours="9", standby_hours="0")
+    _approve(client, _shift(client, yard, truck=1, project_id=yard["other"]), work_hours="9", standby_hours="0")
+    [line] = _invoice(client, yard, [{"kind": "hours", "work_date": "2026-11-03", "hours": "9", "rate": "110", "amount": "990.00"}])["lines"]
+    assert (line["result"], line["supported"]) == ("matched", "990.00")  # the other project's T-14 isn't a candidate

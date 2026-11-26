@@ -134,6 +134,9 @@ def get_extractor() -> Extractor:
     Gemini is the default for new installations. No API key means a visible
     failed AI batch, while manual uploads still use zero model calls.
     """
+    if not settings.ai_reading_enabled:
+        # Refused before any client is built, so no key is read and no request is sent.
+        raise ExtractionError("Automatic reading is turned off for this workspace. Enter these tickets by hand.")
     if settings.extraction_provider == "gemini":
         # Lazy import avoids a circular dependency with the shared extractor
         # protocol and keeps optional benchmark adapters out of normal startup.

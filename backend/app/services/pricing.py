@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Batch, Material, NameAlias, Supplier, SupplierRate, Ticket, normal_name
+from . import units
 
 CENTS = Decimal("0.01")
 
@@ -31,6 +32,7 @@ class RateRow:
     effective_from: date | None
     effective_to: date | None = None  # last day it's valid; None is open-ended
     freight: str | None = None  # "included" | "separate" | None (not stated)
+    unit: str = units.DEFAULT  # what the price is per
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,9 @@ class RateBook:
        back to the company rate: that would quietly put list price on contracted work.
     5. Never a guess: dated rates and no delivery date, or two prices for one name
        ("Sand" and "SAND"), leave the ticket unpriced with the reason.
+    6. The rate that applies prices only a delivery in its own unit. A per-ton price never
+       prices cubic yards: the ticket is unpriced with the reason, and no other rate is
+       tried instead, so a unit mismatch can't quietly fall back to a different agreement.
     """
 
     def __init__(self, rows: dict[tuple[str, str], list[RateRow]], projects_by_batch: dict[int, int | None]):
@@ -68,7 +73,8 @@ class RateBook:
     def project_of(self, t: Ticket) -> int | None:
         return self.projects_by_batch.get(t.batch_id) if t.batch_id is not None else None
 
-    def match(self, supplier: str | None, material: str | None, project_id: int | None, on: date | None) -> RateMatch:
+    def match(self, supplier: str | None, material: str | None, project_id: int | None, on: date | None,
+              unit: str | None = units.DEFAULT) -> RateMatch:
         rows = self.rows.get((norm(supplier), norm(material)))
         if not rows:
             return RateMatch(None, None)
@@ -93,17 +99,22 @@ class RateBook:
                 return RateMatch(None, None, f"{which} for this supplier and material ended on {newest.effective_to.isoformat()}"
                                  + (f", and the next one starts {later[0].isoformat()}" if later else "")
                                  + ". Set the price for this date on Pricing, or extend the rate.")
+            if newest.unit != (unit or units.DEFAULT):
+                which = "project agreement" if scope is not None else "company rate"
+                return RateMatch(None, None, f"The {which} for this supplier and material is per {units.singular(newest.unit)}, "
+                                             f"but this delivery is measured in {units.long(unit)}. Correct the ticket's unit, or "
+                                             "set a price in its unit on Rates & Pricing. Quarvera doesn't convert between them.")
             return RateMatch(newest.price, "project_rate" if scope is not None else "rate", freight=newest.freight)
         return RateMatch(None, None)
 
     def for_ticket(self, t: Ticket) -> RateMatch:
-        return self.match(t.supplier, t.material_type, self.project_of(t), t.delivery_date)
+        return self.match(t.supplier, t.material_type, self.project_of(t), t.delivery_date, t.unit)
 
 
 def rate_table(db: Session, organization_id: int) -> RateBook:
     rows = db.execute(
         select(Supplier.name, Material.name, SupplierRate.unit_price, SupplierRate.project_id, SupplierRate.effective_from,
-               SupplierRate.effective_to, SupplierRate.freight)
+               SupplierRate.effective_to, SupplierRate.freight, SupplierRate.unit)
         .join(SupplierRate, SupplierRate.supplier_id == Supplier.id)
         .join(Material, Material.id == SupplierRate.material_id)
         .where(SupplierRate.organization_id == organization_id,
@@ -111,8 +122,8 @@ def rate_table(db: Session, organization_id: int) -> RateBook:
                Material.organization_id == organization_id)
     ).all()
     book: dict[tuple[str, str], list[RateRow]] = {}
-    for s, m, p, project_id, effective_from, effective_to, freight in rows:
-        book.setdefault((norm(s), norm(m)), []).append(RateRow(p, project_id, effective_from, effective_to, freight))
+    for s, m, p, project_id, effective_from, effective_to, freight, unit in rows:
+        book.setdefault((norm(s), norm(m)), []).append(RateRow(p, project_id, effective_from, effective_to, freight, unit or units.DEFAULT))
     # A ticket's project comes from its batch. Read only when some rate is per project.
     projects_by_batch: dict[int, int | None] = {}
     if any(r.project_id is not None for found in book.values() for r in found):
@@ -152,7 +163,7 @@ def unpriced_reason(t: Ticket, table: RateBook) -> str | None:
 
 
 def cost_for(t: Ticket, price: Decimal | None) -> Decimal | None:
-    """Cost only for a currently verified ticket with confirmed tonnage and a rate."""
+    """Cost only for a currently verified ticket with a confirmed quantity and a rate (in its unit)."""
     if t.status != "verified" or price is None or t.tonnage is None or not t.tonnage_confirmed:
         return None
     return to_cents(t.tonnage * price)

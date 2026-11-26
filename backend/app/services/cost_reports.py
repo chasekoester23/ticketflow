@@ -58,10 +58,22 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
     if period not in PERIODS:
         raise ValueError(f"period must be one of {PERIODS}")
 
+    def other_units(*group_columns, by_project: bool = False):
+        """{group values: [{unit, quantity, tickets}]}: approved quantities that aren't tons."""
+        found: dict[tuple, list] = defaultdict(list)
+        query = _tickets(organization_id, project_id, date_from, date_to, *group_columns, *aggregates.OTHER_UNIT_COLUMNS)
+        if by_project:
+            query = query.join(Batch, Batch.id == Ticket.batch_id)
+        for r in db.execute(query.where(aggregates.OTHER_UNITS).group_by(*group_columns, Ticket.unit)).all():
+            found[tuple(r[:len(group_columns)])].append(r)
+        return {key: aggregates.other_units(rows) for key, rows in found.items()}
+
     def grouped(column):
         label = func.coalesce(func.nullif(column, ""), "(unknown)")
         rows = db.execute(_tickets(organization_id, project_id, date_from, date_to, label.label("name"), *_counted()).group_by(label)).all()
-        return sorted((_material_row(r.name, r) for r in rows if r.tickets), key=lambda r: (-Decimal(r["tons"]), r["name"]))
+        others = other_units(label.label("name"))
+        return sorted(({**_material_row(r.name, r), "other_units": others.get((r.name,), [])} for r in rows if r.tickets),
+                      key=lambda r: (-Decimal(r["tons"]), r["name"]))
 
     totals = db.execute(_tickets(organization_id, project_id, date_from, date_to, *_counted())).one()
     waiting = db.scalar(_tickets(organization_id, project_id, date_from, date_to, func.count())
@@ -116,9 +128,10 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
         haulers[r.hauler]["shifts"] += int(r.shifts)
         haulers[r.hauler]["loads"] += int(r.loads)
         periods[bucket(r.day, period)]["loads"] += int(r.loads)
-    # Hauling billed per ton or per load: each approved delivery is one load of its hauler.
+    # Hauling billed per ton or per load: each approved delivery is one load, or its quantity when measured in loads.
     unit = (_tickets(organization_id, project_id, date_from, date_to, Hauler.name.label("hauler"), Ticket.haul_billing.label("method"),
-                     aggregates.counted_tickets().label("deliveries"), aggregates.counted_haul_cost().label("cost"))
+                     aggregates.counted_tickets().label("deliveries"), aggregates.counted_loads().label("loads"),
+                     aggregates.counted_haul_cost().label("cost"))
             .join(Hauler, Hauler.id == Ticket.hauler_id).where(Ticket.haul_billing.in_(("per_ton", "per_load")))
             .group_by(Hauler.name, Ticket.haul_billing))
     for r in db.execute(unit).all():
@@ -126,7 +139,7 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
             continue
         haulers[r.hauler]["cost"] += int(r.cost)
         haulers[r.hauler]["deliveries"] += int(r.deliveries)
-        haulers[r.hauler]["loads"] += int(r.deliveries)
+        haulers[r.hauler]["loads"] += int(aggregates.as_decimal(r.loads, 3))
         methods[r.method] += int(r.cost)
 
     # Per project: tickets through their batch, trucking through each shift's allocations.
@@ -159,20 +172,24 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
     unit_prices = []
     supplier_label = func.coalesce(func.nullif(Ticket.supplier, ""), "(unknown)")
     material_label = func.coalesce(func.nullif(Ticket.material_type, ""), "(unknown)")
+    # Per unit: a price per ton and a price per cubic yard are different prices, never averaged together.
     for r in db.execute(_tickets(organization_id, project_id, date_from, date_to, supplier_label.label("supplier"), material_label.label("material"),
+                                 Ticket.unit.label("unit"),
                                  aggregates.exact_sum(case((priced, Ticket.tonnage), else_=0), 3).label("tons"),
                                  aggregates.exact_sum(case((priced, Ticket.approved_cost), else_=0), 2).label("cost"),
                                  func.min(case((priced, Ticket.applied_unit_price))).label("low"),
                                  func.max(case((priced, Ticket.applied_unit_price))).label("high"))
-                        .group_by(supplier_label, material_label)).all():
+                        .group_by(supplier_label, material_label, Ticket.unit)).all():
         if not r.tons:
             continue
         tons_d, cost_d = aggregates.as_decimal(r.tons, 3), aggregates.as_decimal(r.cost, 2)
-        unit_prices.append({"supplier": r.supplier, "material": r.material, "tons": str(tons_d), "cost": str(cost_d),
+        # "tons" is the quantity in "unit"; the name is kept for existing readers.
+        unit_prices.append({"supplier": r.supplier, "material": r.material, "unit": r.unit or "ton", "tons": str(tons_d), "cost": str(cost_d),
                             "average": str((cost_d / tons_d).quantize(Decimal("0.01"))),
                             "low": str(Decimal(r.low).quantize(Decimal("0.01"))) if r.low is not None else None,
                             "high": str(Decimal(r.high).quantize(Decimal("0.01"))) if r.high is not None else None})
-    unit_prices.sort(key=lambda u: (u["material"], Decimal(u["average"])))
+    unit_prices.sort(key=lambda u: (u["material"], u["unit"] != "ton", u["unit"], Decimal(u["average"])))
+    project_units = other_units(Batch.project_id, by_project=True)
 
     cents = lambda units: str(aggregates.as_decimal(units, 2))  # noqa: E731
     material = aggregates.as_decimal(totals.cost, 2)
@@ -183,6 +200,7 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
         "material": {
             "tickets": int(totals.tickets), "tons": str(aggregates.as_decimal(totals.tons, 3)), "cost": str(material),
             "unpriced": int(totals.unpriced), "waiting": int(waiting or 0),
+            "other_units": other_units().get((), []),  # approved quantities that aren't tons, each in its own unit
             "undated": {**undated, "tons": str(aggregates.as_decimal(undated["tons"], 3)), "cost": cents(undated["cost"])},
             "by_material": grouped(Ticket.material_type), "by_supplier": grouped(Ticket.supplier),
         },
@@ -200,6 +218,7 @@ def build(db: Session, organization_id: int, project_id: int | None, date_from: 
         "unit_prices": unit_prices,
         "by_project": sorted(({"id": pid, "code": projects[pid].code, "name": projects[pid].name, "status": projects[pid].status,
                                "tickets": p["tickets"], "tons": str(aggregates.as_decimal(p["tons"], 3)), "material": cents(p["material"]),
+                               "other_units": project_units.get((pid,), []),
                                "unpriced": p["unpriced"], "hours": cents(p["hours"]), "trucking": cents(p["trucking"]),
                                "total": cents(p["material"] + p["trucking"])}
                               for pid, p in per_project.items() if pid in projects), key=lambda p: (-Decimal(p["total"]), p["code"])),

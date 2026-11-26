@@ -118,3 +118,18 @@ test("the pricing timeline shows each scope's dated prices, its gaps and expirie
   await page.locator("#rate-until").fill("2026-12-31");
   await expect(page.locator("#rate-until")).toHaveValue("2026-12-31");
 });
+
+test("a rate priced per cubic yard says so in the form, is saved with its unit, and the schedule shows each rate's unit", async ({ page }) => {
+  const posts = [];
+  await mock(page, posts);
+  await page.goto("/pricing");
+  await expect(page.getByRole("table").first().getByRole("row").nth(1)).toContainText("$18.00/ton");
+  const form = page.locator("form").filter({ has: page.getByRole("button", { name: "Save unit price" }) });
+  await form.getByRole("combobox", { name: "Supplier" }).selectOption("1");
+  await form.getByRole("combobox", { name: "Material" }).selectOption("2");
+  await form.getByRole("combobox", { name: "Priced per" }).selectOption("cy");
+  await page.getByLabel("Unit price ($/cubic yard)").fill("32.00");
+  await page.getByRole("button", { name: "Save unit price" }).click();
+  await expect.poll(() => posts.length).toBe(1);
+  expect(posts[0]).toMatchObject({ supplier_id: 1, material_id: 2, unit_price: "32.00", unit: "cy" });
+});

@@ -25,13 +25,23 @@ python scripts/make_synthetic_dataset.py --tickets 5000
 
 Run it after `create_demo_workspace.py` in the steps below. It refuses any database without "demo" in its file name. Open **Invoice comparison** to see each planted mistake explained, and **Name cleanup** for the misspellings.
 
+## The sales demo workspace (Ridgeline Civil Constructors)
+
+```bash
+cd backend && source .venv/bin/activate
+python scripts/seed_demo.py --reset     # about 10 minutes; prints the demo-owner password
+python scripts/verify_demo.py           # checks every total against independently worked-out results
+```
+
+Run the demo API and worker with the exports the seeder prints, including `AI_READING_ENABLED=false`. With it, nothing in the demo can call an AI reader, even if `backend/.env` holds a key: an upload to be read automatically is refused, and the worker never builds a reader. A public demo must always run this way.
+
 ## Run it by hand
 
 Use three terminals, all with the same demo settings:
 
 ```bash
 cd backend && source .venv/bin/activate
-export DATABASE_URL=sqlite:////tmp/ticketflow-demo.db STORAGE_DIR=/tmp/ticketflow-demo-files
+export DATABASE_URL=sqlite:////tmp/ticketflow-demo.db STORAGE_DIR=/tmp/ticketflow-demo-files AI_READING_ENABLED=false
 python -m alembic upgrade head
 python scripts/create_demo_workspace.py          # demo-owner / demo-password-not-real
 python scripts/make_demo_kit.py --output-dir /tmp/ticketflow-demo-kit
@@ -40,7 +50,7 @@ python -m uvicorn app.main:app --port 8000
 
 ```bash
 cd backend && source .venv/bin/activate
-export DATABASE_URL=sqlite:////tmp/ticketflow-demo.db STORAGE_DIR=/tmp/ticketflow-demo-files
+export DATABASE_URL=sqlite:////tmp/ticketflow-demo.db STORAGE_DIR=/tmp/ticketflow-demo-files AI_READING_ENABLED=false
 python scripts/run_worker.py
 ```
 

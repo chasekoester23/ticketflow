@@ -66,6 +66,7 @@ class DeliveryFacts:
     unit_rate: Decimal | None
     cost: Decimal | None
     hauler: str = ""
+    loads: Decimal = Decimal(1)  # a ticket measured in loads counts its quantity; any other is one truckload
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,8 @@ class ShiftFacts:
     hourly: Decimal | None = None
     standby_rate: Decimal | None = None
     hauler: str = ""
+    # Every project the shift's hours are charged to: its own, and any it was split onto.
+    projects: frozenset = frozenset()
 
 
 @dataclass(frozen=True)
@@ -182,6 +185,20 @@ def reconcile(lines: list[LineFacts], shifts: list[ShiftFacts],
         if line.chosen_shift_id is not None:
             # A person chose the shift; it must still be this hauler's, that day.
             candidates = [s for s in day if s.id == line.chosen_shift_id]
+        if line.project_id is not None and candidates:
+            # A project's invoice bills that project's truck time: its shifts, or shifts split onto it.
+            on_project = [s for s in candidates if line.project_id in (s.projects or {s.project_id})]
+            if not on_project:
+                other = candidates[0]
+                findings.append(Finding(key=f"H{line.invoice_id}:{line.line_no}:wrong_project", category="wrong_project",
+                                        shift_id=other.id, title=f"Billed against another project: {where}",
+                                        amount=line.amount, expected=Decimal(0),
+                                        explanation=f"Truck {other.truck}'s shift on {other.work_date.isoformat()} was worked for another "
+                                                    "project than this invoice's. Ask the hauler to bill it on that project's invoice.",
+                                        **base))
+                results.append(LineResult(line.invoice_id, line.line_no, "differs", other.id, Decimal(0), line.amount))
+                continue
+            candidates = on_project
         if not candidates:
             truck = f"truck {line.truck}" if line.truck else "a truck"
             findings.append(Finding(key=f"H{line.invoice_id}:{line.line_no}:missing", category="missing_shift",
@@ -374,9 +391,13 @@ def _unit_line(line: LineFacts, base: dict, where: str, deliveries, billed_deliv
                              f"Ticket {number}'s hauling is agreed {d.method.replace('_', ' ')}, not {method.replace('_', ' ')}."))
         else:
             supported.append(d)
-    for category, title, text in problems:
+    # When nothing on the line can be paid, its whole amount is explained by the first problem that
+    # isn't "not approved yet": one exception per problem, carrying its dollars, not a second vague one.
+    carries = None if supported else next((i for i, (c, _, _) in enumerate(problems) if c != "needs_review"), None)
+    for i, (category, title, text) in enumerate(problems):
+        money = dict(amount=line.amount, expected=Decimal(0), group=group) if i == carries else {}
         findings.append(Finding(key=f"{group}:{category}:{len(findings)}", category=category, title=title, explanation=text,
-                                material=material, **base))
+                                material=material, **money, **base))
     for d in supported:
         billed_deliveries[d.id] = line
     ids = [d.id for d in chosen]
@@ -384,7 +405,7 @@ def _unit_line(line: LineFacts, base: dict, where: str, deliveries, billed_deliv
         results.append(LineResult(line.invoice_id, line.line_no, "not_approved", None, None, None, ticket_ids=ids))
         return
     expected = sum((d.cost for d in supported if d.cost is not None), Decimal(0))
-    approved_qty = sum((d.quantity or Decimal(0) for d in supported), Decimal(0)) if line.kind == "tons" else Decimal(len(supported))
+    approved_qty = sum((d.quantity or Decimal(0) for d in supported) if line.kind == "tons" else (d.loads for d in supported), Decimal(0))
     rates = {d.unit_rate for d in supported}
     rate = rates.pop() if len(rates) == 1 else None
     difference = line.amount - expected
@@ -402,7 +423,7 @@ def _unit_line(line: LineFacts, base: dict, where: str, deliveries, billed_deliv
         if rest:
             causes.append(("arithmetic", "Invoice arithmetic", rest,
                            f"The line's amount isn't its quantity times its rate ({line.quantity} x ${line.rate})."))
-    elif difference:
+    elif difference and carries is None:
         causes.append(("quantity", "Amount differs", difference,
                        f"Billed ${line.amount}; the approved deliveries' hauling comes to ${expected}."))
     category = {"quantity": "quantity", "rate": "rate", "arithmetic": "invoice_arithmetic"}
@@ -421,13 +442,15 @@ def load_all(db, organization_id: int) -> tuple[list[LineFacts], list[ShiftFacts
     from sqlalchemy import and_, select
 
     from ..models import Batch, Hauler, Ticket, normal_name
+    from .haul_billing import loads_of
     lines, shifts = load(db, organization_id)
     names = dict(db.execute(select(Hauler.id, Hauler.name).where(Hauler.organization_id == organization_id)).all())
     counted = and_(Ticket.status == "verified", Ticket.tonnage_confirmed.is_(True))
     deliveries = [DeliveryFacts(id=t.id, hauler_id=t.hauler_id, number_key=t.number_key, ticket_number=t.ticket_number,
                                 truck_key=normal_name(t.truck_number) if t.truck_number else None, delivery_date=t.delivery_date,
                                 project_id=project_id, counted=bool(is_counted), method=t.haul_billing, quantity=t.tonnage,
-                                unit_rate=t.haul_unit_rate, cost=t.haul_cost, hauler=names.get(t.hauler_id, ""))
+                                unit_rate=t.haul_unit_rate, cost=t.haul_cost, hauler=names.get(t.hauler_id, ""),
+                                loads=loads_of(t) or Decimal(1))
                   for t, project_id, is_counted in db.execute(
                       select(Ticket, Batch.project_id, counted).join(Batch, Batch.id == Ticket.batch_id)
                       .where(Ticket.organization_id == organization_id, Ticket.hauler_id.is_not(None), Ticket.status != "skipped"))]
@@ -438,7 +461,7 @@ def load(db, organization_id: int) -> tuple[list[LineFacts], list[ShiftFacts]]:
     """Every hauling invoice line and truck shift of a company, as facts for reconcile()."""
     from sqlalchemy import select
 
-    from ..models import Hauler, HaulingInvoice, HaulingInvoiceLine, Truck, TruckShift, normal_name
+    from ..models import Hauler, HaulingInvoice, HaulingInvoiceLine, ShiftAllocation, Truck, TruckShift, normal_name
     haulers = dict(db.execute(select(Hauler.id, Hauler.name).where(Hauler.organization_id == organization_id)).all())
     trucks = dict(db.execute(select(Truck.id, Truck.identifier).where(Truck.organization_id == organization_id)).all())
     lines = [LineFacts(invoice_id=i.id, invoice_number=i.invoice_number, hauler_id=i.hauler_id, hauler=haulers.get(i.hauler_id, ""),
@@ -448,6 +471,11 @@ def load(db, organization_id: int) -> tuple[list[LineFacts], list[ShiftFacts]]:
                        quantity=line.quantity, tickets=ticket_keys(line.tickets), chosen_shift_id=line.shift_id)
              for i, line in db.execute(select(HaulingInvoice, HaulingInvoiceLine).join(HaulingInvoiceLine, HaulingInvoiceLine.invoice_id == HaulingInvoice.id)
                                        .where(HaulingInvoice.organization_id == organization_id))]
+    split: dict[int, set[int]] = {}
+    for shift_id, project_id in db.execute(select(ShiftAllocation.shift_id, ShiftAllocation.project_id)
+                                           .join(TruckShift, TruckShift.id == ShiftAllocation.shift_id)
+                                           .where(TruckShift.organization_id == organization_id)):
+        split.setdefault(shift_id, set()).add(project_id)
     shifts = []
     for s in db.scalars(select(TruckShift).where(TruckShift.organization_id == organization_id)):
         approved = s.status == "approved"
@@ -455,5 +483,6 @@ def load(db, organization_id: int) -> tuple[list[LineFacts], list[ShiftFacts]]:
         shifts.append(ShiftFacts(id=s.id, hauler_id=s.hauler_id, truck_key=normal_name(trucks.get(s.truck_id, "")), truck=trucks.get(s.truck_id, ""),
                                  work_date=s.work_date, project_id=s.project_id, status=s.status,
                                  work=s.approved_work_hours, standby=s.approved_standby_hours, top_up=top_up,
-                                 hourly=s.applied_hourly_rate, standby_rate=s.applied_standby_rate, hauler=haulers.get(s.hauler_id, "")))
+                                 hourly=s.applied_hourly_rate, standby_rate=s.applied_standby_rate, hauler=haulers.get(s.hauler_id, ""),
+                                 projects=frozenset({s.project_id, *split.get(s.id, ())})))
     return lines, shifts

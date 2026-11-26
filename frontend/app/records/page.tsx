@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BulkResult, Filters, RecordsPage as RecordsResult, RecordsSort, SavedView, Ticket, bulkEditTickets,
   createSavedView, deleteSavedView, listMaterials, listSavedViews, listSuppliers, recordsExportUrl,
-  searchRecords,
+  searchRecords, otherUnitsText, unitSuffix
 } from "../../lib/api";
 import { useAccount } from "../account-context";
 import { Dialog } from "../Dialog";
@@ -286,7 +286,7 @@ export default function RecordsPage() {
           <h2 className="tf-panel-title">Ticket register</h2>
           <p className="tf-panel-description" data-testid="records-summary">
             {!summary ? "Loading records…" : <>
-              {total.toLocaleString()} records · {(summary.by_status.verified ?? 0).toLocaleString()} verified · {Number(summary.verified_tons).toLocaleString(undefined, { maximumFractionDigits: 3 })} verified tons · {money(summary.verified_cost)} material cost
+              {total.toLocaleString()} records · {(summary.by_status.verified ?? 0).toLocaleString()} verified · {Number(summary.verified_tons).toLocaleString(undefined, { maximumFractionDigits: 3 })} verified tons{summary.other_units?.length ? <> · {otherUnitsText(summary.other_units)} (not in tons)</> : null} · {money(summary.verified_cost)} material cost
               {summary.verified_unpriced > 0 && <span className="ml-1 font-semibold text-[#a14c1c]">· Cost incomplete: leaves out {summary.verified_unpriced} approved ticket{summary.verified_unpriced === 1 ? "" : "s"} with no rate{" "}
                 <Link prefetch={false} href="/pricing" className="tf-link text-[11px]">Set rates</Link></span>}
             </>}
@@ -331,7 +331,7 @@ export default function RecordsPage() {
           <td className="font-bold tabular-nums">{t.ticket_number || "—"}</td>
           <td className="whitespace-nowrap">{t.delivery_date || "—"}</td>
           <td className="tf-hide-narrow min-w-[125px]">{t.material_type || "—"}</td>
-          <td className="whitespace-nowrap text-right tabular-nums">{t.tonnage ?? "—"}</td>
+          <td className="whitespace-nowrap text-right tabular-nums">{t.tonnage ?? "—"}{t.tonnage ? unitSuffix(t.unit) : ""}</td>
           <td className="tf-hide-narrow min-w-[130px]">{t.supplier || "—"}</td>
           <td className="tf-hide-narrow">{t.job_location || "—"}</td>
           <td className="tf-hide-narrow whitespace-nowrap text-right tabular-nums">{money(t.unit_price)}</td>

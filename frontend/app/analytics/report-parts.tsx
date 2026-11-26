@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { CostReport, CostReportQuery, PeriodRow, getCostReport } from "../../lib/api";
+import { CostReport, CostReportQuery, PeriodRow, getCostReport, otherUnitsText } from "../../lib/api";
 
 /*
  * The reporting pieces shared by Overview, a project's report and Analytics. Every figure
@@ -168,7 +168,8 @@ export function PeriodTable({ rows, period }: { rows: PeriodRow[]; period: strin
 export function CostFigures({ report }: { report: CostReport }) {
   const c = report.costs;
   return <section className="tf-figures" aria-label="Approved costs">
-    <div><p className="tf-stat-label">Verified material</p><p className="tf-figure">{tons(report.material.tons)} t</p>
+    <div><p className="tf-stat-label">Verified material</p><p className="tf-figure">{tons(report.material.tons)} t</p>{report.material.other_units?.length
+      ? <p className="text-[11px] text-[#5f6c7b]">plus {otherUnitsText(report.material.other_units)}, not added to tons</p> : null}
       <span>{report.material.tickets.toLocaleString()} approved deliveries</span></div>
     <div><p className="tf-stat-label">Material cost</p><p className="tf-figure">{money(c.material)}</p>
       <span className={c.unpriced ? "font-semibold text-[#995a18]" : ""}>{c.unpriced ? `Incomplete: ${c.unpriced} approved without a rate` : "At locked rates"}</span></div>

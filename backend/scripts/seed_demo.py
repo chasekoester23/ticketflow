@@ -17,6 +17,15 @@ Ridgeline Civil Constructors, a midsized sitework contractor, September to Novem
   - about 45 invoices: most match; one bills a ticket never delivered, one extra tons,
     one a higher rate, two give totals only, one can't be compared (no rate); trucking
     invoices with extra hours, a day with no shift and a repeated line; November unbilled
+  - units: screened topsoil priced and delivered per cubic yard (never added to tons), some
+    recycled-base tickets written in pounds (saved as tons, the pounds kept), scale weights on
+    sand tickets, and one waiting ticket whose gross minus tare disagrees with its tons
+  - per-ton and per-load hauler invoices: one correct, one billing extra tons, one an extra
+    load, one billing a load already invoiced, one billing another project's delivery, and
+    one billing only part of the month
+The expected results are worked out here from the plan itself, independently of Quarvera's
+arithmetic, and written to expected-results.json; scripts/verify_demo.py checks Quarvera
+shows exactly those figures.
 
 Usage (from backend/, venv active):
     python scripts/seed_demo.py            # create it (refuses if it exists)
@@ -90,11 +99,66 @@ HAULERS = [
     ("Summit Logistics", "per_load", "92.00", [("SL-6", "quad_axle")], {}),  # rate for 25-152 only (see below)
 ]
 UNIT_HAULERS = ["Ironwood Haul", "River City Transport", "Lincoln Dump Service", "Summit Logistics"]
+# Materials priced in a unit other than tons. Their tickets are entered in that unit.
+UNIT_OF = {("Central Indiana Fill", "Screened Topsoil"): "cy"}
+EXPECTED_PATH = DEMO_DIR / "expected-results.json"
 HOURLY = [h for h in HAULERS if h[1] == "hourly"]
 
 
 def cents(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+# ---------------------------------------------------------------- the expected results, worked out from the plan
+# Written from the price lists above, not from anything Quarvera calculates, so the demo
+# checks the product rather than repeating it.
+
+def expected_price(row: dict) -> Decimal | None:
+    supplier, material, project, day = row["supplier"], row["material_type"], row["project"], row["delivery_date"]
+    if supplier == "Summit Asphalt Supply":
+        return None  # no rate on file
+    if (supplier, material) == ("Granite Ridge Aggregates", "No. 57 Stone"):
+        if project == "25-101":
+            return Decimal("25.80")  # the project agreement, from 2026-09-01, over every company price
+        return Decimal("27.20") if day >= "2026-11-01" else Decimal("26.50")
+    if (supplier, material) == ("Hillcrest Aggregates", "No. 53 Crushed Stone") and project == "25-140":
+        return Decimal("24.40")
+    return Decimal(next(price for m, price, _f in SUPPLIERS[supplier] if m == material))
+
+
+def expected_haul(row: dict) -> Decimal | None:
+    """Hauling for a delivery billed per ton or per load; None when no rate applies (missing, not $0)."""
+    hauler, tons = row["hauler"], Decimal(row["tonnage"])
+    if hauler == "Ironwood Haul":
+        return cents(tons * Decimal("4.25"))
+    if hauler == "River City Transport":
+        return cents(tons * (Decimal("3.60") if row["project"] == "25-114" else Decimal("3.90")))
+    if hauler == "Lincoln Dump Service":
+        return Decimal("88.00")
+    if hauler == "Summit Logistics":
+        return Decimal("92.00") if row["project"] == "25-152" else None
+    raise AssertionError(hauler)
+
+
+def decorate(rows: list[dict], rng: random.Random, days: list[date]) -> None:
+    """Units and scale weights, decided after the plan so the deliveries themselves don't move."""
+    recent = set(d.isoformat() for d in days[-6:])
+    mismatch_planted = False
+    for row in rows:
+        row["unit"] = UNIT_OF.get((row["supplier"], row["material_type"]), "ton")
+        if row["unit"] == "cy":
+            row["tonnage"] = f"{rng.randint(10, 16)}.0"  # cubic yards, per the truck's box
+            row["hauler"] = None  # hauling per ton can't price yards, so the demo doesn't pretend
+        elif row["supplier"] == "Redbud Recycled Base" and rng.random() < 0.25:
+            pounds = int(Decimal(row["tonnage"]) * 2000)  # 1 decimal of tons is a whole 200 lb
+            row["pounds"] = str(pounds)
+            row["tonnage"] = str((Decimal(pounds) / 2000).quantize(Decimal("0.001")))  # what the conversion must give
+        elif row["supplier"] == "Lakeside Sand & Gravel":
+            tare = rng.randrange(28000, 34000, 20)
+            row["tare"], row["gross"] = str(tare), str(tare + int(Decimal(row["tonnage"]) * 2000))
+            if not mismatch_planted and row["outcome"] == "needs_review" and row["delivery_date"] in recent:
+                row["gross"] = str(int(row["gross"]) + 600)  # 0.3 t more than the ticket's tons: flagged for a person
+                mismatch_planted = True
 
 
 def guard_paths() -> None:
@@ -128,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     print("  Run the API and worker with:")
     print(f"    export DATABASE_URL=sqlite:///{DB_PATH}")
     print(f"    export STORAGE_DIR={FILES_DIR}")
+    print("    export AI_READING_ENABLED=false   # the demo never calls an AI reader, whatever keys .env holds")
     return 0
 
 
@@ -243,7 +308,8 @@ def build(client, make_page, make_pdf) -> None:
             if material not in materials:
                 materials[material] = ok(client.post("/api/materials", json={"name": material}))["id"]
             if price:
-                body = {"supplier_id": suppliers[supplier], "material_id": materials[material], "unit_price": price, "effective_from": "2026-08-01"}
+                body = {"supplier_id": suppliers[supplier], "material_id": materials[material], "unit_price": price, "effective_from": "2026-08-01",
+                        "unit": UNIT_OF.get((supplier, material), "ton")}
                 if freight:
                     body["freight"] = freight
                 ok(client.put("/api/rates", json=body))
@@ -275,6 +341,7 @@ def build(client, make_page, make_pdf) -> None:
 
     # Delivery tickets: scanned four to a page, a batch per project per week, typed in beside each scan, then checked.
     rows = plan_tickets(rng, days)
+    decorate(rows, random.Random(SEED + 1), days)
     for row in rows:
         if row["hauler"]:
             row["truck"] = rng.choice(list(haulers[row["hauler"]]["trucks"]))
@@ -291,12 +358,22 @@ def build(client, make_page, make_pdf) -> None:
         found = sorted(ok(client.get(f"/api/batches/{batch['id']}/tickets")), key=lambda t: (t["source_page"], t["position"]))
         for ticket, row in zip(found, group):
             body = {k: row[k] for k in ("ticket_number", "delivery_date", "material_type", "tonnage", "supplier", "job_location")}
+            if row.get("pounds"):
+                body.update(tonnage=row["pounds"], unit="lb")  # typed as written; Quarvera converts and keeps the pounds
+            elif row["unit"] != "ton":
+                body["unit"] = row["unit"]
+            if row.get("gross"):
+                body.update(gross_weight=row["gross"], tare_weight=row["tare"], weight_unit="lb")
             if row["hauler"]:
                 body.update(hauler_id=haulers[row["hauler"]]["id"], truck_number=row["truck"])
             edited = ok(client.patch(f"/api/tickets/{ticket['id']}", json=body))
             if row["outcome"] == "verified":
                 done = ok(client.post(f"/api/tickets/{edited['id']}/verify", json={"confirm_duplicate": True}, headers={"If-Match": edited["revision"]}))
-                approved.append({**row, "id": done["id"], "cost": done.get("cost"), "unit_price": done.get("unit_price")})
+                if done["tonnage"] != str(Decimal(row["tonnage"]).quantize(Decimal("0.001"))) or done.get("unit", "ton") != row["unit"]:
+                    raise SystemExit(f"Ticket {row['ticket_number']}: entered {row}, Quarvera kept {done['tonnage']} {done.get('unit')}")
+                approved.append({**row, "id": done["id"], "cost": done.get("cost"), "unit_price": done.get("unit_price"),
+                                 "haul_billing": done.get("haul_billing"), "haul_cost": done.get("haul_cost"),
+                                 "haul_unit_rate": done.get("haul_unit_rate")})
             elif row["outcome"] == "flagged":
                 ok(client.post(f"/api/tickets/{edited['id']}/flag", json={"note": "Tons look high for this truck; confirm with the scale house."}))
         if n % 10 == 0:
@@ -356,8 +433,8 @@ def build(client, make_page, make_pdf) -> None:
         scenario = scenarios.get(n, "match")
         by_material: dict[tuple[str, str], list[dict]] = defaultdict(list)
         for row in group:
-            by_material[(row["material_type"], row["unit_price"] or "")].append(row)
-        for (material, locked), items in by_material.items():  # noqa: B007
+            by_material[(row["material_type"], row["unit_price"] or "", row["unit"])].append(row)
+        for (material, locked, unit), items in by_material.items():  # noqa: B007
             listed = [(r["ticket_number"], Decimal(r["tonnage"])) for r in items]
             tons = sum((t for _, t in listed), Decimal(0))
             # Billed at the rate locked on the tickets; with no rate on file, at the supplier's own
@@ -378,7 +455,7 @@ def build(client, make_page, make_pdf) -> None:
                 subtotal = cents(tons * price)
             last_day = "30" if month.endswith("09") else "31"
             body = {"project_id": projects[code], "invoice_number": number, "supplier_name": supplier, "material_name": material,
-                    "date_from": f"{month}-01", "date_to": f"{month}-{last_day}", "billed_tons": str(tons.quantize(Decimal("0.001"))),
+                    "date_from": f"{month}-01", "date_to": f"{month}-{last_day}", "billed_tons": str(tons.quantize(Decimal("0.001"))), "unit": unit,
                     "billed_unit_price": str(price.quantize(Decimal("0.0001"))), "billed_subtotal": str(cents(subtotal)),
                     "ticket_list": "" if scenario == "totals_only" else "\n".join(f"{num} {t}" for num, t in listed)}
             ok(client.post("/api/invoice-comparisons", json=body))
@@ -406,6 +483,9 @@ def build(client, make_page, make_pdf) -> None:
                                                       "period_from": f"{month}-01", "period_to": f"{month}-{last_day}", "lines": lines}))
         invoices += 1
 
+    hauler_expected = unit_hauler_invoices(client, approved, haulers, projects)
+    invoices += len(hauler_expected)
+
     ok(client.patch(f"/api/projects/{projects[ARCHIVED[0]]}", json={"status": "archived"}))
     queue = ok(client.get("/api/review-queue"))
     report = ok(client.get("/api/reports/summary", params={"period": "month"}))
@@ -413,6 +493,111 @@ def build(client, make_page, make_pdf) -> None:
           f"{queue['summary']['total']} items waiting for review.")
     print(f"Approved cost, from the records: material ${report['costs']['material']}, hauling ${report['costs']['trucking']}, "
           f"total ${report['costs']['total']} ({report['costs']['unpriced']} approved without a rate).")
+    write_expected(approved, projects, hauler_expected)
+
+
+def _line(day: str, items: list[dict], kind: str) -> dict:
+    rate = Decimal(items[0]["haul_unit_rate"])
+    quantity = sum((Decimal(i["tonnage"]) for i in items), Decimal(0)) if kind == "tons" else Decimal(len(items))
+    # The hauler bills each delivery at its rate, rounded per ticket, as the locked charges are.
+    amount = sum((expected_haul(i) for i in items), Decimal(0))
+    return {"kind": kind, "work_date": day, "tickets": " ".join(i["ticket_number"] for i in items),
+            "quantity": str(quantity), "rate": str(rate), "amount": str(amount)}
+
+
+def unit_hauler_invoices(client, approved: list[dict], haulers: dict, projects: dict) -> dict:
+    """September invoices from haulers paid per ton and per load, each with a known outcome."""
+    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for row in approved:
+        if row["hauler"] in ("Ironwood Haul", "Lincoln Dump Service") and row["delivery_date"].startswith("2026-09") \
+                and row["haul_billing"] in ("per_ton", "per_load"):
+            groups[(row["hauler"], row["project"])].append(row)
+
+    def days_of(items):
+        by_day: dict[str, list[dict]] = defaultdict(list)
+        for i in sorted(items, key=lambda r: (r["delivery_date"], r["ticket_number"])):
+            by_day[i["delivery_date"]].append(i)
+        return sorted(by_day.items())
+
+    ranked = {h: sorted(((p, g) for (hh, p), g in groups.items() if hh == h and len(days_of(g)) >= 3), key=lambda pg: (-len(pg[1]), pg[0]))
+              for h in ("Ironwood Haul", "Lincoln Dump Service")}
+    ironwood, lincoln = ranked["Ironwood Haul"], ranked["Lincoln Dump Service"]
+    if len(ironwood) < 3 or len(lincoln) < 3:
+        raise SystemExit("Demo seeding stopped: not enough per-ton and per-load hauling in September for the invoice scenarios.")
+    expected: dict[str, dict] = {}
+
+    def post(hauler, project, number, lines, outcome):
+        ok(client.post("/api/hauling-invoices", json={"hauler_id": haulers[hauler]["id"], "project_id": projects[project],
+                                                      "invoice_number": number, "period_from": "2026-09-01", "period_to": "2026-09-30",
+                                                      "lines": lines}))
+        expected[number] = outcome
+
+    (p1, g1), (p2, g2), (p3, g3) = ironwood[:3]
+    post("Ironwood Haul", p1, "IRO-T-0901", [_line(d, items, "tons") for d, items in days_of(g1)],
+         {"scenario": "Per ton, correct", "difference": "0.00", "exceptions": 0, "unbilled_in_period": 0})
+    lines = [_line(d, items, "tons") for d, items in days_of(g2)]
+    lines[0] = {**lines[0], "quantity": str(Decimal(lines[0]["quantity"]) + 3), "amount": str(Decimal(lines[0]["amount"]) + Decimal("12.75"))}
+    post("Ironwood Haul", p2, "IRO-T-0902", lines,
+         {"scenario": "Per ton, 3 t more than delivered", "difference": "12.75", "exceptions": 1, "unbilled_in_period": 0})
+    billed_days = days_of(g3)[: len(days_of(g3)) // 2]
+    left = sum(len(items) for _d, items in days_of(g3)[len(billed_days):])
+    post("Ironwood Haul", p3, "IRO-T-0903", [_line(d, items, "tons") for d, items in billed_days],
+         {"scenario": "Per ton, only part of the month billed", "difference": "0.00", "exceptions": 0, "unbilled_in_period": left})
+
+    (q1, h1), (q2, h2), (q3, h3) = lincoln[:3]
+    lines = [_line(d, items, "loads") for d, items in days_of(h1)]
+    again = dict(lines[1])
+    lines[0] = {**lines[0], "quantity": str(Decimal(lines[0]["quantity"]) + 1), "amount": str(Decimal(lines[0]["amount"]) + Decimal("88.00"))}
+    post("Lincoln Dump Service", q1, "LIN-L-0901", lines,
+         {"scenario": "Per load, one load more than delivered", "difference": "88.00", "exceptions": 1, "unbilled_in_period": 0})
+    post("Lincoln Dump Service", q1, "LIN-L-0901B", [again],
+         {"scenario": "Per load, a day already invoiced billed again", "difference": again["amount"], "exceptions": 1, "unbilled_in_period": 0})
+    stray = days_of(h3)[0][1][0]
+    lines = [_line(d, items, "loads") for d, items in days_of(h2)] + [_line(stray["delivery_date"], [stray], "loads")]
+    post("Lincoln Dump Service", q2, "LIN-L-0902", lines,
+         {"scenario": f"Per load, one delivery from project {q3} billed here", "difference": "88.00", "exceptions": 1, "unbilled_in_period": 0})
+    print(f"  hauler invoices per ton and per load: {len(expected)}")
+    return expected
+
+
+def write_expected(approved: list[dict], projects: dict, hauler_expected: dict) -> None:
+    import json
+
+    tons = yards = material = Decimal(0)
+    unpriced = haul_missing = 0
+    haul = {"per_ton": Decimal(0), "per_load": Decimal(0)}
+    by_project: dict[str, Decimal] = defaultdict(Decimal)
+    for row in approved:
+        quantity = Decimal(row["tonnage"])
+        if row["unit"] == "ton":
+            tons += quantity
+        else:
+            yards += quantity
+        price = expected_price(row)
+        if price is None:
+            unpriced += 1
+        else:
+            cost = cents(quantity * price)
+            material += cost
+            by_project[row["project"]] += cost
+        if row["hauler"]:
+            charge = expected_haul(row)
+            if charge is None:
+                haul_missing += 1
+            else:
+                haul["per_load" if row["hauler"] in ("Lincoln Dump Service", "Summit Logistics") else "per_ton"] += charge
+    expected = {
+        "approved_tickets": len(approved),
+        "tons": str(tons.quantize(Decimal("0.001"))),
+        "other_units": [{"unit": "cy", "quantity": str(yards.quantize(Decimal("0.001")))}] if yards else [],
+        "pound_tickets": sum(1 for r in approved if r.get("pounds")),
+        "material_cost": str(material), "unpriced": unpriced,
+        "per_ton_hauling": str(haul["per_ton"]), "per_load_hauling": str(haul["per_load"]), "hauling_rate_missing": haul_missing,
+        "material_by_project": {code: str(v) for code, v in sorted(by_project.items())},
+        "hauler_invoices": hauler_expected,
+    }
+    EXPECTED_PATH.write_text(json.dumps(expected, indent=2) + "\n")
+    print(f"  expected results written to {EXPECTED_PATH.name}: check them with scripts/verify_demo.py")
 
 
 if __name__ == "__main__":

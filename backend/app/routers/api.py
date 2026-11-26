@@ -20,6 +20,7 @@ from ..permissions import has_permission, require
 from ..rate_limit import limited
 from ..schemas import BatchOut, BatchProgress, BatchQueueRow, FlagIn, TicketOut, TicketPatch, VerifyIn
 from ..services import haul_billing as haul_svc
+from ..services import units
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
 from ..services import consistency, pipeline, jobqueue, scan_manifest, storage
@@ -85,6 +86,9 @@ def create_batch(
         raise HTTPException(422, "layout must be 'single' or 'grid_2x2'")
     if intake_mode not in ("extract", "manual"):
         raise HTTPException(422, "intake_mode must be 'extract' or 'manual'")
+    if intake_mode == "extract" and not settings.ai_reading_enabled:
+        # Before anything is stored: an upload that would be read can't be made here at all.
+        raise HTTPException(409, "Automatic reading is turned off for this workspace. Upload for entry by hand instead.")
     if project_id is not None:
         project = db.scalar(select(Project).where(
             Project.id == project_id, Project.organization_id == organization_id
@@ -404,6 +408,9 @@ def ticket_revision(t: Ticket, price: Decimal | None) -> str:
         f"{price:.4f}" if price is not None else None,
         t.status, bool(t.tonnage_confirmed),
         *([t.hauler_id, t.truck_number] if t.hauler_id is not None or t.truck_number else []),
+        # Only when not the default, so a ticket in tons keeps the revision it always had.
+        *([t.unit] if (t.unit or "ton") != "ton" else []),
+        *([str(t.gross_weight), str(t.tare_weight), t.weight_unit] if t.gross_weight is not None or t.tare_weight is not None else []),
     ]
     return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
 
@@ -484,7 +491,28 @@ def apply_review_edit(db: Session, t: Ticket, user: User, field: str, new) -> bo
 def _refresh_flags(t: Ticket) -> None:
     t.flags = compute_flags(
         ticket_number=t.ticket_number, delivery_date=t.delivery_date, material_type=t.material_type,
-        tonnage=t.tonnage, supplier=t.supplier, job_location=t.job_location, raw_date="x" if t.delivery_date else None)
+        tonnage=t.tonnage, supplier=t.supplier, job_location=t.job_location, raw_date="x" if t.delivery_date else None,
+        unit=t.unit, gross_weight=t.gross_weight, tare_weight=t.tare_weight, weight_unit=t.weight_unit)
+
+
+def _convert_pounds(t: Ticket, changes: dict) -> None:
+    """A quantity entered in pounds is saved in tons (2,000 lb = 1 t), keeping the pounds.
+
+    The figure as written goes to source_quantity/source_unit, so the record always shows
+    where its tons came from. Entering the quantity in any other unit clears that source.
+    """
+    if changes.get("unit") == "lb":
+        pounds = changes.get("tonnage", t.tonnage if t.source_unit != "lb" else t.source_quantity)
+        if pounds is None:
+            raise HTTPException(422, "Enter the pounds to convert them to tons.")
+        changes["tonnage"] = units.pounds_to_tons(pounds)
+        changes["unit"], changes["source_quantity"], changes["source_unit"] = "ton", pounds, "lb"
+        if changes["tonnage"] <= 0:
+            raise HTTPException(422, "That's less than a thousandth of a ton. Check the pounds.")
+    elif "tonnage" in changes or "unit" in changes:
+        changes["source_quantity"] = changes["source_unit"] = None
+    if changes.get("unit") is None and "unit" in changes:
+        changes.pop("unit")  # unit can't be blank: it is always ton, cy, load, each or gal
 
 
 @router.patch("/tickets/{ticket_id}", response_model=TicketOut)
@@ -504,6 +532,7 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
     ):
         # A price override changes locked project cost; it is a manager decision.
         raise HTTPException(403, "Your role does not allow changing a ticket's unit price.")
+    _convert_pounds(t, changes)
     changed = False
     for field, new in changes.items():
         if isinstance(new, str):
@@ -518,7 +547,7 @@ def patch_ticket(ticket_id: int, patch: TicketPatch, db: Session = Depends(get_d
         changed = True
         _audit(db, t, user, field, old, new)
         setattr(t, field, new)
-        if field == "tonnage":  # a changed quantity must be re-confirmed
+        if field in ("tonnage", "unit"):  # a changed quantity must be re-confirmed
             t.tonnage_confirmed = False
         if t.status == "verified":
             # Any changed field (including price) invalidates the previous approval.
@@ -552,7 +581,9 @@ def verify_ticket(ticket_id: int, body: VerifyIn | None = Body(default=None), db
     _refresh_flags(t)
     # Unusually high tonnage is a warning, not an absolute rejection: some
     # legitimate delivery tickets may be for a bulk shipment.
-    blocking = [f for f in t.flags if not f.startswith("Tonnage unusually large")]
+    # So is a scale ticket whose gross minus tare differs from its net: the person checks
+    # it against the scan and approves the right figure. Tare above gross does block.
+    blocking = [f for f in t.flags if not f.startswith(("Tonnage unusually large", "Weights: gross minus tare"))]
     if blocking:
         raise HTTPException(422, "Resolve ticket issues before verification: " + "; ".join(blocking))
     if t.status != "verified":

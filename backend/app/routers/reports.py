@@ -173,6 +173,9 @@ def dashboard(project_id: int | None = None, db: Session = Depends(get_db),
         # Strings: FastAPI would send Decimals in a plain dict as lossy floats.
         "total_tons": str(aggregates.as_decimal(total.tons, 3)),
         "pending_tons": str(aggregates.as_decimal(total.pending, 3)),
+        # Approved quantities in other units, each in its own: never added to the tons.
+        "other_units": aggregates.other_units(db.execute(filtered_query(select(*aggregates.OTHER_UNIT_COLUMNS), **filters)
+                                                         .where(aggregates.OTHER_UNITS).group_by(Ticket.unit))),
         "total_cost": str(aggregates.as_decimal(total.cost, 2)),
         "unpriced_tickets": int(total.unpriced),
         "pending_cost_tickets": tickets - int(total.counted),

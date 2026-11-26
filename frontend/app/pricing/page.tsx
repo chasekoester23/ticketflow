@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Material, NameAliasRow, PricingEventRow, Project, Rate, RatePreview, RateScope, RateSheetPlan, RateTimeline, Supplier, addAlias,
   createMaterial, createSupplier, deleteItem, getPricingHistory, getRateTimeline, importRateSheet, listAliases, listMaterials, listProjects, listRates, listSuppliers,
-  previewRate, removeAlias, saveRate, HaulerRow, HaulingRate, listHaulers, listHaulingRates,
+  previewRate, removeAlias, saveRate, HaulerRow, HaulingRate, listHaulers, listHaulingRates, UNIT_LABEL,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
 import { HaulingRates } from "../trucking/setup";
@@ -19,6 +19,7 @@ const ACTION_LABEL: Record<PricingEventRow["action"], string> = {
   rate_changed: "Rate changed",
   rate_validity_changed: "Validity changed",
   freight_changed: "Freight changed",
+  unit_changed: "Unit changed",
   rate_removed: "Rate removed",
 };
 // Display only: keep the server's decimal string, trimmed to cents where exact.
@@ -67,7 +68,7 @@ export default function PricingPage() {
   const [error, setError] = useState<string | null>(null);
   const [newSupplier, setNewSupplier] = useState("");
   const [newMaterial, setNewMaterial] = useState("");
-  const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "", project: "", from: "", until: "", freight: "" });
+  const [rateForm, setRateForm] = useState({ supplier: "", material: "", price: "", project: "", from: "", until: "", freight: "", unit: "" });
   const [timeline, setTimeline] = useState<RateTimeline | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [sheetScope, setSheetScope] = useState({ project: "", from: "", until: "" });
@@ -174,7 +175,7 @@ export default function PricingPage() {
         </form>}
         {materials.length ? <ul className="divide-y divide-[#edf0f2]">
           {materials.map((m) => <li key={m.id} className="flex items-center justify-between gap-4 px-5 py-3">
-            <div><span className="text-[12px] font-semibold text-[#354555]">{m.name}</span><span className="ml-2 text-[11px] text-[#5f6c7b]">/{m.unit}</span></div>
+            <div><span className="text-[12px] font-semibold text-[#354555]">{m.name}</span></div>
             {canManage && <button disabled={saving} onClick={() => void remove("materials", m.id, m.name)}
               className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}
           </li>)}
@@ -190,11 +191,13 @@ export default function PricingPage() {
           <p className="tf-panel-description">A ticket takes its project&apos;s agreement if there is one, otherwise the company rate, and within either the latest rate starting on or before its delivery date. Approved tickets keep the rate they were approved at.</p></div>
         <span className="tf-status">{rates.length} rates</span>
       </div>
-      {canManage && <form className="grid items-end gap-3 border-b border-[#e9edf0] p-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_140px_140px_120px_auto]"
+      {canManage && <form className="grid items-end gap-3 border-b border-[#e9edf0] p-5 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_140px_140px_130px_120px_auto]"
         onSubmit={(e) => { e.preventDefault(); void act(async () => {
           await saveRate(Number(rateForm.supplier), Number(rateForm.material), rateForm.price, scopeOf(rateForm.project, rateForm.from, rateForm.until),
             // Only when chosen: re-saving a price never clears a freight setting by accident.
-            rateForm.freight ? rateForm.freight as "included" | "separate" : undefined);
+            rateForm.freight ? rateForm.freight as "included" | "separate" : undefined,
+            // Likewise the unit: blank keeps the rate's unit (tons for a new one).
+            rateForm.unit || undefined);
           setRateForm((v) => ({ ...v, price: "" }));
           setRatePreview(null);
         }); }}>
@@ -212,7 +215,13 @@ export default function PricingPage() {
         </label>
         <ScopeFields idPrefix="rate" projects={projects} project={rateForm.project} from={rateForm.from} until={rateForm.until}
           onChange={(project, from, until) => { setRateForm({ ...rateForm, project, from, until }); setRatePreview(null); }} />
-        <label className="tf-field-label">Unit price ($/ton)
+        <label className="tf-field-label">Priced per
+          <select className="tf-field w-full" value={rateForm.unit} onChange={(e) => { setRateForm({ ...rateForm, unit: e.target.value }); setRatePreview(null); }}>
+            <option value="">Leave as is (ton when new)</option>
+            {Object.entries(UNIT_LABEL).map(([key, label]) => <option key={key} value={key}>{label.per[0].toUpperCase() + label.per.slice(1)}</option>)}
+          </select>
+        </label>
+        <label className="tf-field-label">{`Unit price ($/${UNIT_LABEL[rateForm.unit || "ton"].per})`}
           <input required className="tf-field w-full" inputMode="decimal" placeholder="30.00"
             value={rateForm.price} onChange={(e) => { setRateForm({ ...rateForm, price: e.target.value }); setRatePreview(null); }} />
         </label>
@@ -245,7 +254,7 @@ export default function PricingPage() {
         {ratePreview.truncated && <p className="mt-1 text-[11px] text-[#5f6c7b]">Showing the first {ratePreview.rows.length}.</p>}
       </div>}
       <div className="tf-table-wrap"><table className="tf-table">
-        <thead><tr><th>Supplier</th><th>Material</th><th>Applies to</th><th>From</th><th>Until</th><th className="text-right">Rate / ton</th><th className="text-right">Action</th></tr></thead>
+        <thead><tr><th>Supplier</th><th>Material</th><th>Applies to</th><th>From</th><th>Until</th><th className="text-right">Rate</th><th className="text-right">Action</th></tr></thead>
         <tbody>{schedule.map((r) => <tr key={r.id}>
           <td className="font-semibold">{supplierName(r.supplier_id)}</td>
           <td>{materialName(r.material_id)}</td>
@@ -253,7 +262,7 @@ export default function PricingPage() {
             : <span className="tf-status tf-status-open">{projectLabel(r.project_id)}</span>}</td>
           <td className="whitespace-nowrap tabular-nums">{r.effective_from ? longDate(r.effective_from) : <span className="text-[#5d6b7b]">Any date</span>}</td>
           <td className="whitespace-nowrap tabular-nums">{r.effective_to ? longDate(r.effective_to) : <span className="text-[#5d6b7b]">Open-ended</span>}</td>
-          <td className="text-right font-bold tabular-nums">{`$${Number(r.unit_price).toFixed(2)}`}{r.freight === "included" && <span className="block text-[10.5px] font-semibold text-[#216c43]">freight included</span>}</td>
+          <td className="text-right font-bold tabular-nums">{`$${Number(r.unit_price).toFixed(2)}`}<span className="font-normal text-[#5f6c7b]">/{UNIT_LABEL[r.unit ?? "ton"]?.per ?? r.unit}</span>{r.freight === "included" && <span className="block text-[10.5px] font-semibold text-[#216c43]">freight included</span>}</td>
           <td className="text-right">{canManage && <button disabled={saving} onClick={() => void remove("rates", r.id, "this rate")}
             className="text-[11px] font-semibold text-[#8a5260] hover:underline">Remove</button>}</td>
         </tr>)}</tbody>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ProjectSummary, createProject, getProjectDirectory, setProjectStatus, updateProject } from "../../lib/api";
+import { ProjectSummary, createProject, getProjectDirectory, setProjectStatus, updateProject, quantityText } from "../../lib/api";
 import { useAccount } from "../account-context";
 import { Dialog } from "../Dialog";
 import { useProject } from "../project-context";
@@ -146,7 +146,7 @@ export default function ProjectsPage() {
               <td className="tf-hide-narrow whitespace-nowrap text-[#5f6c7b]">{ago(r.last_activity)}</td>
               <td className="text-right">{open_ ? <Link prefetch={false} href={`/records?project_id=${r.id}&status=needs_review`}
                 title={`${r.open_tickets} tickets · ${r.open_shifts} truck shifts`}>{open_.toLocaleString()}</Link> : <span className="text-[#6b7787]">0</span>}</td>
-              <td className="text-right whitespace-nowrap">{r.verified_tickets.toLocaleString()}<span className="block text-[11px] text-[#5f6c7b]">{tons(r.verified_tons)} t</span></td>
+              <td className="text-right whitespace-nowrap">{r.verified_tickets.toLocaleString()}<span className="block text-[11px] text-[#5f6c7b]">{quantityText(r.verified_tons, r.other_units)}</span></td>
               <td className="text-right whitespace-nowrap">{money(r.material_cost)}
                 {r.unpriced_tickets > 0 && <span className="block text-[11px] font-semibold text-[#995a18]">+ {r.unpriced_tickets} without a rate</span>}</td>
               <td className="text-right whitespace-nowrap">{money(r.trucking_cost)}</td>

@@ -22,6 +22,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import units
 from ..models import Batch, InvoiceComparison, InvoiceTicketRef, Project, Ticket
 from .pricing import norm
 
@@ -198,6 +199,8 @@ def _conflicts(t, project_id: int | None, item: InvoiceComparison,
         reasons.append(f"material {t.material_type}")
     if t.delivery_date is not None and not (item.date_from <= t.delivery_date <= item.date_to):
         reasons.append(f"delivered {t.delivery_date.isoformat()}")
+    if (getattr(t, "unit", None) or "ton") != (getattr(item, "unit", None) or "ton"):
+        reasons.append(f"measured in {units.long(t.unit)}, not {units.long(item.unit)}")
     return reasons
 
 
@@ -221,7 +224,7 @@ TICKET_COLUMNS = (
     Ticket.id, Ticket.batch_id, Ticket.ticket_number, Ticket.delivery_date, Ticket.material_type, Ticket.supplier,
     Ticket.tonnage, Ticket.status, Ticket.tonnage_confirmed, Ticket.unit_price_override,
     Ticket.price_snapshot_state, Ticket.applied_unit_price, Ticket.applied_price_source,
-    Ticket.supplier_key, Ticket.material_key,
+    Ticket.supplier_key, Ticket.material_key, Ticket.unit,
 )
 _KEY_CHUNK = 500
 

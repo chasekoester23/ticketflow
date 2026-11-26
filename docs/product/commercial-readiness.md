@@ -28,7 +28,7 @@ Priorities: **P0** critical financial, security or operational blocker. **P1** r
 
 | # | Mission | External estimate | Assessed | Status |
 |---|---|---:|---:|---|
-| 01 | Financial engine and invoice reconciliation | 73% | see Mission 01 | In progress (this run) |
+| 01 | Financial engine and invoice reconciliation | 73% | 53% → **97.5%** | Engineering complete except M1 (a person's browser walkthrough) |
 | 02 | Document intake and ticket processing | 75% | 70% | Not started as a mission |
 | 03 | Supplier and hauler management | 55% | 50% | Not started |
 | 04 | Project reporting and analytics | 77% | 75% | Not started |
@@ -97,45 +97,60 @@ The starting status is the audit of commit `e19433d`. The current status is upda
 
 | ID | Cat. | Pri. | Requirement | Start | Current | Evidence |
 |---|---|---|---|---|---|---|
-| F1 | Core | P0 | Approval locks a delivery's quantity, rate and cost; corrections withdraw the approval and are audited | Done | | `tests/test_price_snapshots.py`, `db_guards.py` trigger |
-| F2 | Core | P0 | Material rates by supplier, material, project and effective dates; most specific started rate; expired never falls back | Done | | `tests/test_project_rates.py` |
-| F3 | Core | P1 | Units of measure (ton, cy, load, each, gal) on deliveries and rates; a rate prices only its own unit; no silent cross-dimension conversion | Open | | |
-| F4 | Core | P1 | Pounds converted to tons with the source preserved; gross, tare and net recorded and checked | Open | | |
-| F5 | Core | P0 | Hourly trucking priced and locked at approval (minimums, standby, increments, allocations) | Done | | `tests/test_trucking_*` |
-| F6 | Core | P0 | Per-ton and per-load hauling charge locked at approval; never on freight-included or hourly-shift deliveries | Done | | `tests/test_trucking_billing.py` |
-| F7 | Core | P1 | Supplier invoice lines compared with approved deliveries, ticket by ticket or in total, in the line's unit | Partial (tons only) | | `tests/test_invoice_*` |
-| F8 | Core | P0 | Hauler invoice hourly, standby and minimum lines reconciled with approved shifts | Done | | `tests/test_hauling_invoices_api.py` |
-| F9 | Core | P1 | Hauler invoice per-ton and per-load lines reconciled with approved deliveries carrying that hauler's charge | Open | | |
-| F10 | Core | P1 | Unbilled activity covers approved deliveries, hourly shifts and per-ton/per-load hauling | Partial | | |
-| S1 | Scenarios | P1 | Duplicate billing (same delivery or shift on two lines or invoices) detected for every billing method | Partial | | |
-| S2 | Scenarios | P1 | Partial billing: what an invoice doesn't bill stays unbilled, for every billing method | Partial | | |
-| S3 | Scenarios | P1 | Billing for another project's activity is flagged, for every billing method | Partial | | |
-| S4 | Scenarios | P1 | Wrong rate, quantity and load count detected and explained, for every billing method | Partial | | |
-| S5 | Scenarios | P0 | Missing rates are disclosed everywhere and never shown as $0 | Done | | `tests/test_financial_consistency.py` |
-| S6 | Scenarios | P0 | A rate change never alters an approved cost | Done | | `tests/test_price_snapshots.py`, `test_trucking_billing.py` |
-| S7 | Scenarios | P1 | Incompatible units are never aggregated or compared | Open | | |
-| U1 | Frontend | P1 | Ticket review captures unit, quantity, gross/tare, hauler and truck, with the check visible | Partial | | |
-| U2 | Frontend | P1 | Rates & Pricing: unit per material rate, freight, trucking billing methods | Partial | | |
-| U3 | Frontend | P1 | Hauler invoice entry supports per-ton and per-load lines (by date and truck, or by ticket numbers) | Open | | |
-| U4 | Frontend | P1 | An uncertain hauler-invoice line can be resolved by a person choosing the shift, recorded and audited | Open | | |
-| U5 | Frontend | P1 | Every exception says why, links to the invoice, records and source document, and has owner, status and notes | Done | | `app/invoices/exceptions` |
-| U6 | Frontend | P1 | Records, reports, analytics and exports show quantities with their units | Open | | |
-| I1 | Integration | P0 | The same approved activity gives the same figures on Overview, project report, directory, analytics, records and exports | Partial (tons only) | | `test_financial_consistency.py` |
-| I2 | Integration | P0 | Invoices never add cost | Done | | `test_financial_consistency.py` |
-| I3 | Integration | P1 | Per-ton and per-load hauling appear in invoices, exceptions, unbilled and reports | Partial | | |
-| D1 | Integrity | P0 | Database locks approved quantity, unit, rates and charges | Partial | | `db_guards.py` |
-| D2 | Integrity | P0 | Company isolation on every financial endpoint, including new ones | Done | | `test_t_tenant_sweep.py`, `test_c_cross_company.py` |
-| D3 | Integrity | P1 | Migrations additive and tested on legacy data | Partial | | |
-| D4 | Integrity | P1 | Concurrent edits refused by revision on tickets, shifts and invoices | Done | | `tests/test_concurrency.py` |
-| T1 | Testing | P1 | Regression tests for each billing method and invoice rule | Partial | | |
-| T2 | Testing | P1 | Financial consistency tests cover units and per-unit hauling invoices | Partial | | |
-| T3 | Testing | P0 | SQLite, PostgreSQL, browser and real-stack suites green | Partial (real-stack failing on #41) | | |
-| M1 | Manual | P1 | Real-stack walkthrough for each billing method, delivery to reconciled invoice | Partial | | |
-| M2 | Manual | P1 | Demo scenarios with independently calculated expected results, verified against the app | Open | | |
-| Doc1 | Docs | P1 | Billing, units and reconciliation rules documented | Partial | | |
-| Doc2 | Docs | P1 | This roadmap maintained with evidence | Open | | |
+| F1 | Core | P0 | Approval locks a delivery's quantity, rate and cost; corrections withdraw the approval and are audited | Done | Done | `tests/test_price_snapshots.py`, `db_guards.py` trigger |
+| F2 | Core | P0 | Material rates by supplier, material, project and effective dates; most specific started rate; expired never falls back | Done | Done | `tests/test_project_rates.py` |
+| F3 | Core | P1 | Units of measure (ton, cy, load, each, gal) on deliveries and rates; a rate prices only its own unit; no silent cross-dimension conversion | Open | Done | `services/units.py`; `tests/test_units_of_measure.py` (per-yard rate, no fallback on a unit mismatch, unknown units refused) |
+| F4 | Core | P1 | Pounds converted to tons with the source preserved; gross, tare and net recorded and checked | Open | Done | `test_units_of_measure.py`: pounds to tons exact, source kept and audited; net-weight warning; tare above gross blocks |
+| F5 | Core | P0 | Hourly trucking priced and locked at approval (minimums, standby, increments, allocations) | Done | Done | `tests/test_trucking_*` |
+| F6 | Core | P0 | Per-ton and per-load hauling charge locked at approval; never on freight-included or hourly-shift deliveries | Done | Done | `tests/test_trucking_billing.py`; per-ton needs a ticket in tons; per-load counts loads |
+| F7 | Core | P1 | Supplier invoice lines compared with approved deliveries, ticket by ticket or in total, in the line's unit | Partial (tons only) | Done | Line unit: `test_a_line_billed_in_yards_is_compared_with_yards_only`; PDF lines in CY confirmable (`test_invoice_documents.py`) |
+| F8 | Core | P0 | Hauler invoice hourly, standby and minimum lines reconciled with approved shifts | Done | Done | `tests/test_hauling_invoices_api.py` |
+| F9 | Core | P1 | Hauler invoice per-ton and per-load lines reconciled with approved deliveries carrying that hauler's charge | Open | Done | `tests/test_hauling_unit_invoices.py` (15 tests); demo invoices IRO-T-0901..0903, LIN-L-0901/0901B/0902 |
+| F10 | Core | P1 | Unbilled activity covers approved deliveries, hourly shifts and per-ton/per-load hauling | Partial | Done | Per-delivery and grouped not-billed findings; unit-aware supplier unbilled (`test_an_approved_yard_delivery_isnt_covered_by_a_ton_line`) |
+| S1 | Scenarios | P1 | Duplicate billing (same delivery or shift on two lines or invoices) detected for every billing method | Partial | Done | Supplier: same amounts / on another invoice; hourly and per-unit: billed again (`test_billing_a_delivery_twice...`, demo LIN-L-0901B) |
+| S2 | Scenarios | P1 | Partial billing: what an invoice doesn't bill stays unbilled, for every billing method | Partial | Done | `test_partial_billing_leaves_the_rest_unbilled...`; demo IRO-T-0903 (7 not billed in its period) |
+| S3 | Scenarios | P1 | Billing for another project's activity is flagged, for every billing method | Partial | Done | Per unit: `test_a_delivery_on_another_project...`; hourly: `test_an_hours_line_for_a_shift_worked_on_another_project...` (new); supplier: outside scope |
+| S4 | Scenarios | P1 | Wrong rate, quantity and load count detected and explained, for every billing method | Partial | Done | Exact quantity/rate/arithmetic split for hours, tons and loads; demo IRO-T-0902 (+$12.75), LIN-L-0901 (+$88.00) |
+| S5 | Scenarios | P0 | Missing rates are disclosed everywhere and never shown as $0 | Done | Done | `tests/test_financial_consistency.py`; unit mismatch shows its reason |
+| S6 | Scenarios | P0 | A rate change never alters an approved cost | Done | Done | `tests/test_price_snapshots.py`, `test_trucking_billing.py` |
+| S7 | Scenarios | P1 | Incompatible units are never aggregated or compared | Open | Done | `test_tons_are_never_added_to_yards_anywhere`; invoice lines and unbilled per unit |
+| U1 | Frontend | P1 | Ticket review captures unit, quantity, gross/tare, hauler and truck, with the check visible | Partial | Done | Review form: Measured in, gross/tare; browser `review.spec.mjs` (pounds and weights saved; whole loads) |
+| U2 | Frontend | P1 | Rates & Pricing: unit per material rate, freight, trucking billing methods | Partial | Done | Priced per; rate unit in schedule and history; browser `pricing-scope.spec.mjs` |
+| U3 | Frontend | P1 | Hauler invoice entry supports per-ton and per-load lines (by date and truck, or by ticket numbers) | Open | Done | Tons billed / Loads billed / Ticket numbers; browser `trucking.spec.mjs` |
+| U4 | Frontend | P1 | An uncertain hauler-invoice line can be resolved by a person choosing the shift, recorded and audited | Open | Done | Choose the shift, saved with revision and history; API and browser tests |
+| U5 | Frontend | P1 | Every exception says why, links to the invoice, records and source document, and has owner, status and notes | Done | Done | `app/invoices/exceptions` |
+| U6 | Frontend | P1 | Records, reports, analytics and exports show quantities with their units | Open | Done | Records, Overview, Analytics, project page and directory, unbilled, supplier invoice detail, exports (`quantity`, `unit`, `as_written`, `scale_weights`) |
+| I1 | Integration | P0 | The same approved activity gives the same figures on Overview, project report, directory, analytics, records and exports | Partial (tons only) | Done | `test_tons_are_never_added_to_yards_anywhere` across 5 surfaces; `scripts/verify_demo.py` cross-checks Overview against Analytics |
+| I2 | Integration | P0 | Invoices never add cost | Done | Done | `test_financial_consistency.py` |
+| I3 | Integration | P1 | Per-ton and per-load hauling appear in invoices, exceptions, unbilled and reports | Partial | Done | Per-ton/per-load in invoices, exceptions, not-billed findings, billing-method totals; demo verified |
+| D1 | Integrity | P0 | Database locks approved quantity, unit, rates and charges | Partial | Done | `tickets_unit_locked` trigger on both databases (`test_an_approved_tickets_unit_cant_change...`) |
+| D2 | Integrity | P0 | Company isolation on every financial endpoint, including new ones | Done | Done | Tenant sweep and cross-company suites green; no new endpoints |
+| D3 | Integrity | P1 | Migrations additive and tested on legacy data | Partial | Done | Migration 33 tested from 32 with existing rates; data copy migrated 31 to 33 |
+| D4 | Integrity | P1 | Concurrent edits refused by revision on tickets, shifts and invoices | Done | Done | `tests/test_concurrency.py` |
+| T1 | Testing | P1 | Regression tests for each billing method and invoice rule | Partial | Done | See F and S rows |
+| T2 | Testing | P1 | Financial consistency tests cover units and per-unit hauling invoices | Partial | Done | `test_units_of_measure.py`, `test_hauling_unit_invoices.py`, `verify_demo.py` |
+| T3 | Testing | P0 | SQLite, PostgreSQL, browser and real-stack suites green | Partial (real-stack failing on #41) | Done | See Verification below |
+| M1 | Manual | P1 | Real-stack walkthrough for each billing method, delivery to reconciled invoice | Partial | Partial | Real-stack e2e and the demo through the API; a browser walkthrough of each billing method is in the founder review steps, not yet done by a person |
+| M2 | Manual | P1 | Demo scenarios with independently calculated expected results, verified against the app | Open | Done | `scripts/verify_demo.py`: 34 of 34 figures match the seeder's independently worked-out results |
+| Doc1 | Docs | P1 | Billing, units and reconciliation rules documented | Partial | Done | `docs/engineering/billing-units.md` (rewritten), `trucking-billing.md` (reconciliation) |
+| Doc2 | Docs | P1 | This roadmap maintained with evidence | Open | Done | This page |
 
 **Starting score: 53%.** Per category: Core 60% × 25 = 15.0; Scenarios 57% × 15 = 8.6; Frontend 33% × 15 = 5.0; Integration 67% × 10 = 6.7; Integrity 75% × 10 = 7.5; Testing 67% × 10 = 6.7; Manual 25% × 10 = 2.5; Docs 25% × 5 = 1.3.
+
+**Current score: 96%.** Core 100% × 25 = 25.0; Scenarios 100% × 15 = 15.0; Frontend 100% × 15 = 15.0; Integration 100% × 10 = 10.0; Integrity 100% × 10 = 10.0; Testing 100% × 10 = 10.0; Manual 75% × 10 = 7.5; Docs 100% × 5 = 5.0. Total **97.5%**. Mission 01 is not at 100%: M1 (P1) needs a person to walk each billing method through the browser.
+
+### Verification (2026-11-25, branch `feature/financial-completion`)
+
+| Check | Result |
+|---|---|
+| Backend, SQLite (final code) | 1,534 passed, 37 skipped, 3 xfailed |
+| Backend, PostgreSQL (final code) | 1,558 passed, 13 skipped, 3 xfailed. An earlier run had 1 concurrency failure while a second test run shared the database; it passes alone and in this clean run. |
+| Browser (mock API, production build, final code) | 341 passed, 1 skipped (includes 5 new: pounds/weights and whole loads on review, rate unit, per-ton line entry, choosing the shift) |
+| Real stack (`tests/e2e/run.sh`) | 7 + 1 passed. The project-report step followed the old `/reports/project` page, which now redirects into the project workspace; the test now checks the redirect and the report. |
+| Type check | Clean |
+| Migration | 32 to 33 on a legacy database (test); data copy 31 to 33 |
+| Demo | Rebuilt; `verify_demo.py` 34 of 34 |
+| AI spend | Demo runs with `AI_READING_ENABLED=false`; `/api/status` reports reading off |
 
 ### External validation (not part of the engineering score)
 
@@ -154,3 +169,22 @@ The starting status is the audit of commit `e19433d`. The current status is upda
 | P2 | Volume-to-weight factor per material, under contract |
 | P2 | Excel export speed with `lxml` (4 s at 50,000 tickets) |
 | P3 | AI reading of hauler invoices |
+
+### Found and fixed in this run's self-audit
+
+| Pri. | Finding | Fix |
+|---|---|---|
+| P1 | A per-load line billing a delivery already invoiced, or another project's, showed two exceptions (a cause with no dollars, plus "Amount differs") | One exception per problem, carrying the line's amount. Found by the demo verification (32 of 34 before, 34 of 34 after). |
+| P1 | An hours line on a project's invoice matched a shift worked for another project without saying so | Flagged "Billed against another project", not paid; the project's own shift is preferred, so the line isn't ambiguous either |
+| P1 | The demo server reads `backend/.env`, so "Read automatically" in the demo could spend on AI | `AI_READING_ENABLED=false`: uploads to be read are refused, the worker never builds a reader, and the status endpoint says so |
+| P2 | The pilot report's verified tons added every unit | Tons only |
+
+### Still open
+
+| Pri. | Item |
+|---|---|
+| P1 | M1: a person walks each billing method through the browser (founder review steps) |
+| P2 | One rate per supplier, material, scope and date: quoting one material both per ton and per yard needs two catalog materials |
+| P2 | Volume-to-weight factor per material, under contract |
+| P2 | Some supplier-invoice exports and the CSV of differences still say "tons" in their headers for a line in another unit |
+| P3 | Metric tonnes and kilograms |

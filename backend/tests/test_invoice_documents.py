@@ -106,26 +106,31 @@ def test_confirmed_draft_gets_exactly_the_same_math_as_typed_entry(client):
     assert typed_saved["source_document_id"] is None
 
 
-def test_confirm_requires_a_complete_line_in_tons(client):
+def test_confirm_requires_a_complete_line_and_keeps_its_unit(client):
     project = _project(client)
     document = _upload(client, make_invoice_pdf(period="sometime in October", tickets=(),
                                                 rows=(("Sand", "20.000", "CY", "30.0000", "600.00"),)), project=project).json()
     line = document["lines"][0]
     assert line["unit"] == "cy" and Decimal(line["billed_quantity"]) == 20  # never converted
     assert "delivery date from is missing" in line["blockers"]
+    assert not any("units are never converted" in b for b in line["blockers"])  # cubic yards are a billing unit
     url = f"/api/invoice-documents/{document['id']}/lines/{line['id']}"
     refused = client.post(url + "/confirm")
     assert refused.status_code == 422
-    assert "tons only" in refused.json()["detail"] and "date" in refused.json()["detail"]
+    assert "date" in refused.json()["detail"]
     assert client.get("/api/invoice-comparisons").json() == []
 
     # A person who reads the invoice can correct it, and each change is recorded.
-    assert client.patch(url, json={"date_from": "2026-10-01", "date_to": "2026-10-31", "unit": "ton"},
+    assert client.patch(url, json={"date_from": "2026-10-01", "date_to": "2026-10-31"},
                         headers={"If-Match": line["revision"]}).status_code == 200
-    assert client.post(url + "/confirm").status_code == 200
+    confirmed = client.post(url + "/confirm")
+    assert confirmed.status_code == 200
+    comparison = client.get(f"/api/invoice-comparisons/{confirmed.json()['comparison_id']}").json()
+    # Billed in cubic yards and compared in cubic yards: 20, never turned into tons.
+    assert comparison["unit"] == "cy" and Decimal(comparison["billed_tons"]) == 20
     actions = [e["action"] for e in client.get(f"/api/invoice-documents/{document['id']}/history").json()]
     assert actions[0] == "uploaded" and actions[-1] == "confirmed"
-    assert set(actions[1:-1]) == {"edited:unit", "edited:date_from", "edited:date_to"}
+    assert set(actions[1:-1]) == {"edited:date_from", "edited:date_to"}
 
 
 def test_multiplication_mismatch_is_highlighted_and_reaches_the_comparison(client):
