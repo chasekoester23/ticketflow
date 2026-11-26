@@ -30,6 +30,7 @@ import { ActionFailure, ReviewForm, STATUS_LABEL, previousValues } from "./Revie
 import { withTicketStates } from "./manifestState";
 import { ScanCheck } from "./ScanCheck";
 import { ScanViewer, zoomIn, zoomOut } from "./ScanViewer";
+import { ImportedRow, isImportBatch } from "./import/ImportedRow";
 import { QueueFilter, TicketQueue, pendingStatus } from "./TicketQueue";
 import { UploadPanel } from "./UploadPanel";
 
@@ -559,7 +560,7 @@ export default function Home() {
                 {project && <span className="ml-2 font-medium text-[#657182]">{project.code} · {project.name}</span>}
                 {canMove && !moving && <button type="button" className="tf-link ml-2 text-[11px]" onClick={() => setMoving(true)}>Change project</button>}
               </h1>
-              <span className="text-xs text-[#657182]">{tickets.length} tickets · {batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</span>
+              <span className="text-xs text-[#657182]">{tickets.length} tickets · {isImportBatch(batch) ? "Spreadsheet import" : batch.intake_mode === "manual" ? "Manual entry" : "AI extraction"}</span>
               </div>
               {moving && <label className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold text-[#49586a]">Move this batch to
                 <select className="tf-field !min-h-0 !py-1 !text-xs" aria-label="Move this batch to project" defaultValue=""
@@ -665,9 +666,9 @@ export default function Home() {
                 <button type="button" disabled={selected >= tickets.length - 1} onClick={() => selectTicket(selected + 1)} className="tf-tool">Next</button>
               </div>
             </div>
-            <ScanViewer src={ticketImageUrl(current.id) + (imageVersion ? "?v=" + imageVersion : "")}
+            {isImportBatch(batch) ? <ImportedRow batch={batch!} ticket={current} /> : <ScanViewer src={ticketImageUrl(current.id) + (imageVersion ? "?v=" + imageVersion : "")}
               alt={"Original scanned delivery ticket " + (current.ticket_number || String(current.id))}
-              zoom={zoom} rotation={rotation} onZoom={setZoom} />
+              zoom={zoom} rotation={rotation} onZoom={setZoom} />}
           </section>
 
           <ReviewForm

@@ -61,7 +61,7 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
         <h2 className="tf-panel-title">Upload delivery tickets</h2>
         <p className="tf-panel-description">Scans or phone photos: PDF, JPG, or PNG · All selected files must be valid; none are processed if any is rejected</p>
       </div>
-      <a className="tf-link" href="/projects">Manage projects</a>
+      <span className="flex flex-wrap gap-x-4"><a className="tf-link" href="/upload/import">Import a spreadsheet</a><a className="tf-link" href="/projects">Manage projects</a></span>
     </div>
     <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div>
