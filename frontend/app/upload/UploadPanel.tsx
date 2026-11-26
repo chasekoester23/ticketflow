@@ -30,6 +30,9 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
+  const [handheld, setHandheld] = useState(false);
+  useEffect(() => { setHandheld(window.matchMedia("(max-width: 1023px)").matches); }, []);
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
@@ -83,6 +86,12 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
         </div>
+        {/* Phones and tablets: straight to the camera, one ticket per photo. Each photo is added to the list. */}
+        {handheld && <>
+          <button type="button" className="tf-secondary-button mt-3 w-full" onClick={() => camera.current?.click()}>Take a photo of a ticket</button>
+          <input ref={camera} type="file" accept="image/jpeg,image/png" capture="environment" multiple className="hidden" data-testid="camera-input"
+            aria-label="Take a photo of a ticket" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+        </>}
         {files.length > 0 && <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between text-xs text-[#657182]">
             <span>{files.length} selected file(s)</span>
