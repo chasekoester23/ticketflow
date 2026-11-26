@@ -31,6 +31,14 @@ Usage (from backend/, venv active):
     python scripts/seed_demo.py            # create it (refuses if it exists)
     python scripts/seed_demo.py --reset    # delete the demo folder and create it again
 Then run the API and worker with the two exports it prints, and sign in as demo-owner.
+
+The hosted demo (PostgreSQL, its own bucket; see docs/deploy/founder-launch-checklist.md):
+    APP_ENVIRONMENT=demo STORAGE_BACKEND=s3 S3_BUCKET=quarvera-demo-documents ... \\
+        python scripts/seed_demo.py --hosted --database-url postgresql://.../quarvera_demo
+It refuses unless APP_ENVIRONMENT=demo, the database's name contains "demo", the scans go to
+a bucket named "demo", the startup checks pass for the demo, and the database has no users
+yet. It never opens another database, never resets one, and prints a one-time owner
+password that must be changed at first sign-in.
 """
 from __future__ import annotations
 
@@ -167,10 +175,94 @@ def guard_paths() -> None:
     assert "demo" in DB_PATH.name and "demo" in DEMO_DIR.name
 
 
+HOSTED_EXPECTED_PATH = BACKEND / "demo_workspace" / "hosted-demo-expected-results.json"
+
+
+def hosted_problems(database_url: str, environ) -> list[str]:
+    """Why --hosted must not run, checked before anything is imported or opened."""
+    from sqlalchemy.engine import make_url
+
+    problems = []
+    if environ.get("APP_ENVIRONMENT") != "demo":
+        problems.append("Set APP_ENVIRONMENT=demo in this shell: the hosted seeder only ever fills the fictional demo.")
+    try:
+        url = make_url(database_url)
+    except Exception:  # Any unreadable URL is refused the same way.
+        url = None
+    if url is None or not url.get_backend_name().startswith("postgres"):
+        problems.append("--database-url must be the demo's PostgreSQL URL (postgresql://...).")
+    elif "demo" not in (url.database or "").lower():
+        problems.append('The database\'s name must contain "demo" (for example quarvera_demo). Nothing else is ever seeded.')
+    if environ.get("DATABASE_URL") and environ["DATABASE_URL"] != database_url:
+        problems.append("DATABASE_URL in this shell names a different database. Unset it: --database-url is the only target.")
+    if environ.get("STORAGE_BACKEND") != "s3" or "demo" not in environ.get("S3_BUCKET", "").lower():
+        problems.append('The demo\'s scans go to its own bucket: set STORAGE_BACKEND=s3, S3_BUCKET (with "demo" in its name) '
+                        "and that bucket's S3_* variables in this shell.")
+    return problems
+
+
+def database_has_users(database_url: str) -> bool:
+    from sqlalchemy import create_engine, inspect, text
+
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            if not inspect(connection).has_table("users"):
+                return False
+            return bool(connection.execute(text("SELECT COUNT(*) FROM users")).scalar())
+    finally:
+        engine.dispose()
+
+
+def hosted(database_url: str) -> int:
+    """Seed the hosted demo's PostgreSQL database, and nothing else."""
+    global EXPECTED_PATH
+    problems = hosted_problems(database_url, os.environ)
+    if problems:
+        print("Hosted demo seeding refused. Nothing was opened or changed.\n  " + "\n  ".join(problems), file=sys.stderr)
+        return 2
+    # Set before the app is imported, so it can reach this database only, and never an AI reader.
+    os.environ["DATABASE_URL"] = database_url
+    os.environ["AI_READING_ENABLED"] = "false"
+    for limit in ("UPLOADS", "EXPORTS", "REPORTS"):
+        os.environ[f"RATE_LIMIT_{limit}_PER_MINUTE"] = "0"
+    sys.path.insert(0, str(BACKEND))
+    from app.config import Settings, configuration_problems
+
+    problems = configuration_problems(Settings())
+    if problems:
+        print("Hosted demo seeding refused: these variables don't pass the demo's startup checks. Nothing was changed.\n  "
+              + "\n  ".join(problems), file=sys.stderr)
+        return 2
+    from app.db import normalized_url
+
+    if database_has_users(normalized_url(database_url)):
+        print("Hosted demo seeding refused: this database already has people in it. It only fills an empty demo database; "
+              "to rebuild, drop and recreate the demo database first. Nothing was changed.", file=sys.stderr)
+        return 1
+    EXPECTED_PATH = HOSTED_EXPECTED_PATH
+    EXPECTED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    password = seed(hosted=True)
+    print(f"\nHosted demo ready: {COMPANY}")
+    print(f"  Sign in as {OWNER} with this one-time password, shown only now: {password}")
+    print("  You'll be asked to choose a new password at first sign-in. Keep it in your password manager.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--reset", action="store_true", help="delete the demo folder first (only that folder)")
+    parser.add_argument("--hosted", action="store_true", help="seed the hosted demo's PostgreSQL database (see above)")
+    parser.add_argument("--database-url", help="with --hosted: the demo database, whose name must contain 'demo'")
     args = parser.parse_args(argv)
+    if args.hosted:
+        if args.reset:
+            print("--reset is for the local demo folder only. A hosted demo database is rebuilt by recreating it.", file=sys.stderr)
+            return 2
+        return hosted(args.database_url or "")
+    if args.database_url:
+        print("--database-url is used only with --hosted.", file=sys.stderr)
+        return 2
     guard_paths()
     if DEMO_DIR.exists():
         if not args.reset:
@@ -193,10 +285,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"    export DATABASE_URL=sqlite:///{DB_PATH}")
     print(f"    export STORAGE_DIR={FILES_DIR}")
     print("    export AI_READING_ENABLED=false   # the demo never calls an AI reader, whatever keys .env holds")
+    print("    export APP_ENVIRONMENT=demo       # startup then refuses any database or folder not named demo")
     return 0
 
 
-def seed() -> str:
+def seed(hosted: bool = False) -> str:
     from alembic import command
     from alembic.config import Config
 
@@ -219,7 +312,7 @@ def seed() -> str:
         db.add(company)
         db.flush()
         owner = User(organization_id=company.id, username=OWNER, display_name="Demo Owner", password_hash=password_hash(password),
-                     role="owner", active=True)
+                     role="owner", active=True, must_change_password=hosted)
         db.add(owner)
         db.commit()
         owner_id, company_id = owner.id, company.id
@@ -239,8 +332,15 @@ def seed() -> str:
     app.dependency_overrides[current_user] = lambda: User(id=owner_id, organization_id=company_id, username=OWNER,
                                                           display_name="Demo Owner", password_hash="x", active=True, role="owner",
                                                           must_change_password=False)
+    # In process, never over the network. The hosted demo's settings accept only its own
+    # hostnames over https, so the in-process client uses the first of them.
+    if hosted:
+        from app.config import settings
+        options = {"base_url": f"https://{settings.trusted_hosts[0]}"}
+    else:
+        options = {}
     try:
-        with TestClient(app) as client:
+        with TestClient(app, **options) as client:
             client.headers.update({"X-TicketFlow-Request": "1"})
             build(client, make_page, make_pdf)
     finally:

@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from app import main as main_module
 from app.config import Settings, configuration_problems, environment, settings
 from app.main import app
+from scripts import seed_demo
 
 DOCS = Path(__file__).resolve().parents[2] / "docs" / "deploy"
 
@@ -226,3 +227,109 @@ def test_the_documented_demo_variables_pass(clean_env):
 def test_the_unfilled_examples_are_refused(clean_env):
     found = configuration_problems(_documented(clean_env, "shared", "api", fill=False))
     assert any("real password" in problem for problem in found), found
+
+
+# ------------------------------------------------------------------ seeding the hosted demo
+
+DEMO_URL = "postgresql://db-user:db-password@postgres-private-host:5432/quarvera_demo"
+
+
+@pytest.fixture()
+def seeder(clean_env, tmp_path):
+    """A shell for the hosted seeder: no backend/.env, nothing it writes leaks into other
+    tests, and no database is ever opened or seeded unless a test says so."""
+    clean_env.chdir(tmp_path)
+    for name in ("DATABASE_URL", "AI_READING_ENABLED", "RATE_LIMIT_UPLOADS_PER_MINUTE", "RATE_LIMIT_EXPORTS_PER_MINUTE",
+                 "RATE_LIMIT_REPORTS_PER_MINUTE"):
+        clean_env.setenv(name, "unset-by-test")  # recorded, so teardown restores whatever was there
+        clean_env.delenv(name)
+    clean_env.setattr(seed_demo, "EXPECTED_PATH", tmp_path / "expected.json")
+    clean_env.setattr(seed_demo, "HOSTED_EXPECTED_PATH", tmp_path / "hosted-expected.json")
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("the seeder went past its refusal")
+
+    clean_env.setattr(seed_demo, "seed", never)
+    clean_env.setattr(seed_demo, "database_has_users", never)
+    return clean_env
+
+
+def _demo_shell(monkeypatch, **overrides):
+    _documented(monkeypatch, "demo", "api")
+    for key, value in overrides.items():
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+
+
+@pytest.mark.parametrize("argv, shell, expected", [
+    (["--hosted", "--database-url", DEMO_URL], {"APP_ENVIRONMENT": None}, "APP_ENVIRONMENT=demo"),
+    (["--hosted", "--database-url", DEMO_URL], {"APP_ENVIRONMENT": "pilot"}, "APP_ENVIRONMENT=demo"),
+    (["--hosted"], {"DATABASE_URL": None}, "PostgreSQL URL"),
+    (["--hosted", "--database-url", "sqlite:///quarvera-demo.db"], {"DATABASE_URL": None}, "PostgreSQL URL"),
+    (["--hosted", "--database-url", "postgresql://u:p@host:5432/railway"], {"DATABASE_URL": None}, 'must contain "demo"'),
+    (["--hosted", "--database-url", "postgresql://u:p@host:5432/quarvera_pilot"], {"DATABASE_URL": None}, 'must contain "demo"'),
+    (["--hosted", "--database-url", DEMO_URL], {"DATABASE_URL": "postgresql://u:p@host:5432/quarvera_pilot"}, "different database"),
+    (["--hosted", "--database-url", DEMO_URL], {"STORAGE_BACKEND": "local"}, "STORAGE_BACKEND=s3"),
+    (["--hosted", "--database-url", DEMO_URL], {"S3_BUCKET": "quarvera-production-documents"}, "S3_BUCKET"),
+])
+def test_the_hosted_seeder_refuses_before_opening_anything(seeder, capsys, argv, shell, expected):
+    _demo_shell(seeder, **shell)
+    assert seed_demo.main(argv) == 2
+    assert expected in capsys.readouterr().err
+
+
+def test_the_hosted_seeder_refuses_what_the_demo_would_refuse_at_startup(seeder, capsys):
+    _demo_shell(seeder, GEMINI_API_KEY="fictional-not-a-key")
+    assert seed_demo.main(["--hosted", "--database-url", DEMO_URL]) == 2
+    assert "GEMINI_API_KEY" in capsys.readouterr().err
+
+
+def test_the_hosted_seeder_never_resets_or_takes_a_url_locally(seeder, capsys):
+    _demo_shell(seeder)
+    assert seed_demo.main(["--hosted", "--reset", "--database-url", DEMO_URL]) == 2
+    assert seed_demo.main(["--database-url", DEMO_URL]) == 2
+    assert "--reset" in capsys.readouterr().err
+
+
+def test_the_hosted_seeder_fills_only_an_empty_database(seeder, capsys):
+    _demo_shell(seeder)
+    seeder.setattr(seed_demo, "database_has_users", lambda url: True)
+    assert seed_demo.main(["--hosted", "--database-url", DEMO_URL]) == 1
+    assert "already has people" in capsys.readouterr().err
+
+
+def test_the_hosted_seeder_seeds_the_named_database_once_checks_pass(seeder, capsys):
+    import os
+
+    _demo_shell(seeder)
+    seen = {}
+
+    def has_users(url):
+        seen["checked"] = url
+        return False
+
+    def seed(hosted):
+        seen["seeded"] = (hosted, os.environ["DATABASE_URL"], os.environ["AI_READING_ENABLED"])
+        return "fictional-one-time-pw"
+
+    seeder.setattr(seed_demo, "database_has_users", has_users)
+    seeder.setattr(seed_demo, "seed", seed)
+    assert seed_demo.main(["--hosted", "--database-url", DEMO_URL]) == 0
+    assert seen["seeded"] == (True, DEMO_URL, "false") and seen["checked"].endswith("/quarvera_demo")
+    assert "fictional-one-time-pw" in capsys.readouterr().out
+    assert seed_demo.EXPECTED_PATH == seed_demo.HOSTED_EXPECTED_PATH
+
+
+def test_database_has_users(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "quarvera-demo.db"
+    assert seed_demo.database_has_users(f"sqlite:///{path}") is False
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE users (id INTEGER)")
+    assert seed_demo.database_has_users(f"sqlite:///{path}") is False
+    with sqlite3.connect(path) as connection:
+        connection.execute("INSERT INTO users VALUES (1)")
+    assert seed_demo.database_has_users(f"sqlite:///{path}") is True
