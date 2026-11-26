@@ -4,7 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     session_secure_cookie: bool = False
     # "production" makes startup refuse anything unsafe for a hosted deployment.
     ticketflow_env: str = "development"
+    # What this installation is for, checked at startup (environment_problems below):
+    #   demo        fictional data only: AI reading off, and every database and bucket named "demo"
+    #   pilot       a real customer: PostgreSQL, private https object storage, secure cookies,
+    #               real credentials and a monthly cap on ticket reads; never a "demo" name
+    #   production  the same rules as pilot
+    #   development this machine
+    # pilot and production imply TICKETFLOW_ENV=production. Unset keeps the older behaviour:
+    # TICKETFLOW_ENV alone decides, and /api/status says the environment wasn't declared.
+    app_environment: Literal["development", "demo", "pilot", "production"] | None = None
     # /docs, /redoc and /openapi.json describe every endpoint to anyone who asks. Off unless wanted.
     enable_api_docs: bool = False
     # A signed-in session ends after this long with no requests, as well as 12 hours after sign-in.
@@ -180,6 +189,15 @@ class Settings(BaseSettings):
     # Row-level security on PostgreSQL, as defence in depth. Off until scripts/postgres_rls.py enable has run.
     postgres_rls: bool = False
 
+    @model_validator(mode="after")
+    def _hosted_environments_run_in_production_mode(self):
+        if self.app_environment in HOSTED_CUSTOMER and "ticketflow_env" not in self.model_fields_set:
+            self.ticketflow_env = "production"
+        return self
+
+
+# Installations that hold a real customer's records.
+HOSTED_CUSTOMER = ("pilot", "production")
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver", "0.0.0.0"}
 
@@ -212,6 +230,7 @@ def configuration_problems(config: Settings) -> list[str]:
             problems.append("Production needs APP_ORIGIN to be the exact https:// address people open, or unset.")
     problems += _proxy_problems(config)
     problems += _storage_problems(config)
+    problems += environment_problems(config)
     return problems
 
 
@@ -273,6 +292,104 @@ def _storage_problems(config: Settings) -> list[str]:
             problems.append("STORAGE_ENCRYPTION_KEY must be 32 random bytes, base64-encoded.")
         elif config.storage_backend != "s3":
             problems.append("STORAGE_ENCRYPTION_KEY applies only to STORAGE_BACKEND=s3.")
+    return problems
+
+
+# ---- Environments: the fictional demo and a customer's records must never meet.
+
+# Passwords that come with a template, a tutorial or this repository's local stack.
+_DEFAULT_SECRETS = {"", "postgres", "password", "ticketflow", "changeme", "change-me", "secret", "admin", "minioadmin",
+                    "example", "test", "placeholder"}
+
+
+def environment(config: Settings) -> str:
+    """The declared APP_ENVIRONMENT, or the older two-way TICKETFLOW_ENV when none is declared."""
+    return config.app_environment or ("production" if config.ticketflow_env == "production" else "development")
+
+
+def _url(url: str):
+    from sqlalchemy.engine import make_url
+
+    try:
+        return make_url(url)
+    except Exception:  # Any unreadable URL is simply unverifiable.
+        return None
+
+
+def _database_name(url: str) -> str | None:
+    """The database's own name: a PostgreSQL database, or a SQLite file's name. None if unreadable."""
+    parsed = _url(url)
+    if parsed is None:
+        return None
+    if parsed.get_backend_name() == "sqlite":
+        return Path(parsed.database).name if parsed.database and parsed.database != ":memory:" else None
+    return parsed.database or None
+
+
+def _named_demo(name: str | None) -> bool:
+    return bool(name) and "demo" in name.lower()
+
+
+def _buckets(config: Settings) -> list[tuple[str, str]]:
+    """Every bucket this installation writes to or reads from, by variable name."""
+    found = [("S3_BUCKET", config.s3_bucket)] if config.storage_backend == "s3" else []
+    found += [("BACKUP_S3_BUCKET", config.backup_s3_bucket), ("BACKUP_SOURCE_S3_BUCKET", config.backup_source_s3_bucket)]
+    return [(variable, name) for variable, name in found if name]
+
+
+def _placeholder(value: str | None) -> bool:
+    text = (value or "").strip()
+    return text.lower() in _DEFAULT_SECRETS or text.startswith("<") or text.lower().startswith("local-only")
+
+
+def environment_problems(config: Settings) -> list[str]:
+    """APP_ENVIRONMENT's rules. The demo can only reach things named "demo" and never reads
+    with AI; a pilot or production installation can't reach anything named "demo"."""
+    declared = config.app_environment
+    if declared is None:
+        return []
+    if declared not in ("development", "demo", "pilot", "production"):
+        return ["APP_ENVIRONMENT must be development, demo, pilot or production."]
+    problems = []
+    hosted = config.ticketflow_env == "production"
+    database = _database_name(config.database_url)
+    if declared == "development" and hosted:
+        problems.append("APP_ENVIRONMENT=development can't run with TICKETFLOW_ENV=production: declare demo, pilot or production.")
+    if declared == "demo":
+        if config.ai_reading_enabled:
+            problems.append("The demo needs AI_READING_ENABLED=false: its tickets are entered by hand, and it must never spend on AI.")
+        if not _named_demo(database):
+            problems.append('The demo\'s database must have "demo" in its name (DATABASE_URL), so it can\'t be a customer\'s database.')
+        if config.storage_backend == "local" and not any(_named_demo(part) for part in Path(config.storage_dir).parts):
+            problems.append('The demo\'s STORAGE_DIR must have "demo" in its path, so it can\'t be a customer\'s documents.')
+        for variable, name in _buckets(config):
+            if not _named_demo(name):
+                problems.append(f'The demo\'s {variable} must have "demo" in its name, so it can\'t be a customer\'s bucket.')
+        if hosted:
+            present = [name for name, value in (("GEMINI_API_KEY", config.gemini_api_key), ("ANTHROPIC_API_KEY", config.anthropic_api_key),
+                                                ("OPENAI_API_KEY", config.openai_api_key)) if value]
+            if present:
+                problems.append("The hosted demo must hold no AI key: remove " + ", ".join(present) + ".")
+    if declared in HOSTED_CUSTOMER:
+        label = declared.capitalize()
+        if not hosted:
+            problems.append(f"APP_ENVIRONMENT={declared} needs TICKETFLOW_ENV=production (or TICKETFLOW_ENV unset).")
+        if _named_demo(database):
+            problems.append(f'{label} can\'t use a database with "demo" in its name: that\'s the fictional demo\'s.')
+        for variable, name in _buckets(config):
+            if _named_demo(name):
+                problems.append(f'{label} can\'t use {variable} with "demo" in its name: that\'s the fictional demo\'s.')
+        if config.ai_reading_enabled and config.monthly_ticket_reads_per_organization <= 0:
+            problems.append(f"{label} needs MONTHLY_TICKET_READS_PER_ORGANIZATION above 0, so one company can't run up "
+                            "an unlimited AI bill. Or set AI_READING_ENABLED=false.")
+    if declared in HOSTED_CUSTOMER or (declared == "demo" and hosted):
+        parsed = _url(config.database_url)
+        if parsed is not None and parsed.get_backend_name() != "sqlite" and _placeholder(parsed.password):
+            problems.append("DATABASE_URL needs the database's real password, not a missing, default or example one.")
+        secret = config.s3_secret_access_key
+        if config.storage_backend == "s3" and secret is not None and _placeholder(
+                secret.get_secret_value() if hasattr(secret, "get_secret_value") else str(secret)):
+            problems.append("S3_SECRET_ACCESS_KEY is a default or example value: use the bucket's own token.")
     return problems
 
 

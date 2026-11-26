@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { SystemCheck, SystemStatus, getSystemStatus } from "../../lib/api";
+import { SystemCheck, SystemStatus, getStatus, getSystemStatus } from "../../lib/api";
+
+// Which installation this is, so the fictional demo is never mistaken for a customer's records.
+const ENVIRONMENT: Record<string, string> = {
+  demo: "Fictional demo", pilot: "Customer pilot", production: "Production", development: "Development",
+};
 
 const STATE: Record<SystemCheck["state"], { label: string; tone: string }> = {
   ok: { label: "OK", tone: "tf-status-open" },
@@ -13,6 +18,13 @@ const STATE: Record<SystemCheck["state"], { label: string; tone: string }> = {
 export default function SystemPage() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [environment, setEnvironment] = useState<{ name: string; declared: boolean } | null>(null);
+  useEffect(() => {
+    getStatus().then((found) => {
+      const named = found as { environment?: string; environment_declared?: boolean };
+      if (named.environment) setEnvironment({ name: named.environment, declared: Boolean(named.environment_declared) });
+    }).catch(() => setEnvironment(null));
+  }, []);
   const load = useCallback(() => {
     getSystemStatus().then((found) => { setStatus(found); setError(null); }).catch((e) => setError((e as Error).message));
   }, []);
@@ -26,6 +38,9 @@ export default function SystemPage() {
     <div className="tf-page-heading">
       <div>
         <h1 className="tf-page-title">System health</h1>
+        {environment && <p className="mt-1 text-xs text-[#526273]">Environment:{" "}
+          <span className="tf-status" data-testid="environment">{ENVIRONMENT[environment.name] ?? environment.name}</span>
+          {!environment.declared && environment.name === "production" && <span className="ml-1">(APP_ENVIRONMENT not set)</span>}</p>}
         <p className="tf-page-description">Whether this installation can do its job: processing, backups and database version. Updates by itself.</p>
       </div>
       {status && <span className={`tf-status ${status.healthy ? "tf-status-open" : "tf-status-attention"}`}>{status.healthy ? "All good" : "Needs attention"}</span>}

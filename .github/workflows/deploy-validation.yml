@@ -87,24 +87,41 @@ jobs:
             echo frontend image ok'
 
       - name: The documented production variables pass the startup checks
+        # Each <placeholder> filled in as a founder would (the brackets removed), since the pilot
+        # refuses example passwords. The unfilled files must be refused.
         run: |
           set -eu
+          mkdir -p filled
+          for name in shared demo api worker; do
+            sed -E 's/<([^>]*)>/\1/g' "docs/deploy/$name.env.example" > "filled/$name.env"
+          done
           check() {
-            service="$1"; shift
-            docker run --rm --entrypoint python --env-file docs/deploy/shared.env.example --env-file "docs/deploy/$service.env.example" \
+            base="$1"; service="$2"; shift 2
+            docker run --rm --entrypoint python --env-file "$base" --env-file "filled/$service.env" \
               "$@" ticketflow-backend:local -c '
           import sys
-          from app.config import configuration_problems, settings
+          from app.config import configuration_problems, environment, settings
           problems = configuration_problems(settings)
-          print(settings.ticketflow_env, settings.storage_backend, problems)
+          print(environment(settings), settings.ticketflow_env, settings.storage_backend, problems)
           sys.exit(1 if problems or settings.ticketflow_env != "production" else 0)'
           }
-          check api
-          check worker
-          # And production refuses local document storage, or plain-HTTP storage.
-          if check api -e STORAGE_BACKEND=local; then echo "production accepted local storage"; exit 1; fi
-          if check api -e S3_ENDPOINT_URL=http://minio:9000; then echo "production accepted plain HTTP storage"; exit 1; fi
-          if check worker -e SESSION_SECURE_COOKIE=false; then echo "production accepted insecure cookies"; exit 1; fi
+          check filled/shared.env api
+          check filled/shared.env worker
+          check filled/demo.env api
+          check filled/demo.env worker
+          # And the pilot refuses local document storage, plain-HTTP storage, insecure cookies,
+          # example passwords, unlimited AI reads, and the demo's database or bucket.
+          if check filled/shared.env api -e STORAGE_BACKEND=local; then echo "pilot accepted local storage"; exit 1; fi
+          if check filled/shared.env api -e S3_ENDPOINT_URL=http://minio:9000; then echo "pilot accepted plain HTTP storage"; exit 1; fi
+          if check filled/shared.env worker -e SESSION_SECURE_COOKIE=false; then echo "pilot accepted insecure cookies"; exit 1; fi
+          if check docs/deploy/shared.env.example api; then echo "pilot accepted the example's placeholder password"; exit 1; fi
+          if check filled/shared.env api -e MONTHLY_TICKET_READS_PER_ORGANIZATION=0; then echo "pilot accepted unlimited AI reads"; exit 1; fi
+          if check filled/shared.env api -e S3_BUCKET=quarvera-demo-documents; then echo "pilot accepted the demo's bucket"; exit 1; fi
+          # The demo refuses AI reading, an AI key, and a database or bucket not named "demo".
+          if check filled/demo.env api -e AI_READING_ENABLED=true; then echo "demo accepted AI reading"; exit 1; fi
+          if check filled/demo.env worker -e GEMINI_API_KEY=fictional-not-a-key; then echo "demo accepted an AI key"; exit 1; fi
+          if check filled/demo.env api -e DATABASE_URL=postgresql://quarvera:fictional-pass-1@postgres:5432/railway; then echo "demo accepted a database not named demo"; exit 1; fi
+          if check filled/demo.env api -e S3_BUCKET=quarvera-production-documents; then echo "demo accepted a customer bucket"; exit 1; fi
 
       - name: Start the stack (migrations run before the API)
         run: |
