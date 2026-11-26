@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # option, not an automatic hidden retry or an accidental paid API call.
     # Missing keys always fail visibly; manual entry never needs a key.
     extraction_provider: str = "gemini"  # gemini | anthropic
+    # False turns automatic reading off for this whole installation, whatever keys are
+    # present: uploads are entered by hand and the worker never calls a reader. For a
+    # public demo or any workspace that must not spend on AI (AI_READING_ENABLED=false).
+    ai_reading_enabled: bool = True
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.1-pro-preview"
     # How the worker talks to the reader. See docs/engineering/ocr-performance.md.

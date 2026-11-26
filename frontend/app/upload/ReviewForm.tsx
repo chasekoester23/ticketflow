@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ApiError, Failure, HistoryEntry, Ticket, describeFailure, getTicketHistory, patchTicket, ticketAction } from "../../lib/api";
+import { ApiError, Failure, HistoryEntry, Ticket, UNIT_LABEL, describeFailure, getTicketHistory, patchTicket, ticketAction } from "../../lib/api";
 import { TicketDraft, draftsFor, removeDraft, removeTicketDrafts, saveDraft } from "../../lib/drafts";
 import { useAccount } from "../account-context";
 import { FieldMessage, NEEDED_LABEL, REQUIRED_TEXT, dateMessage, rateMessage, tonsMessage } from "./validation";
@@ -43,6 +43,13 @@ const OVERRIDE_KEY = "unit_price_override";
 const NOTE_KEY = "flag_note";
 const HAULER_KEY = "hauler_id";
 const TRUCK_KEY = "truck_number";
+const UNIT_KEY = "unit";
+const GROSS_KEY = "gross_weight";
+const TARE_KEY = "tare_weight";
+const WEIGHT_UNIT_KEY = "weight_unit";
+/** What a quantity can be entered in. Pounds are saved as tons (2,000 lb = 1 t) and the pounds are kept. */
+const UNIT_CHOICES: [string, string][] = [["ton", "Tons"], ["lb", "Pounds (saved as tons)"], ["cy", "Cubic yards"], ["load", "Loads"],
+  ["each", "Each"], ["gal", "Gallons"]];
 const DRAFT_LABEL: Record<string, string> = {
   ...Object.fromEntries(FIELDS.map((f) => [f.key, f.label])),
   [OVERRIDE_KEY]: "Override rate", [HAULER_KEY]: "Hauled by", [TRUCK_KEY]: "Truck",
@@ -63,6 +70,10 @@ function savedValues(ticket: Ticket): Record<string, string> {
     [NOTE_KEY]: ticket.flag_note ?? "",
     [HAULER_KEY]: ticket.hauler_id != null ? String(ticket.hauler_id) : "",
     [TRUCK_KEY]: ticket.truck_number ?? "",
+    [UNIT_KEY]: ticket.unit ?? "ton",
+    [GROSS_KEY]: ticket.gross_weight ?? "",
+    [TARE_KEY]: ticket.tare_weight ?? "",
+    [WEIGHT_UNIT_KEY]: ticket.weight_unit ?? "lb",
   };
 }
 
@@ -152,6 +163,11 @@ export const ReviewForm = memo(function ReviewForm({
   const [note, setNote] = useState(recovered.same?.typed[NOTE_KEY] ?? failure?.note ?? saved[NOTE_KEY]);
   const [hauler, setHauler] = useState(recovered.same?.typed[HAULER_KEY] ?? saved[HAULER_KEY]);
   const [truck, setTruck] = useState(recovered.same?.typed[TRUCK_KEY] ?? saved[TRUCK_KEY]);
+  // Unit and scale weights: not kept in drafts, so a restored draft can't be read in the wrong unit.
+  const [unit, setUnit] = useState(saved[UNIT_KEY]);
+  const [gross, setGross] = useState(saved[GROSS_KEY]);
+  const [tare, setTare] = useState(saved[TARE_KEY]);
+  const [weightUnit, setWeightUnit] = useState(saved[WEIGHT_UNIT_KEY]);
   const [saving, setSaving] = useState(false);
   const [leftBlank, setLeftBlank] = useState<Record<string, boolean>>({});
   const [triedAccept, setTriedAccept] = useState(false);
@@ -163,7 +179,9 @@ export const ReviewForm = memo(function ReviewForm({
   const overrideDirty = override !== saved[OVERRIDE_KEY];
   const haulDirty = hauler !== saved[HAULER_KEY] || truck !== saved[TRUCK_KEY];
 
-  const dirty = overrideDirty || haulDirty || FIELDS.some((f) => values[f.key] !== saved[f.key]);
+  const weightsDirty = gross !== saved[GROSS_KEY] || tare !== saved[TARE_KEY] || ((gross || tare) !== "" && weightUnit !== saved[WEIGHT_UNIT_KEY]);
+  const unitDirty = unit !== saved[UNIT_KEY];
+  const dirty = overrideDirty || haulDirty || unitDirty || weightsDirty || FIELDS.some((f) => values[f.key] !== saved[f.key]);
   // Before paint, so the unsaved-work guard is never a keystroke behind.
   useLayoutEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
 
@@ -187,6 +205,10 @@ export const ReviewForm = memo(function ReviewForm({
     setNote(saved[NOTE_KEY]);
     setHauler(saved[HAULER_KEY]);
     setTruck(saved[TRUCK_KEY]);
+    setUnit(saved[UNIT_KEY]);
+    setGross(saved[GROSS_KEY]);
+    setTare(saved[TARE_KEY]);
+    setWeightUnit(saved[WEIGHT_UNIT_KEY]);
     setRestoredAt(null);
   }
 
@@ -241,6 +263,16 @@ export const ReviewForm = memo(function ReviewForm({
     if (overrideDirty) body.unit_price_override = override.trim() === "" ? null : override;
     if (hauler !== saved[HAULER_KEY]) body.hauler_id = hauler ? Number(hauler) : null;
     if (truck !== saved[TRUCK_KEY]) body.truck_number = truck.trim() === "" ? null : truck.trim();
+    if (unitDirty) {
+      body.unit = unit;
+      // Pounds are converted from the figure typed, so it goes with them.
+      if (unit === "lb" && values.tonnage.trim()) body.tonnage = values.tonnage.trim();
+    }
+    if (weightsDirty) {
+      body.gross_weight = gross.trim() === "" ? null : gross.trim();
+      body.tare_weight = tare.trim() === "" ? null : tare.trim();
+      body.weight_unit = gross.trim() || tare.trim() ? weightUnit : null;
+    }
     if (!Object.keys(body).length) return ticket;
     try {
       const t = await patchTicket(ticket.id, body, ticket.revision);
@@ -308,7 +340,8 @@ export const ReviewForm = memo(function ReviewForm({
   const flags = manual ? ticket.flags.filter((flag) => !isMissingNotice(flag)) : ticket.flags;
   const flaggedFor = (words: string[]) => flags.some((fl) => words.some((w) => fl.startsWith(w)));
   const carry = CARRIED.filter((key) => !values[key] && previous[key]);
-  const tons = tonsMessage(values.tonnage);
+  const tons = tonsMessage(values.tonnage, unit);
+  const unitText = UNIT_LABEL[ticket.unit ?? "ton"] ?? UNIT_LABEL.ton;
   const rate = rateMessage(override);
   const cannotSave = Boolean(tons?.blocksSaving || rate?.blocksSaving);
   const message = (key: FieldKey): FieldMessage | null => {
@@ -478,7 +511,8 @@ export const ReviewForm = memo(function ReviewForm({
           const wideNotes = f.key === "tonnage";
           return <Fragment key={f.key}>
             <div className={`tf-rv-field ${FIELD_SPAN[f.key]} ${f.critical ? "tf-rv-critical" : ""}`}>
-              <label htmlFor={"review-" + f.key}>{f.label}</label>
+              <label htmlFor={"review-" + f.key}>{f.key === "tonnage" && unit !== "ton"
+                ? `Quantity (${unit === "lb" ? "pounds" : UNIT_LABEL[unit]?.long ?? unit})` : f.label}</label>
               <input
                 id={"review-" + f.key}
                 list={f.key === "supplier" ? "catalog-suppliers" : f.key === "material_type" ? "catalog-materials" : undefined}
@@ -500,6 +534,36 @@ export const ReviewForm = memo(function ReviewForm({
           </Fragment>;
         })}
         </div>
+        <details className="tf-rv-units" open={saved[UNIT_KEY] !== "ton" || Boolean(saved[GROSS_KEY] || saved[TARE_KEY]) || undefined}>
+          <summary>Unit and scale weights <span className="tf-rv-muted">
+            {unitText.long === "tons" ? "· in tons" : `· in ${unitText.long}`}
+            {ticket.source_quantity && ticket.source_unit ? ` · written as ${Number(ticket.source_quantity).toLocaleString()} ${ticket.source_unit}` : ""}</span></summary>
+          <div className="tf-rv-fields" role="group" aria-label="Unit and scale weights">
+            <div className="tf-rv-field">
+              <label htmlFor="review-unit">Measured in</label>
+              <select id="review-unit" className="tf-rv-input" value={unit} disabled={!canEdit || saving} onChange={(e) => setUnit(e.target.value)}>
+                {UNIT_CHOICES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              {unit === "lb" && <p className="tf-rv-note tf-rv-muted">Type the pounds above. They&apos;re saved as tons (2,000 lb = 1 t) and the pounds stay on the record.</p>}
+              {unit !== "ton" && unit !== "lb" && <p className="tf-rv-note tf-rv-muted">Priced only by a rate per {UNIT_LABEL[unit]?.per ?? unit}, and never added to tons.</p>}
+            </div>
+            <div className="tf-rv-field tf-rv-span2">
+              <label htmlFor="review-gross">Gross weight</label>
+              <input id="review-gross" className="tf-rv-input" inputMode="decimal" value={gross} readOnly={!canEdit || saving} onChange={(e) => setGross(e.target.value)} />
+            </div>
+            <div className="tf-rv-field tf-rv-span2">
+              <label htmlFor="review-tare">Tare weight</label>
+              <input id="review-tare" className="tf-rv-input" inputMode="decimal" value={tare} readOnly={!canEdit || saving} onChange={(e) => setTare(e.target.value)} />
+            </div>
+            <div className="tf-rv-field tf-rv-span2">
+              <label htmlFor="review-weight-unit">Weights in</label>
+              <select id="review-weight-unit" className="tf-rv-input" value={weightUnit} disabled={!canEdit || saving} onChange={(e) => setWeightUnit(e.target.value)}>
+                <option value="lb">Pounds</option><option value="ton">Tons</option>
+              </select>
+            </div>
+            <p className="tf-rv-field tf-rv-note tf-rv-muted">Optional. Gross minus tare is checked against the tons; it never replaces them.</p>
+          </div>
+        </details>
         {haulers.length > 0 && <div className="tf-rv-fields" role="group" aria-label="Hauling">
           <div className="tf-rv-field tf-rv-span4">
             <label htmlFor="review-hauler">Hauled by <span className="tf-rv-muted">(if a hauler bills per ton or per load)</span></label>
@@ -528,7 +592,7 @@ export const ReviewForm = memo(function ReviewForm({
           )}
           {ticket.unit_price !== null ? (
             <div className="tf-rv-cost-line">
-              <span><strong>${ticket.unit_price}</strong>/ton <span className="tf-rv-muted">{ticket.price_source === "override" ? "manual override" : ticket.price_source === "project_rate" ? "project agreement" : "company rate"}</span></span>
+              <span><strong>${ticket.unit_price}</strong>/{unitText.per} <span className="tf-rv-muted">{ticket.price_source === "override" ? "manual override" : ticket.price_source === "project_rate" ? "project agreement" : "company rate"}</span></span>
               {ticket.cost ? <strong className="tf-rv-total">${ticket.cost}</strong> : <span className="tf-rv-muted">cost appears after you verify the tonnage</span>}
             </div>
           ) : (
@@ -539,7 +603,7 @@ export const ReviewForm = memo(function ReviewForm({
               <label htmlFor="review-rate-override">Override rate</label>
               <input
                 id="review-rate-override"
-                aria-label="Override rate for this ticket ($/ton, optional)"
+                aria-label={`Override rate for this ticket ($/${unitText.per}, optional)`}
                 inputMode="decimal"
                 placeholder="$/ton"
                 value={override}

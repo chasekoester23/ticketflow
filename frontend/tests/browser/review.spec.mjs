@@ -15,7 +15,7 @@ function fixture(id, number) {
 
 async function launch(page, deepLink = 101) {
   const tickets = [fixture(101, "10482"), fixture(102, "10483")];
-  const log = { verified: [], flagged: [], patched: [] };
+  const log = { verified: [], flagged: [], patched: [], bodies: [] };
   const cors = {
     "access-control-allow-origin": `http://127.0.0.1:${process.env.TF_TEST_PORT ?? "3000"}`,
     "access-control-allow-credentials": "true",
@@ -54,6 +54,7 @@ async function launch(page, deepLink = 101) {
       const ticket = tickets.find((t) => t.id === Number(match[1]));
       if (!ticket) return json(route, { detail: "Not found" }, 404);
       if (method === "PATCH") {
+        log.bodies.push(request.postDataJSON());
         Object.assign(ticket, request.postDataJSON());
         if (ticket.status === "verified") {
           ticket.status = "needs_review";
@@ -205,4 +206,27 @@ test("Ctrl+Enter deliberately invokes the same validated Accept and next control
   await expect(page.getByText("1 / 2 resolved")).toBeVisible();
   await expect(page.getByText("Ticket 2 of 2")).toBeVisible();
   expect(log.verified).toEqual([101]);
+});
+
+test("a ticket written in pounds or yards is saved with its unit, and scale weights go with it", async ({ page }) => {
+  const { log } = await launch(page);
+  await page.getByText("Unit and scale weights").click();
+  await page.getByLabel("Measured in").selectOption("lb");
+  await expect(page.getByLabel("Quantity (pounds)")).toBeVisible();
+  await page.getByLabel("Quantity (pounds)").fill("44300");
+  // A pound figure is far above the tons warning, and that's normal for pounds.
+  await expect(page.getByText(/above 60 tons/)).toHaveCount(0);
+  await page.getByLabel("Gross weight").fill("80000");
+  await page.getByLabel("Tare weight").fill("35700");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => log.bodies.length).toBe(1);
+  expect(log.bodies[0]).toMatchObject({ tonnage: "44300", unit: "lb", gross_weight: "80000", tare_weight: "35700", weight_unit: "lb" });
+});
+
+test("loads must be whole before a ticket in loads can be saved as approved", async ({ page }) => {
+  await launch(page);
+  await page.getByText("Unit and scale weights").click();
+  await page.getByLabel("Measured in").selectOption("load");
+  await page.getByLabel("Quantity (loads)").fill("1.5");
+  await expect(page.getByText("Loads must be a whole number.")).toBeVisible();
 });

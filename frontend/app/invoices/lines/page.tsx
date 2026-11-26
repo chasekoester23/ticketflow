@@ -5,13 +5,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError, confirmTicketLinks, discrepanciesCsvUrl, downloadFile, downloadInvoiceComparisonReport, getInvoiceComparison, getInvoiceComparisons, getInvoiceOverview, releaseTicketLink, getInvoiceHistory,
   InvoiceDiagnosis, InvoiceLineComparison, InvoiceLineInput, InvoiceOverview, listMaterials, listProjects, listSuppliers, Material,
-  Project, saveInvoiceComparison, Supplier, CheckedTicket, TicketCheckRow, ticketImageUrl,
+  Project, saveInvoiceComparison, Supplier, CheckedTicket, TicketCheckRow, ticketImageUrl, UNIT_LABEL
 } from "../../../lib/api";
 import { useAccount } from "../../account-context";
 
 const EMPTY: Omit<InvoiceLineInput, "project_id"> & { project_id: number | "" } = {
   project_id: "", invoice_number: "", supplier_name: "", material_name: "",
-  date_from: "", date_to: "", billed_tons: "", billed_unit_price: "",
+  date_from: "", date_to: "", billed_tons: "", unit: "ton", billed_unit_price: "",
   billed_subtotal: "", ticket_list: "",
 };
 const TOTALS_ONLY = "Totals-only comparison — individual tickets not checked.";
@@ -94,16 +94,18 @@ function RecordSummary({ ticket }: { ticket: CheckedTicket }) {
 const signedMoney = (value: string) => (Number(value) > 0 ? "+" : "") + money(value);
 
 /** Why this result, in figures that add up exactly to what was billed. */
-function WhyThisResult({ diagnosis, status }: { diagnosis: InvoiceDiagnosis; status: InvoiceLineComparison["status"] }) {
+function WhyThisResult({ diagnosis, status, unit }: { diagnosis: InvoiceDiagnosis; status: InvoiceLineComparison["status"]; unit?: string }) {
   const { tons: bridge, money: cost } = diagnosis;
+  // The line's own unit: a line billed in cubic yards is explained in cubic yards, never in tons.
+  const u = UNIT_LABEL[unit ?? "ton"]?.long ?? "tons";
   return <section aria-label="Why this result" className="border-b border-[#e2e7ec] p-5">
     <p className={"text-[14px] font-bold " + (status === "matches" ? "text-[#216c43]" : status === "discrepancy" ? "text-[#a73631]" : "text-[#995a18]")} data-testid="diagnosis-headline">{diagnosis.headline}</p>
     <div className="mt-4 grid gap-5 lg:grid-cols-2">
       {bridge && <div>
-        <p className="mb-1.5 text-[12px] font-bold text-[#344352]">From approved tons to billed tons</p>
+        <p className="mb-1.5 text-[12px] font-bold text-[#344352]">{`From approved ${u} to billed ${u}`}</p>
         <p className="mb-1.5 text-[11px] text-[#5f6c7b]">Exact figures, as stored: each row adds to or takes from the one above.</p>
-        <table className="tf-table" aria-label="From approved tons to billed tons"><tbody>
-          <tr><td>Approved tons in this line&apos;s scope</td><td className="text-right font-semibold tabular-nums">{bridge.start}</td></tr>
+        <table className="tf-table" aria-label={`From approved ${u} to billed ${u}`}><tbody>
+          <tr><td>{`Approved ${u} in this line's scope`}</td><td className="text-right font-semibold tabular-nums">{bridge.start}</td></tr>
           {bridge.items.map((item) => <tr key={item.kind}>
             <td>{item.label} <span className="text-[#5f6c7b]">({item.count})</span>
               {item.tickets.length > 0 && <span className="block font-mono text-[11px] text-[#657182]">{item.tickets.join(", ")}{item.count > item.tickets.length && " …"}</span>}
@@ -111,23 +113,23 @@ function WhyThisResult({ diagnosis, status }: { diagnosis: InvoiceDiagnosis; sta
             <td className="whitespace-nowrap text-right font-semibold tabular-nums text-[#a14c1c]">{signed(item.tons)}</td>
           </tr>)}
           {bridge.complete && Number(bridge.unexplained) !== 0 && <tr>
-            <td>Not explained by the ticket list <span className="block text-[11px] text-[#657182]">The line&apos;s billed tons differ from the sum of its own tickets.</span></td>
+            <td>Not explained by the ticket list <span className="block text-[11px] text-[#657182]">{`The line's billed ${u} differ from the sum of its own tickets.`}</span></td>
             <td className="whitespace-nowrap text-right font-semibold tabular-nums text-[#a73631]">{signed(bridge.unexplained as string)}</td>
           </tr>}
-          <tr className="border-t-2 border-[#cfd6de]"><td className="font-bold">Billed tons</td><td className="text-right font-bold tabular-nums">{bridge.billed}</td></tr>
+          <tr className="border-t-2 border-[#cfd6de]"><td className="font-bold">{`Billed ${u}`}</td><td className="text-right font-bold tabular-nums">{bridge.billed}</td></tr>
         </tbody></table>
-        {!bridge.complete && <p className="mt-1.5 text-[11px] text-[#995a18]">{bridge.rows_without_tons} ticket(s) have no billed tons on this invoice, so the tons can&apos;t be broken down exactly.</p>}
+        {!bridge.complete && <p className="mt-1.5 text-[11px] text-[#995a18]">{bridge.rows_without_tons} ticket(s) have no billed {u} on this invoice, so the {u} can&apos;t be broken down exactly.</p>}
       </div>}
       <div>
         <p className="mb-1.5 text-[12px] font-bold text-[#344352]">From approved cost to billed subtotal</p>
         {cost ? <table className="tf-table" aria-label="From approved cost to billed subtotal"><tbody>
           <tr><td>Approved cost at locked rates</td><td className="text-right font-semibold tabular-nums">{money(cost.start)}</td></tr>
-          {Number(cost.quantity_effect) !== 0 && <tr><td>Billed tons differ from approved tons</td><td className="text-right font-semibold tabular-nums text-[#a14c1c]">{signedMoney(cost.quantity_effect)}</td></tr>}
+          {Number(cost.quantity_effect) !== 0 && <tr><td>{`Billed ${u} differ from approved ${u}`}</td><td className="text-right font-semibold tabular-nums text-[#a14c1c]">{signedMoney(cost.quantity_effect)}</td></tr>}
           {cost.rate_groups.map((group) => <tr key={group.locked_rate}>
             <td>Invoice rate differs from locked {money(group.locked_rate)} <span className="block text-[11px] text-[#657182]">{group.tickets} ticket(s), {tons(group.tons)} tons</span></td>
             <td className="text-right font-semibold tabular-nums text-[#a14c1c]">{signedMoney(group.effect)}</td>
           </tr>)}
-          {Number(cost.arithmetic_effect) !== 0 && <tr><td>Invoice&apos;s own math <span className="block text-[11px] text-[#657182]">Subtotal differs from tons × rate on the invoice.</span></td><td className="text-right font-semibold tabular-nums text-[#a73631]">{signedMoney(cost.arithmetic_effect)}</td></tr>}
+          {Number(cost.arithmetic_effect) !== 0 && <tr><td>Invoice&apos;s own math <span className="block text-[11px] text-[#657182]">Subtotal differs from {u} × rate on the invoice.</span></td><td className="text-right font-semibold tabular-nums text-[#a73631]">{signedMoney(cost.arithmetic_effect)}</td></tr>}
           {Number(cost.rounding) !== 0 && <tr><td>Rounding <span className="block text-[11px] text-[#657182]">Each ticket&apos;s cost is rounded to the cent.</span></td><td className="text-right font-semibold tabular-nums">{signedMoney(cost.rounding)}</td></tr>}
           <tr className="border-t-2 border-[#cfd6de]"><td className="font-bold">Billed material subtotal</td><td className="text-right font-bold tabular-nums">{money(cost.billed)}</td></tr>
         </tbody></table> : <p className="text-[12px] text-[#995a18]">Unresolved. {diagnosis.money_unresolved_reason}</p>}
@@ -256,6 +258,7 @@ export default function InvoiceComparisonPage() {
       date_from: row.date_from,
       date_to: row.date_to,
       billed_tons: row.billed_tons,
+      unit: row.unit ?? "ton",
       billed_unit_price: row.billed_unit_price,
       billed_subtotal: row.billed_subtotal,
       ticket_list: ticketListText(row),
@@ -318,6 +321,7 @@ export default function InvoiceComparisonPage() {
   }
 
   const chosen = selected === null ? null : detailById[selected] ?? lines.find((line) => line.id === selected) ?? null;
+  const lineUnit = UNIT_LABEL[chosen?.unit ?? "ton"]?.long ?? "tons";
   const search = lineSearch.trim().toLowerCase();
   const shownLines = lines.filter((line) => {
     if (resultFilter === "open" && line.status === "matches") return false;
@@ -327,6 +331,7 @@ export default function InvoiceComparisonPage() {
     return !search || [line.invoice_number, line.supplier_name, line.material_name].some((value) => value.toLowerCase().includes(search));
   });
   const formOpen = showForm || editing !== null || (!loading && lines.length === 0);
+  const formUnit = UNIT_LABEL[form.unit ?? "ton"]?.long ?? "tons"; // the unit the line being entered bills in
   const pastedRows = form.ticket_list.split(/\r?\n/).filter((line) => line.trim()).length;
   const required = form.project_id !== "" && form.invoice_number.trim() &&
     form.supplier_name.trim() && form.material_name.trim() && form.date_from &&
@@ -445,12 +450,17 @@ export default function InvoiceComparisonPage() {
           <input className="tf-field w-full" type="date" required min={form.date_from || undefined}
             value={form.date_to} onChange={(e) => field("date_to", e.target.value)}/>
         </label>
-        <label className="tf-field-label">Billed quantity (tons)
+        <label className="tf-field-label">Billed in
+          <select className="tf-field w-full" value={form.unit ?? "ton"} onChange={(e) => field("unit", e.target.value)}>
+            {Object.entries(UNIT_LABEL).map(([key, label]) => <option key={key} value={key}>{label.long[0].toUpperCase() + label.long.slice(1)}</option>)}
+          </select>
+        </label>
+        <label className="tf-field-label">{`Billed quantity (${UNIT_LABEL[form.unit ?? "ton"]?.long ?? "tons"})`}
           <input className="tf-field w-full" inputMode="decimal" required
             value={form.billed_tons} placeholder="46.600"
             onChange={(e) => field("billed_tons", e.target.value)}/>
         </label>
-        <label className="tf-field-label">Billed rate ($ per ton)
+        <label className="tf-field-label">{`Billed rate ($ per ${UNIT_LABEL[form.unit ?? "ton"]?.per ?? "ton"})`}
           <input className="tf-field w-full" inputMode="decimal" required
             value={form.billed_unit_price} placeholder="30.00"
             onChange={(e) => field("billed_unit_price", e.target.value)}/>
@@ -469,7 +479,7 @@ export default function InvoiceComparisonPage() {
             value={form.ticket_list} placeholder={"10482\t24.50\n10483\t22.10"}
             onChange={(e) => field("ticket_list", e.target.value)}/>
           <p id="invoice-ticket-list-help" className="mt-1 text-[11px] text-[#5f6c7b]">
-            Paste two columns from Excel: ticket number, then billed tons (tons optional). One ticket per row;
+            {`Paste two columns from Excel: ticket number, then billed ${formUnit} (${formUnit} optional). One ticket per row;`}
             a header row is fine. Leading zeros count. Leave blank if the invoice shows totals only.
             {pastedRows > 0 && <strong> {pastedRows} row{pastedRows === 1 ? "" : "s"} entered.</strong>}
           </p>
@@ -523,7 +533,7 @@ export default function InvoiceComparisonPage() {
       <div className="tf-table-wrap">
         <table className="tf-table">
           <thead><tr>
-            {["Invoice", "Result", "Supplier / material", "Dates", "Billed tons", "Verified tons", "Tons diff.", "Amount diff.", ""].map((h, i) => <th key={h} className={i >= 4 && i <= 7 ? "text-right" : ""}>{h}</th>)}
+            {["Invoice", "Result", "Supplier / material", "Dates", "Billed", "Verified", "Quantity diff.", "Amount diff.", ""].map((h, i) => <th key={h} className={i >= 4 && i <= 7 ? "text-right" : ""}>{h}</th>)}
           </tr></thead>
           <tbody>{shownLines.map((row) => <tr key={row.id} aria-selected={selected === row.id} className={selected === row.id ? "bg-[#fff8f2]" : ""}>
             <td className="max-w-[150px] [overflow-wrap:anywhere]"><span className="font-semibold">{row.invoice_number}</span><span className="block text-[11px] text-[#5f6c7b]">{projects.find((p) => p.id === row.project_id)?.code ?? row.project_id}</span></td>
@@ -535,8 +545,8 @@ export default function InvoiceComparisonPage() {
             </td>
             <td><span className="font-semibold">{row.supplier_name}</span><span className="block text-[11px] text-[#5f6c7b]">{row.material_name}</span></td>
             <td className="whitespace-nowrap text-[11px]">{row.date_from}<span className="block">{row.date_to}</span></td>
-            <td className="text-right tabular-nums">{tons(row.billed_tons)}</td>
-            <td className="text-right tabular-nums">{tons(row.verified_tons)}</td>
+            <td className="text-right tabular-nums">{tons(row.billed_tons)} {UNIT_LABEL[row.unit ?? "ton"]?.short}</td>
+            <td className="text-right tabular-nums">{tons(row.verified_tons)} {UNIT_LABEL[row.unit ?? "ton"]?.short}</td>
             <td className="text-right tabular-nums">{signed(row.quantity_difference)}</td>
             <td className="text-right tabular-nums">{row.subtotal_difference === null ? "Unresolved" : money(row.subtotal_difference)}</td>
             <td className="whitespace-nowrap text-right">
@@ -576,13 +586,13 @@ export default function InvoiceComparisonPage() {
           </button>
         </div>
       </div>
-      {chosen.diagnosis && <WhyThisResult diagnosis={chosen.diagnosis} status={chosen.status} />}
+      {chosen.diagnosis && <WhyThisResult diagnosis={chosen.diagnosis} status={chosen.status} unit={chosen.unit} />}
       <details className="border-b border-[#e2e7ec]">
       <summary className="cursor-pointer select-none px-5 py-2 text-[12px] font-semibold text-[#46566a]">All figures on this line</summary>
       <div className="grid gap-5 p-5 md:grid-cols-2">
         <div className="space-y-2 text-[13px]">
           <p className="font-bold text-[#344352]">Supplier invoice line</p>
-          <p>Billed quantity: <strong>{tons(chosen.billed_tons)} tons</strong></p>
+          <p>Billed quantity: <strong>{tons(chosen.billed_tons)} {UNIT_LABEL[chosen.unit ?? "ton"]?.long ?? "tons"}</strong></p>
           <p>Invoice unit rate: <strong>{money(chosen.billed_unit_price)}</strong></p>
           <p>Quantity × rate: <strong>{money(chosen.billed_extension)}</strong></p>
           <p>Entered material subtotal: <strong>{money(chosen.billed_subtotal)}</strong></p>
@@ -590,9 +600,9 @@ export default function InvoiceComparisonPage() {
         </div>
         <div className="space-y-2 text-[13px]">
           <p className="font-bold text-[#344352]">Quarvera verified deliveries</p>
-          <p>Verified quantity: <strong>{tons(chosen.verified_tons)} tons</strong></p>
+          <p>Verified quantity: <strong>{tons(chosen.verified_tons)} {UNIT_LABEL[chosen.unit ?? "ton"]?.long ?? "tons"}</strong></p>
           <p>Verified material subtotal: <strong>{money(chosen.verified_subtotal)}</strong></p>
-          <p>Billed minus verified tons: <strong>{signed(chosen.quantity_difference)}</strong></p>
+          <p>Billed minus verified {lineUnit}: <strong>{signed(chosen.quantity_difference)}</strong></p>
           <p>Billed minus verified material cost: <strong>{money(chosen.subtotal_difference)}</strong></p>
           <p>{chosen.verified_count} verified · {chosen.pending_count} pending · {chosen.unclassified_count} not yet classified · {chosen.unpriced_count} unpriced</p>
         </div>
@@ -620,7 +630,7 @@ export default function InvoiceComparisonPage() {
         {chosen.evidence && <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded border border-[#e2e7ec] bg-[#f6f8fa] px-3 py-2 text-[12px] text-[#344352]">
           <p data-testid="evidence-summary">
             <strong>{chosen.evidence.confirmed} of {chosen.evidence.listed_tickets} invoice tickets confirmed by a person</strong>
-            {" "}({tons(chosen.evidence.confirmed_tons)} tons).
+            {" "}({tons(chosen.evidence.confirmed_tons)} {lineUnit}).
             {chosen.evidence.candidates > 0 && <> {chosen.evidence.candidates} clean match{chosen.evidence.candidates === 1 ? "" : "es"} not yet confirmed.</>}
             {chosen.evidence.invalidated > 0 && <> {chosen.evidence.invalidated} no longer hold.</>}
             {chosen.evidence.conflicting > 0 && <> {chosen.evidence.conflicting} in conflict.</>}
@@ -632,7 +642,7 @@ export default function InvoiceComparisonPage() {
           </button>}
         </div>}
         <div className="tf-table-wrap"><table className="tf-table" aria-label="Ticket-by-ticket check">
-          <thead><tr><th>Line</th><th>Invoice ticket</th><th className="text-right">Billed tons</th><th>Result</th><th>Quarvera record</th><th className="text-right">Verified tons</th><th className="text-right">Difference</th><th>Evidence</th></tr></thead>
+          <thead><tr><th>Line</th><th>Invoice ticket</th><th className="text-right">Billed {lineUnit}</th><th>Result</th><th>Quarvera record</th><th className="text-right">Verified {lineUnit}</th><th className="text-right">Difference</th><th>Evidence</th></tr></thead>
           <tbody>{chosen.ticket_check.map((row, index) => <tr key={index}>
             <td className="tabular-nums">{row.line ?? "—"}</td>
             <td className="font-mono">{row.invoice_ticket_number ?? <span className="font-sans text-[#5f6c7b]">Not listed</span>}</td>
@@ -668,7 +678,7 @@ export default function InvoiceComparisonPage() {
           ? "Unreviewed tickets that might belong to this invoice line"
           : "Tickets in this supplier, material and date range"}</p>
         {shown.length ? <div className="tf-table-wrap"><table className="tf-table">
-          <thead><tr><th>Ticket</th><th>Review status</th><th>Scope</th><th>Tons</th><th>Locked rate</th><th>Record</th></tr></thead>
+          <thead><tr><th>Ticket</th><th>Review status</th><th>Scope</th><th>Quantity ({lineUnit})</th><th>Locked rate</th><th>Record</th></tr></thead>
           <tbody>{shown.map((ticket) => <tr key={ticket.ticket_id}>
             <td>{ticket.ticket_number ?? "Unnumbered"}</td>
             <td>{ticket.review_status === "verified" ? "Verified" : "Needs review (" + ticket.review_status.replaceAll("_", " ") + ")"}</td>

@@ -16,6 +16,7 @@ from ..services.accounts import names_by_id
 from ..services import rate_sheet
 from ..services.locks import take_turn
 from ..services import pricing as pricing_svc
+from ..services import units
 from ..services.pricing import norm
 
 router = APIRouter(prefix="/api")
@@ -44,6 +45,8 @@ class RateIn(BaseModel):
     # Does the price include trucking? "included": no hauling charge is added for deliveries
     # it prices. "separate" or blank (not stated): a hauler's per-ton or per-load rate applies.
     freight: Literal["included", "separate"] | None = None
+    # What the price is per. It prices only deliveries measured in the same unit. Blank: per ton.
+    unit: Literal["ton", "cy", "load", "each", "gal"] | None = None
 
     @model_validator(mode="after")
     def _ends_after_it_starts(self):
@@ -69,6 +72,7 @@ class RateOut(BaseModel):
     effective_from: date | None = None
     effective_to: date | None = None
     freight: str | None = None
+    unit: str = "ton"
 
 
 def _dump(o, *fields):
@@ -365,9 +369,10 @@ def preview_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depen
     _project_or_404(db, organization_id, body.project_id)
     current = pricing_svc.rate_table(db, organization_id)
     key = (norm(supplier.name), norm(material.name))
-    proposed_rows = [r for r in current.rows.get(key, [])
-                     if not (r.project_id == body.project_id and r.effective_from == body.effective_from)]
-    proposed_rows.append(pricing_svc.RateRow(body.unit_price, body.project_id, body.effective_from, body.effective_to))
+    same = [r for r in current.rows.get(key, []) if r.project_id == body.project_id and r.effective_from == body.effective_from]
+    proposed_rows = [r for r in current.rows.get(key, []) if r not in same]
+    proposed_rows.append(pricing_svc.RateRow(body.unit_price, body.project_id, body.effective_from, body.effective_to,
+                                             unit=body.unit or (same[0].unit if same else units.DEFAULT)))
     projects_by_batch = current.projects_by_batch
     if body.project_id is not None and not projects_by_batch:
         projects_by_batch = dict(db.execute(select(Batch.id, Batch.project_id).where(Batch.organization_id == organization_id)).all())
@@ -430,8 +435,14 @@ def upsert_rate(body: RateIn, db: Session = Depends(get_db), user: User = Depend
                                 supplier_name=supplier.name, material_name=material.name, scope=scope,
                                 old_value=rate.freight or "not stated", new_value=body.freight or "not stated"))
             rate.freight = body.freight
+        if body.unit is not None and rate.unit != body.unit:
+            # Which deliveries it can price from now on; approved ones keep their locked price.
+            db.add(PricingEvent(organization_id=organization_id, actor_user_id=user.id, action="unit_changed",
+                                supplier_name=supplier.name, material_name=material.name, scope=scope,
+                                old_value=f"per {units.singular(rate.unit)}", new_value=f"per {units.singular(body.unit)}"))
+            rate.unit = body.unit
     else:
-        rate = SupplierRate(organization_id=organization_id, **body.model_dump())
+        rate = SupplierRate(organization_id=organization_id, **body.model_dump(exclude={"unit"}), unit=body.unit or units.DEFAULT)
         db.add(rate)
         _event(db, user, "rate_set", supplier=supplier.name, material=material.name, new=body.unit_price,
                scope=scope + (f", until {body.effective_to.isoformat()}" if body.effective_to else ""))

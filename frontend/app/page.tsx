@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Dashboard, ExceptionsSummary, Onboarding, ReviewQueue, getDashboard, getOnboarding, getReviewQueue, listExceptions } from "../lib/api";
+import { Dashboard, ExceptionsSummary, Onboarding, ReviewQueue, getDashboard, getOnboarding, getReviewQueue, listExceptions, quantityText } from "../lib/api";
 import { useAccount } from "./account-context";
 import { CostFigures, Range, RangeControls, ShareList, TrendChart, money, queryFor, rangeFor, tons, useCostReport } from "./analytics/report-parts";
 import { useProject } from "./project-context";
@@ -131,13 +131,13 @@ export default function DashboardPage() {
         <section className="tf-panel" aria-labelledby="material-title">
           <div className="tf-panel-heading"><h2 id="material-title" className="tf-panel-title">Materials</h2></div>
           <ShareList label="Material cost by material" total={report.costs.material}
-            rows={report.material.by_material.slice(0, 6).map((m) => ({ name: m.name, value: m.cost, note: `${tons(m.tons)} t`, warn: m.unpriced ? `${m.unpriced} without a rate` : undefined }))}
+            rows={report.material.by_material.slice(0, 6).map((m) => ({ name: m.name, value: m.cost, note: quantityText(m.tons, m.other_units), warn: m.unpriced ? `${m.unpriced} without a rate` : undefined }))}
             empty="No approved deliveries in these dates." />
         </section>
         <section className="tf-panel" aria-labelledby="supplier-title">
           <div className="tf-panel-heading"><h2 id="supplier-title" className="tf-panel-title">Suppliers</h2></div>
           <ShareList label="Material cost by supplier" total={report.costs.material}
-            rows={report.material.by_supplier.slice(0, 6).map((m) => ({ name: m.name, value: m.cost, note: `${tons(m.tons)} t`, warn: m.unpriced ? `${m.unpriced} without a rate` : undefined }))}
+            rows={report.material.by_supplier.slice(0, 6).map((m) => ({ name: m.name, value: m.cost, note: quantityText(m.tons, m.other_units), warn: m.unpriced ? `${m.unpriced} without a rate` : undefined }))}
             empty="No approved deliveries in these dates." />
         </section>
       </div>

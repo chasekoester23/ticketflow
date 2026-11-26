@@ -121,15 +121,15 @@ def test_totals_are_exact_and_a_missing_price_is_counted_not_zeroed(client, proj
 def test_rows_have_the_documented_shape_and_strings_for_decimals(client, project):
     row = next(row for row in _unbilled(client)["rows"] if row["ticket_id"] == project["gap_one_a"])
     assert row == {"ticket_id": project["gap_one_a"], "batch_id": 1, "ticket_number": "T1-3", "delivery_date": "2026-09-08",
-                   "supplier": "Example Aggregates", "material": "Sand", "tons": "1.111", "cost": "11.11"}
+                   "supplier": "Example Aggregates", "material": "Sand", "tons": "1.111", "unit": "ton", "cost": "11.11"}
 
 
 def test_gaps_are_runs_of_dates_no_line_covers(client, project):
     gaps = _unbilled(client)["gaps"]
     assert gaps == [
-        {"supplier": "Example Aggregates", "material": "Sand", "date_from": "2026-09-08", "date_to": "2026-09-09", "tickets": 2, "tons": "3.333"},
-        {"supplier": "Example Aggregates", "material": "Sand", "date_from": "2026-09-20", "date_to": "2026-09-27", "tickets": 2, "tons": "8.888"},
-        {"supplier": "Sample Stone Co", "material": "No. 57 Stone", "date_from": "2026-09-08", "date_to": "2026-09-08", "tickets": 1, "tons": "4.444"},
+        {"supplier": "Example Aggregates", "material": "Sand", "date_from": "2026-09-08", "date_to": "2026-09-09", "tickets": 2, "unit": "ton", "tons": "3.333"},
+        {"supplier": "Example Aggregates", "material": "Sand", "date_from": "2026-09-20", "date_to": "2026-09-27", "tickets": 2, "unit": "ton", "tons": "8.888"},
+        {"supplier": "Sample Stone Co", "material": "No. 57 Stone", "date_from": "2026-09-08", "date_to": "2026-09-08", "tickets": 1, "unit": "ton", "tons": "4.444"},
     ]
 
 

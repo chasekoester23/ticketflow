@@ -86,7 +86,14 @@ export type Ticket = {
   ticket_number: string | null;
   delivery_date: string | null;
   material_type: string | null;
-  tonnage: string | null; // decimal string from the API; never parsed to float for money math
+  tonnage: string | null; // decimal string from the API; never parsed to float for money math. The quantity, in `unit`.
+  /** ton | cy | load | each | gal. Pounds are converted to tons on save; the pounds stay in source_quantity. */
+  unit?: string;
+  source_quantity?: string | null;
+  source_unit?: string | null;
+  gross_weight?: string | null;
+  tare_weight?: string | null;
+  weight_unit?: string | null;
   supplier: string | null;
   job_location: string | null;
   hauler_id?: number | null;
@@ -134,7 +141,9 @@ export async function getTicketHistory(id: number): Promise<HistoryEntry[]> {
 export type Supplier = { id: number; name: string; contact: string | null };
 export type Material = { id: number; name: string; unit: string };
 // project_id null: company-wide. effective_from null: no start date (YYYY-MM-DD otherwise).
-export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string; project_id: number | null; effective_from: string | null; effective_to?: string | null; freight?: "included" | "separate" | null };
+export type Rate = { id: number; supplier_id: number; material_id: number; unit_price: string; project_id: number | null; effective_from: string | null; effective_to?: string | null; freight?: "included" | "separate" | null;
+  /** What the price is per: ton | cy | load | each | gal. It prices only deliveries in the same unit. */
+  unit?: string };
 // effective_to: the last day the price is valid (a quote's expiry). Left out or null: open-ended.
 export type RateScope = { project_id: number | null; effective_from: string | null; effective_to?: string | null };
 export type TimelineSegment = { rate_id: number; price: string; from: string | null; to: string | null; declared_to: string | null; state: "past" | "current" | "future" };
@@ -392,12 +401,13 @@ export async function createMaterial(name: string) {
   await check(await apiFetch(`${API}/api/materials`, json("POST", { name })));
 }
 export async function saveRate(supplier_id: number, material_id: number, unit_price: string, scope: RateScope = { project_id: null, effective_from: null },
-  freight?: "included" | "separate" | null) {
-  await check(await apiFetch(`${API}/api/rates`, json("PUT", { supplier_id, material_id, unit_price, ...scope, ...(freight !== undefined ? { freight } : {}) })));
+  freight?: "included" | "separate" | null, unit?: string) {
+  await check(await apiFetch(`${API}/api/rates`, json("PUT", { supplier_id, material_id, unit_price, ...scope, ...(freight !== undefined ? { freight } : {}),
+    ...(unit ? { unit } : {}) })));
 }
 export type PricingEventRow = {
   id: number;
-  action: "supplier_added" | "supplier_removed" | "material_added" | "material_removed" | "rate_set" | "rate_changed" | "rate_validity_changed" | "rate_removed" | "freight_changed";
+  action: "supplier_added" | "supplier_removed" | "material_added" | "material_removed" | "rate_set" | "rate_changed" | "rate_validity_changed" | "rate_removed" | "freight_changed" | "unit_changed";
   supplier: string | null; material: string | null;
   old: string | null; new: string | null; // decimal strings, never parsed for money math
   scope: string | null; // which rate: "Company-wide", or a project and start date
@@ -441,6 +451,8 @@ export type ProjectSummary = Project & {
   created_at: string; tickets: number; open_tickets: number; open_shifts: number; verified_tickets: number;
   verified_tons: string; material_cost: string; unpriced_tickets: number; trucking_cost: string; verified_cost: string;
   last_activity: string | null;
+  /** Approved quantities that aren't tons, each in its own unit. */
+  other_units?: OtherUnit[];
 };
 export type QueueKind = "tickets" | "failed_files" | "truck_shifts" | "invoice_lines";
 export type QueueItem = {
@@ -456,15 +468,16 @@ export async function getReviewQueue(projectId?: string, kind?: QueueKind): Prom
   const query = params.toString();
   return (await check(await apiFetch(`${API}/api/review-queue${query ? `?${query}` : ""}`))).json();
 }
-export type CostRow = { name: string; tickets: number; tons: string; cost: string; unpriced: number };
+export type CostRow = { name: string; tickets: number; tons: string; cost: string; unpriced: number; other_units?: OtherUnit[] };
 export type HaulerCost = { name: string; shifts: number; hours: string; cost: string; loads: number; per_hour: string | null; deliveries?: number };
-export type ProjectCost = { id: number; code: string; name: string; status: string; tickets: number; tons: string; material: string; unpriced: number; hours: string; trucking: string; total: string };
-export type UnitPrice = { supplier: string; material: string; tons: string; cost: string; average: string; low: string | null; high: string | null };
+export type ProjectCost = { id: number; code: string; name: string; status: string; tickets: number; tons: string; material: string; unpriced: number; hours: string; trucking: string; total: string; other_units?: OtherUnit[] };
+/** `tons` is the quantity in `unit`: a price per ton and per cubic yard are never averaged together. */
+export type UnitPrice = { supplier: string; material: string; unit?: string; tons: string; cost: string; average: string; low: string | null; high: string | null };
 export type PeriodRow = { period: string; tickets: number; tons: string; material: string; unpriced: number; hours: string; trucking: string; loads: number; total: string };
 /** Approved figures only. `unpriced` counts approved tickets with no rate: their cost is missing, not zero. */
 export type CostReport = {
   period: "day" | "week" | "month"; date_from: string | null; date_to: string | null;
-  material: { tickets: number; tons: string; cost: string; unpriced: number; waiting: number; undated: { tickets: number; tons: string; cost: string; unpriced: number };
+  material: { tickets: number; tons: string; cost: string; unpriced: number; waiting: number; other_units?: OtherUnit[]; undated: { tickets: number; tons: string; cost: string; unpriced: number };
     by_material: CostRow[]; by_supplier: CostRow[] };
   trucking: { shifts: number; hours: string; cost: string; loads: number; by_hauler: HaulerCost[]; billing_methods: { method: string; cost: string }[] };
   costs: { material: string; trucking: string; total: string; complete: boolean; unpriced: number };
@@ -501,7 +514,7 @@ export const recordsExportUrl = (f: Filters, format: "xlsx" | "csv" = "xlsx", co
 export type RecordsSort = "date" | "ticket_number" | "tons" | "supplier" | "material" | "status" | "job";
 export type RecordsPage = {
   rows: Ticket[]; total: number; page: number; page_size: number;
-  summary: { records: number; by_status: Record<string, number>; verified_tons: string; verified_cost: string; verified_unpriced: number };
+  summary: { records: number; by_status: Record<string, number>; verified_tons: string; verified_cost: string; verified_unpriced: number; other_units?: OtherUnit[] };
 };
 export async function searchRecords(f: Filters, options: { page: number; pageSize: number; sort: RecordsSort; direction: "asc" | "desc" }): Promise<RecordsPage> {
   const params = new URLSearchParams();
@@ -574,11 +587,12 @@ const missingEndpoint = (error: unknown) => error instanceof ApiError && error.s
 export type UnbilledRow = {
   ticket_id: number; batch_id: number; ticket_number: string | null; delivery_date: string | null;
   supplier: string | null; material: string | null; tons: string | null; cost: string | null;
+  unit?: string; // what `tons` is in
 };
-export type UnbilledGap = { supplier: string; material: string; date_from: string; date_to: string; tickets: number; tons: string };
+export type UnbilledGap = { supplier: string; material: string; date_from: string; date_to: string; tickets: number; tons: string; unit?: string };
 export type UnbilledReport = {
   project: { id: number; code: string; name: string };
-  total_tickets: number; total_tons: string; total_cost: string | null;
+  total_tickets: number; total_tons: string; total_cost: string | null; other_units?: OtherUnit[];
   rows: UnbilledRow[]; truncated: boolean; gaps: UnbilledGap[];
 };
 /** Null when this server doesn't offer the check yet. */
@@ -646,7 +660,9 @@ export type InvoiceLineInput = {
   material_name: string;
   date_from: string;
   date_to: string;
-  billed_tons: string;
+  billed_tons: string; // the quantity, in `unit`
+  /** ton | cy | load | each | gal: compared only with deliveries measured in the same unit. */
+  unit?: string;
   billed_unit_price: string;
   billed_subtotal: string;
   // Optional: the invoice's ticket numbers, one per row, each optionally
@@ -1032,15 +1048,20 @@ export const attachTimesheet = (id: number, file: File): Promise<TruckShift> => 
 export const timesheetUrl = (id: number) => `${API}/api/truck-shifts/${id}/timesheet`;
 
 export type HaulingInvoiceLine = {
-  line_no?: number; kind: "hours" | "standby" | "minimum" | "fee" | "credit"; truck_identifier: string | null; work_date: string | null;
+  line_no?: number; kind: "hours" | "standby" | "minimum" | "fee" | "credit" | "tons" | "loads"; truck_identifier: string | null; work_date: string | null;
   hours: string | null; rate: string | null; amount: string; description: string | null;
-  result?: "matched" | "differs" | "repeat" | "no_shift" | "not_approved" | "ambiguous" | "fee" | "credit" | null;
+  /** Tons or loads billed, and the ticket numbers the line lists (per ton or per load). */
+  quantity?: string | null; tickets?: string | null;
+  /** The shift a person chose when the line matched more than one. */
+  chosen_shift_id?: number | null;
+  result?: "matched" | "differs" | "repeat" | "no_shift" | "no_delivery" | "not_approved" | "ambiguous" | "fee" | "credit" | null;
   shift_id?: number | null; supported?: string | null; difference?: string | null;
+  ticket_ids?: number[]; candidates?: { id: number; truck: string; hours: string | null; project: string | null }[];
 };
 export type HaulingInvoice = {
   id: number; revision: string; hauler_id: number; hauler: string | null; project_id: number | null; project: string | null;
   invoice_number: string; invoice_date: string | null; period_from: string; period_to: string; document: { name: string } | null;
-  billed: string; supported: string | null; difference: string | null; exceptions: number; lines: HaulingInvoiceLine[];
+  billed: string; supported: string | null; difference: string | null; exceptions: number; unbilled_in_period?: number; lines: HaulingInvoiceLine[];
 };
 export type HaulingInvoiceInput = Pick<HaulingInvoice, "hauler_id" | "project_id" | "invoice_number" | "invoice_date" | "period_from" | "period_to"> & {
   lines: HaulingInvoiceLine[];
@@ -1054,3 +1075,25 @@ export async function saveHaulingInvoice(body: HaulingInvoiceInput, existing?: {
 }
 export const attachHaulingInvoice = (id: number, file: File): Promise<HaulingInvoice> => upload(`${API}/api/hauling-invoices/${id}/document`, file);
 export const haulingInvoiceUrl = (id: number) => `${API}/api/hauling-invoices/${id}/document`;
+
+/** The billing units a quantity can be in (backend/app/services/units.py). Never converted into each other. */
+export const UNIT_LABEL: Record<string, { short: string; long: string; per: string }> = {
+  ton: { short: "t", long: "tons", per: "ton" },
+  cy: { short: "CY", long: "cubic yards", per: "cubic yard" },
+  load: { short: "loads", long: "loads", per: "load" },
+  each: { short: "ea", long: "each", per: "each" },
+  gal: { short: "gal", long: "gallons", per: "gallon" },
+};
+export type OtherUnit = { unit: string; quantity: string; tickets: number };
+/** "12 CY · 3 loads": approved quantities that aren't tons, each in its own unit. */
+export function otherUnitsText(other: OtherUnit[] | undefined): string {
+  return (other ?? []).map((o) => `${Number(o.quantity).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${UNIT_LABEL[o.unit]?.short ?? o.unit}`).join(" · ");
+}
+/** "25 t · 12 CY": tons, then any other units, never added together. Tons are left out only when there are none and other units exist. */
+export function quantityText(tons: string | number, other?: OtherUnit[]): string {
+  const t = Number(tons);
+  const rest = otherUnitsText(other);
+  return [...(t || !rest ? [`${t.toLocaleString(undefined, { maximumFractionDigits: 3 })} t`] : []), ...(rest ? [rest] : [])].join(" · ");
+}
+/** " CY" after a quantity that isn't in tons; nothing for tons. */
+export const unitSuffix = (unit?: string | null) => (unit && unit !== "ton" ? ` ${UNIT_LABEL[unit]?.short ?? unit}` : "");

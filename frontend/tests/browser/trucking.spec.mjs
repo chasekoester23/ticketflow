@@ -129,3 +129,49 @@ test("a manager disputes a shift with a reason, and approval waits until it's se
   await expect.poll(() => posted.length).toBe(1);
   expect(posted[0]).toEqual({ dispute: { status: "disputed", reason: "Hauler bills 7 h; the sheet shows 6.5" }, ifMatch: "1" });
 });
+
+test("a per-ton hauling line is entered with its tons and ticket numbers", async ({ page }) => {
+  const posted = [];
+  await mock(page, "manager", { posted });
+  await page.goto("/trucking?tab=invoices");
+  const invoices = page.getByRole("region", { name: "Hauling invoices" });
+  await invoices.getByRole("button", { name: "+ Enter an invoice" }).click();
+  const form = page.getByRole("form", { name: "Enter hauling invoice" });
+  await form.getByLabel("Hauler").selectOption("2");
+  await form.getByLabel("Invoice number").fill("FH-1003");
+  await form.getByLabel("Period from").fill("2026-11-01");
+  await form.getByLabel("Period to").fill("2026-11-30");
+  await form.getByLabel("Charge").selectOption("tons");
+  await form.getByLabel("Tons billed").fill("45");
+  await form.getByLabel("Ticket numbers").fill("70001, 70002");
+  await form.getByLabel("Rate", { exact: true }).fill("4");
+  await form.getByLabel("Amount").fill("180.00");
+  await form.getByRole("button", { name: "Save and check" }).click();
+  await expect.poll(() => posted.length).toBe(1);
+  expect(posted[0].lines).toEqual([{ kind: "tons", truck_identifier: null, work_date: null, hours: null, rate: "4", amount: "180.00",
+    description: null, quantity: "45", tickets: "70001, 70002" }]);
+});
+
+test("a line that matches two shifts is settled by a person choosing one, saved as a correction with its revision", async ({ page }) => {
+  const saved = [];
+  await mock(page, "manager");
+  const uncertain = { ...INVOICE, difference: "0.00", exceptions: 1, lines: [{ line_no: 1, kind: "hours", truck_identifier: null, work_date: "2026-11-03",
+    hours: "9.00", rate: "110.0000", amount: "990.00", description: null, result: "ambiguous", shift_id: null, supported: null, difference: null,
+    candidates: [{ id: 5, truck: "T-12", hours: "9.00", project: "P1" }, { id: 6, truck: "T-14", hours: "9.00", project: "P1" }] }] };
+  await page.route("**/api/hauling-invoices**", async (route) => {
+    const request = route.request();
+    if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (request.method() === "PUT") { saved.push({ body: request.postDataJSON(), ifMatch: request.headers()["if-match"], path: new URL(request.url()).pathname });
+      return json(route, uncertain); }
+    return json(route, [uncertain]);
+  });
+  await page.goto("/trucking?tab=invoices");
+  const invoices = page.getByRole("region", { name: "Hauling invoices" });
+  await invoices.getByRole("button", { name: "FH-1001" }).click();
+  await expect(invoices.getByText("Choose the shift", { exact: true })).toBeVisible();
+  await invoices.getByRole("combobox", { name: "Choose the shift for line 1" }).selectOption("6");
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].path).toBe("/api/hauling-invoices/9");
+  expect(saved[0].ifMatch).toBe("1");
+  expect(saved[0].body.lines[0]).toMatchObject({ kind: "hours", work_date: "2026-11-03", hours: "9.00", shift_id: 6 });
+});

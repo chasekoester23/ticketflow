@@ -29,6 +29,23 @@ These are enforced in code and covered by tests in `backend/tests/test_trucking_
 - An expired rate doesn't fall back to a broader one, the same as hourly agreements.
 - If both a per-ton and a per-load rate apply to the same hauler and project, the ticket can't be priced. It's shown as ambiguous, so no one guesses.
 
+- Per-ton hauling prices only a delivery measured in tons. A delivery in cubic yards, loads, each or gallons is "rate missing", never converted. Per-load hauling charges a ticket measured in loads for each of its loads, and any other ticket as one load (see [billing-units.md](billing-units.md)).
+
+## Reconciling a hauler's invoice
+
+Hours, standby and minimum lines are matched with approved shifts: hauler, date, truck. Tons and loads lines are matched with approved deliveries that carry this hauler's per-ton or per-load charge:
+
+- **Which deliveries.** A line that lists ticket numbers uses exactly those tickets. A line without them uses that day's approved deliveries for the hauler, on the invoice's project, on the line's truck if it names one.
+- **What it should cost.** The sum of those deliveries' locked hauling charges. A difference is split exactly into a quantity effect (tons or loads at the billed rate), a rate effect (on the approved quantity) and the invoice's own arithmetic. The parts add up to the line's difference to the cent.
+- **What can't be paid, and why.** These are never supported:
+  - a delivery already billed on another line or invoice (*billed again*);
+  - a delivery for another project (*billed against another project*);
+  - a ticket number with no record;
+  - a delivery paid by an hourly shift or by a freight-included material price (*already paid*).
+  When nothing on a line can be paid, the line's whole amount sits on the exception that explains it: one problem, one exception, with its dollars.
+- **Partial billing.** Approved hauling in an invoice's period and project that the invoice doesn't bill is listed as *not billed yet*, one item per delivery. It is not an error on the invoice. Approved hauling that no invoice covers is grouped per hauler and project.
+- **Uncertain lines.** An hours line that fits two shifts (no truck named) shows "Choose the shift". A person picks one. The choice is saved as a correction of the invoice, with its revision and history, and the line is then checked against that shift.
+
 ## Assumptions to confirm with pilot contractors
 
 - **Tons for per-ton hauling** are the ticket's approved net tons (the same figure that prices the material). Some haulers bill on their own scale weights. If they differ, the hauling invoice comparison will show it.

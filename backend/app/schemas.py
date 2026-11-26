@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
@@ -50,7 +51,14 @@ class TicketOut(BaseModel):
     ticket_number: str | None
     delivery_date: date | None
     material_type: str | None
-    tonnage: Decimal | None
+    tonnage: Decimal | None  # the quantity, in `unit`
+    unit: str = "ton"
+    # As written, when it was converted (pounds to tons); and scale weights, when shown.
+    source_quantity: Decimal | None = None
+    source_unit: str | None = None
+    gross_weight: Decimal | None = None
+    tare_weight: Decimal | None = None
+    weight_unit: str | None = None
     supplier: str | None
     job_location: str | None
     flags: list[str]
@@ -146,6 +154,21 @@ class TicketPatch(BaseModel):
     unit_price_override: Decimal | None = Field(default=None, ge=0)
     hauler_id: int | None = Field(default=None, gt=0)  # who hauled it, when billed per ton or per load
     truck_number: str | None = Field(default=None, max_length=50)
+    # The unit `tonnage` is in. "lb" is converted to tons on save and the pounds are kept.
+    unit: Literal["ton", "cy", "load", "each", "gal", "lb"] | None = None
+    gross_weight: Decimal | None = Field(default=None, ge=0)
+    tare_weight: Decimal | None = Field(default=None, ge=0)
+    weight_unit: Literal["lb", "ton"] | None = None
+
+    @field_validator("gross_weight", "tare_weight")
+    @classmethod
+    def weight_fits(cls, value: Decimal | None) -> Decimal | None:
+        if value is None:
+            return None
+        rounded = value.quantize(Decimal("0.001"))
+        if not rounded.is_finite() or rounded >= Decimal(10) ** 9:
+            raise ValueError("Number exceeds supported storage precision")
+        return rounded
 
     @field_validator("tonnage", "unit_price_override")
     @classmethod

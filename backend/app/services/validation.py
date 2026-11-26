@@ -87,8 +87,19 @@ def compute_flags(
     raw_date: str | None = None,
     raw_tonnage=None,
     today: date | None = None,
+    unit: str | None = None,
+    gross_weight: Decimal | None = None,
+    tare_weight: Decimal | None = None,
+    weight_unit: str | None = None,
 ) -> list[str]:
-    """Return human-readable reasons this record needs a person's attention."""
+    """Return human-readable reasons this record needs a person's attention.
+
+    The quantity checks name tons for a ticket in tons (every ticket the reader
+    produces) and "quantity" for one a person entered in another unit. Only tons
+    have a plausible-size warning: a large count of each or gallons is normal.
+    """
+    from .units import net_check
+    in_tons = (unit or "ton") == "ton"
     today = today or date.today()
     flags: list[str] = []
     if not ticket_number:
@@ -103,12 +114,18 @@ def compute_flags(
         flags.append(f"Date is before {EARLIEST_PLAUSIBLE_DATE.year}: check it against the ticket")
     if not material_type:
         flags.append("Material missing")
+    word = "Tonnage" if in_tons else "Quantity"
     if tonnage is None:
-        flags.append("Tonnage unreadable" if raw_tonnage not in (None, "") else "Tonnage missing")
+        flags.append(f"{word} unreadable" if raw_tonnage not in (None, "") else f"{word} missing")
     elif tonnage <= 0:
-        flags.append("Tonnage must be positive")
-    elif tonnage > Decimal(str(settings.max_plausible_tons)):
+        flags.append(f"{word} must be positive")
+    elif in_tons and tonnage > Decimal(str(settings.max_plausible_tons)):
         flags.append(f"Tonnage unusually large (> {settings.max_plausible_tons:g})")
+    elif unit == "load" and tonnage != tonnage.to_integral_value():
+        flags.append("Loads must be a whole number")
+    weights = net_check(tonnage, unit, gross_weight, tare_weight, weight_unit)
+    if weights:
+        flags.append(weights)
     if not supplier:
         flags.append("Supplier missing")
     if not job_location:

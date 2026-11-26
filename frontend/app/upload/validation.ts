@@ -16,17 +16,22 @@ const OLDEST_PLAUSIBLE_YEARS = 2;
 
 const TONS_FORMAT = /^(\d+\.?\d{0,3}|\.\d{1,3})$/;
 
-/** Tons are compared as text, so a quantity never passes through a floating-point number. */
-export function tonsMessage(raw: string): FieldMessage | null {
+/** Tons are compared as text, so a quantity never passes through a floating-point number.
+ *  ``unit`` is what the figure is in: tons by default; pounds are converted on save. */
+export function tonsMessage(raw: string, unit = "ton"): FieldMessage | null {
   const value = raw.trim();
   if (!value) return null;
   if (!TONS_FORMAT.test(value)) {
-    return { tone: "problem", blocksSaving: true, text: "Enter tons as a number with up to 3 decimals, like 24.50. Don't convert pounds or yards here." };
+    return { tone: "problem", blocksSaving: true, text: unit === "ton"
+      ? "Enter tons as a number with up to 3 decimals, like 24.50. If the ticket is in pounds or yards, choose its unit below instead of converting."
+      : "Enter the quantity as a number with up to 3 decimals." };
   }
   const [whole, fraction = ""] = value.split(".");
   const digits = whole.replace(/^0+/, "");
   const hasFraction = /[1-9]/.test(fraction);
-  if (!digits && !hasFraction) return { tone: "problem", text: "Tons must be more than zero. If this ticket has no quantity, flag it instead." };
+  if (!digits && !hasFraction) return { tone: "problem", text: `${unit === "ton" ? "Tons" : "The quantity"} must be more than zero. If this ticket has no quantity, flag it instead.` };
+  if (unit === "load" && hasFraction) return { tone: "problem", text: "Loads must be a whole number." };
+  if (unit !== "ton") return null;  // a large count of yards, gallons or pounds is normal
   const limit = String(PLAUSIBLE_TONS);
   const over = digits.length > limit.length
     || (digits.length === limit.length && (digits > limit || (digits === limit && hasFraction)));

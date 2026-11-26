@@ -59,6 +59,8 @@ class RecordsSummary(BaseModel):
     verified_tons: Decimal
     verified_cost: Decimal
     verified_unpriced: int
+    # Approved quantities that aren't tons, each in its own unit: never added to the tons.
+    other_units: list[dict] = []
 
 
 class RecordsPage(BaseModel):
@@ -88,6 +90,8 @@ def search_records(
         aggregates.counted_tons().label("tons"), aggregates.counted_cost().label("cost"), aggregates.unpriced().label("unpriced")),
         **filters)).one()
     tons, cost = aggregates.as_decimal(totals.tons, 3), aggregates.as_decimal(totals.cost, 2)
+    other_units = aggregates.other_units(db.execute(filtered_query(select(*aggregates.OTHER_UNIT_COLUMNS), **filters)
+                                                    .where(aggregates.OTHER_UNITS).group_by(Ticket.unit)))
     unpriced = int(totals.unpriced)
 
     # Blank values go last whichever way it's sorted, on every database.
@@ -109,7 +113,7 @@ def search_records(
               for t in tickets],
         total=total, page=page, page_size=page_size,
         summary=RecordsSummary(records=total, by_status=by_status, verified_tons=tons, verified_cost=cost,
-                               verified_unpriced=unpriced),
+                               verified_unpriced=unpriced, other_units=other_units),
     )
 
 

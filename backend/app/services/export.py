@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Hauler, Batch, Project, Ticket, UploadedFile
+from . import units
 from .pricing import to_cents
 
 LEGACY_APPROVER = "Not recorded (approved before individual accounts)"
@@ -64,6 +65,29 @@ def _money(value: Decimal | None) -> float | None:
     return float(value) if value is not None else None
 
 
+def _in_tons(t) -> bool:
+    return (getattr(t, "unit", None) or "ton") == "ton"
+
+
+def tons_of(t) -> Decimal | None:
+    """Tons, for a delivery measured in tons. Blank for cubic yards, loads, each or gallons: never converted."""
+    return t.tonnage if _in_tons(t) else None
+
+
+def _as_written(t) -> str | None:
+    if getattr(t, "source_quantity", None) is None:
+        return None
+    return f"{t.source_quantity:,f} {t.source_unit}".replace(".000 ", " ")
+
+
+def _scale(t) -> str | None:
+    gross, tare = getattr(t, "gross_weight", None), getattr(t, "tare_weight", None)
+    if gross is None and tare is None:
+        return None
+    unit = t.weight_unit or "ton"
+    return f"Gross {gross if gross is not None else '—'} {unit}, tare {tare if tare is not None else '—'} {unit}"
+
+
 PRICE_BASIS = {"project_rate": "Project agreement", "rate": "Company rate", "override": "Manual override"}
 HAUL_BASIS = {"per_ton": "Per ton", "per_load": "Per load", "freight_included": "Freight in material price",
               "hourly": "Hourly shift", "unpriced": "Rate missing", "ambiguous": "Two rates apply"}
@@ -83,7 +107,7 @@ COLUMNS: dict[str, Column] = {
     "ticket_number": Column("Ticket Number", 16, lambda t, *_: _safe_excel_text(t.ticket_number)),
     "delivery_date": Column("Delivery Date", 14, lambda t, *_: t.delivery_date, "yyyy-mm-dd"),
     "material": Column("Material Type", 28, lambda t, *_: _safe_excel_text(t.material_type)),
-    "tons": Column("Tonnage", 12, lambda t, *_: _money(t.tonnage), "#,##0.000"),
+    "tons": Column("Tonnage", 12, lambda t, *_: _money(tons_of(t)), "#,##0.000"),
     "supplier": Column("Supplier", 24, lambda t, *_: _safe_excel_text(t.supplier)),
     "job_location": Column("Job Location", 24, lambda t, *_: _safe_excel_text(t.job_location)),
     "unit_price": Column("Unit Price", 12, lambda t, price, *_: _money(price), '"$"#,##0.00##'),
@@ -102,6 +126,11 @@ COLUMNS: dict[str, Column] = {
     "truck": Column("Truck", 10, lambda t, *_: _safe_excel_text(t.truck_number)),
     "haul_basis": Column("Hauling Billed", 22, lambda t, *_: HAUL_BASIS.get(t.haul_billing) if t.status == "verified" else None),
     "haul_cost": Column("Hauling Cost", 14, lambda t, *_: _money(t.haul_cost) if t.status == "verified" else None, '"$"#,##0.00'),
+    # The quantity in whatever unit the delivery was measured in, and that unit.
+    "quantity": Column("Quantity", 12, lambda t, *_: _money(t.tonnage), "#,##0.000"),
+    "unit": Column("Unit", 12, lambda t, *_: units.long(t.unit)),
+    "as_written": Column("Quantity As Written", 18, lambda t, *_: _safe_excel_text(_as_written(t))),
+    "scale_weights": Column("Scale Weights", 30, lambda t, *_: _scale(t)),
 }
 DEFAULT_COLUMNS = ("ticket_number", "delivery_date", "material", "tons", "supplier", "job_location", "unit_price",
                    "cost", "status", "source", "approved_by", "approved_at")
@@ -111,6 +140,7 @@ _ROW_COLUMNS = (
     Ticket.tonnage, Ticket.supplier, Ticket.job_location, Ticket.status, Ticket.tonnage_confirmed, Ticket.unit_price_override,
     Ticket.price_snapshot_state, Ticket.applied_unit_price, Ticket.applied_price_source, Ticket.verified_by_user_id, Ticket.verified_at,
     Ticket.truck_number, Ticket.haul_billing, Ticket.haul_cost,
+    Ticket.unit, Ticket.source_quantity, Ticket.source_unit, Ticket.gross_weight, Ticket.tare_weight, Ticket.weight_unit,
 )
 
 
@@ -186,7 +216,8 @@ def build_workbook(tickets: Iterable, approvers: dict[int, str] | None = None, c
 def csv_lines(tickets: Iterable, keys: list[str], approvers: dict[int, str], price_of: Callable[[Any], Decimal | None],
               labels: dict[str, str] | None = None) -> Iterator[list]:
     """Rows for a CSV: exact decimal text, never floats, and formula-safe text."""
-    exact = {"tons": lambda t, _p, _c: t.tonnage, "unit_price": lambda t, p, _c: p, "cost": lambda t, _p, c: c}
+    exact = {"tons": lambda t, _p, _c: tons_of(t), "quantity": lambda t, _p, _c: t.tonnage,
+             "unit_price": lambda t, p, _c: p, "cost": lambda t, _p, c: c}
     yield headers(keys, labels)
     for t in tickets:
         if t.status == "skipped":
@@ -206,6 +237,7 @@ class _Summary:
     def __init__(self) -> None:
         self.total = self.needs_review = self.unpriced = 0
         self.tons = self.pending = self.cost = Decimal(0)
+        self.other: dict[str, Decimal] = defaultdict(Decimal)  # approved quantities in other units, per unit
         self.groups: dict[str, dict] = {"Totals by supplier": defaultdict(lambda: [0, Decimal(0), Decimal(0)]),
                                         "Totals by material type": defaultdict(lambda: [0, Decimal(0), Decimal(0)]),
                                         "Totals by job location": defaultdict(lambda: [0, Decimal(0), Decimal(0)])}
@@ -213,11 +245,15 @@ class _Summary:
     def add(self, t, cost: Decimal | None) -> None:
         self.total += 1
         counted = t.status == "verified" and t.tonnage_confirmed
-        if t.status == "verified" and t.tonnage_confirmed and t.tonnage is not None:
-            self.tons += t.tonnage
+        in_tons = _in_tons(t)
+        if counted and t.tonnage is not None:
+            if in_tons:
+                self.tons += t.tonnage
+            else:
+                self.other[t.unit] += t.tonnage
         if t.status != "verified":
             self.needs_review += 1
-            if t.tonnage is not None:
+            if t.tonnage is not None and in_tons:
                 self.pending += t.tonnage
         if cost is None:
             self.unpriced += 1
@@ -226,7 +262,7 @@ class _Summary:
         for title, name in (("Totals by supplier", t.supplier), ("Totals by material type", t.material_type), ("Totals by job location", t.job_location)):
             group = self.groups[title][name or "(unknown)"]
             group[0] += 1
-            if counted:
+            if counted and in_tons:
                 group[1] += t.tonnage or Decimal(0)
             group[2] += cost or Decimal(0)
 
@@ -255,6 +291,9 @@ class _Summary:
             ("Records requiring review", self.needs_review, "0"),
             ("Records without a calculated cost", self.unpriced, "0"),
             ("Unverified tons (excluded from actuals)", float(self.pending), "#,##0.000"),
+            # Never added to the tons above: a cubic yard or a load isn't a weight.
+            *((f"Verified {units.long(unit)} (not included in tons)", float(quantity), "#,##0.000")
+              for unit, quantity in sorted(self.other.items())),
         ]:
             ws.append([cell(label, bold=True), cell(value, number_format=fmt)])
         ws.append([])

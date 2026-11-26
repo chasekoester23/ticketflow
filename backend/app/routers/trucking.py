@@ -641,10 +641,15 @@ def timesheet_file(shift_id: int, db: Session = Depends(get_db), organization_id
 
 class InvoiceLineIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: str = Field(pattern="^(hours|standby|minimum|fee|credit)$")
+    kind: str = Field(pattern="^(hours|standby|minimum|fee|credit|tons|loads)$")
     truck_identifier: str | None = Field(default=None, max_length=50)
     work_date: date | None = None
     hours: Decimal | None = Field(default=None, ge=0, le=24, max_digits=6, decimal_places=2)
+    # Per ton or per load: tons or loads billed, and the ticket numbers when the invoice lists them.
+    quantity: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=3)
+    tickets: str | None = Field(default=None, max_length=20_000)
+    # A person's choice when the line matched more than one of the hauler's shifts that day.
+    shift_id: int | None = Field(default=None, gt=0)
     rate: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=4)
     amount: Decimal = Field(max_digits=14, decimal_places=2)
     description: str | None = Field(default=None, max_length=300)
@@ -653,6 +658,17 @@ class InvoiceLineIn(BaseModel):
     def _complete(self):
         if self.kind in ("hours", "standby", "minimum") and self.work_date is None:
             raise ValueError("A time line needs the date worked.")
+        if self.kind in ("tons", "loads"):
+            if self.quantity is None:
+                raise ValueError(f"A {self.kind} line needs the {self.kind} billed.")
+            if self.hours is not None or self.shift_id is not None:
+                raise ValueError(f"A {self.kind} line bills deliveries, not truck hours.")
+            if not (self.tickets or "").strip() and self.work_date is None:
+                raise ValueError(f"A {self.kind} line needs its ticket numbers or the delivery date.")
+            if self.kind == "loads" and self.quantity != self.quantity.to_integral_value():
+                raise ValueError("Loads are whole numbers.")
+        elif self.quantity is not None or (self.tickets or "").strip():
+            raise ValueError("Quantity and ticket numbers are for lines billed per ton or per load.")
         if self.kind == "credit" and self.amount >= 0:
             raise ValueError("A credit is entered as a negative amount.")
         return self
@@ -683,18 +699,31 @@ def _invoice_or_404(db: Session, organization_id: int, invoice_id: int) -> Hauli
 
 
 def _invoices_out(db: Session, organization_id: int, only: int | None = None) -> list[dict]:
-    lines, shifts = hauling.load(db, organization_id)
-    results, findings = hauling.reconcile(lines, shifts)
+    results, findings = hauling.reconcile(*hauling.load_all(db, organization_id))
     by_line = {(r.invoice_id, r.line_no): r for r in results}
     open_by_invoice: dict[int, int] = {}
+    unbilled_by_invoice: dict[int, int] = {}
     for f in findings:
-        if f.invoice_id is not None:
+        if f.invoice_id is None:
+            continue
+        # Approved activity the invoice doesn't bill is partial billing (owed later), not a
+        # problem with what it does bill: counted apart, so a correct invoice reads as correct.
+        if f.category == "not_invoiced":
+            unbilled_by_invoice[f.invoice_id] = unbilled_by_invoice.get(f.invoice_id, 0) + 1
+        else:
             open_by_invoice[f.invoice_id] = open_by_invoice.get(f.invoice_id, 0) + 1
     haulers = dict(db.execute(select(Hauler.id, Hauler.name).where(Hauler.organization_id == organization_id)).all())
     codes = dict(db.execute(select(Project.id, Project.code).where(Project.organization_id == organization_id)).all())
     query = select(HaulingInvoice).where(HaulingInvoice.organization_id == organization_id)
     if only is not None:
         query = query.where(HaulingInvoice.id == only)
+    # Shifts a person can choose between, described by truck and hours so the choice is clear.
+    wanted = {sid for r in results for sid in r.candidates}
+    described = {sid: {"id": sid, "truck": truck, "hours": _money(hours), "project": codes.get(pid)}
+                 for sid, truck, hours, pid in db.execute(
+                     select(TruckShift.id, Truck.identifier, TruckShift.approved_billable_hours, TruckShift.project_id)
+                     .join(Truck, Truck.id == TruckShift.truck_id)
+                     .where(TruckShift.organization_id == organization_id, TruckShift.id.in_(wanted)))} if wanted else {}
     out = []
     for invoice in db.scalars(query.order_by(HaulingInvoice.period_to.desc(), HaulingInvoice.id.desc())):
         rows = db.scalars(select(HaulingInvoiceLine).where(HaulingInvoiceLine.invoice_id == invoice.id).order_by(HaulingInvoiceLine.line_no)).all()
@@ -710,9 +739,12 @@ def _invoices_out(db: Session, organization_id: int, only: int | None = None) ->
             "document": {"name": invoice.document_name} if invoice.document_path else None,
             "billed": _money(billed), "supported": _money(expected) if known else None,
             "difference": _money(billed - expected) if known else None, "exceptions": open_by_invoice.get(invoice.id, 0),
+            "unbilled_in_period": unbilled_by_invoice.get(invoice.id, 0),
             "lines": [{"line_no": row.line_no, "kind": row.kind, "truck_identifier": row.truck_identifier,
                        "work_date": row.work_date.isoformat() if row.work_date else None, "hours": _money(row.hours),
                        "rate": _money(row.rate, "0.0001"), "amount": _money(row.amount), "description": row.description,
+                       "quantity": _money(row.quantity, "0.001"), "tickets": row.tickets, "chosen_shift_id": row.shift_id,
+                       "ticket_ids": c.ticket_ids if c else [], "candidates": [described[i] for i in c.candidates if i in described] if c else [],
                        "result": c.result if c else None, "shift_id": c.shift_id if c else None,
                        "supported": _money(c.expected) if c else None, "difference": _money(c.difference) if c else None}
                       for row, c in zip(rows, checked)],

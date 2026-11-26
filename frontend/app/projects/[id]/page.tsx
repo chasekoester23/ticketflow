@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { projectReportUrl } from "../../../lib/api";
+import { projectReportUrl, quantityText, UNIT_LABEL } from "../../../lib/api";
 import { useAccount } from "../../account-context";
 import { CostFigures, PeriodTable, Range, RangeControls, ShareList, TrendChart, hours, money, queryFor, rangeFor, tons, useCostReport } from "../../analytics/report-parts";
 import ProjectBar from "../../ProjectBar";
@@ -68,10 +68,10 @@ export default function ProjectReportPage() {
           <div className="tf-panel-heading"><h2 id="materials-title" className="tf-panel-title">Materials</h2>
             <Link prefetch={false} className="tf-link" href={recordsFor({ project_id: id, ...dates })}>Approved deliveries →</Link></div>
           {report.unit_prices.length || report.material.by_material.length ? <div className="tf-table-wrap"><table className="tf-table" aria-label="Materials by supplier">
-            <thead><tr><th>Material</th><th>Supplier</th><th className="text-right">Tons</th><th className="text-right">Avg $/t</th><th className="text-right">Cost</th></tr></thead>
-            <tbody>{report.unit_prices.map((u) => <tr key={u.supplier + u.material}>
+            <thead><tr><th>Material</th><th>Supplier</th><th className="text-right">Quantity</th><th className="text-right">Average price</th><th className="text-right">Cost</th></tr></thead>
+            <tbody>{report.unit_prices.map((u) => <tr key={u.supplier + u.material + (u.unit ?? "")}>
               <td><Link prefetch={false} href={recordsFor({ project_id: id, material: u.material, supplier: u.supplier, ...dates })}>{u.material}</Link></td>
-              <td>{u.supplier}</td><td className="text-right">{tons(u.tons)}</td><td className="text-right">{money(u.average)}</td><td className="text-right">{money(u.cost)}</td></tr>)}
+              <td>{u.supplier}</td><td className="text-right">{tons(u.tons)} {UNIT_LABEL[u.unit ?? "ton"]?.short}</td><td className="text-right">{money(u.average)}/{UNIT_LABEL[u.unit ?? "ton"]?.short}</td><td className="text-right">{money(u.cost)}</td></tr>)}
               {report.material.by_material.filter((m) => m.unpriced > 0).map((m) => <tr key={"u" + m.name}>
                 <td>{m.name}</td><td className="text-[#995a18]" colSpan={4}>{m.unpriced} approved without a rate: cost not known yet</td></tr>)}</tbody>
           </table></div> : <p className="tf-empty">No approved deliveries in these dates.</p>}
@@ -80,7 +80,7 @@ export default function ProjectReportPage() {
         <section className="tf-panel" aria-labelledby="suppliers-title">
           <div className="tf-panel-heading"><h2 id="suppliers-title" className="tf-panel-title">Suppliers</h2></div>
           <ShareList label="Material cost by supplier" total={report.costs.material}
-            rows={report.material.by_supplier.map((s) => ({ name: s.name, value: s.cost, note: `${tons(s.tons)} t`, warn: s.unpriced ? `${s.unpriced} without a rate` : undefined }))}
+            rows={report.material.by_supplier.map((s) => ({ name: s.name, value: s.cost, note: quantityText(s.tons, s.other_units), warn: s.unpriced ? `${s.unpriced} without a rate` : undefined }))}
             href={(name) => recordsFor({ project_id: id, supplier: name, ...dates })} empty="No approved deliveries in these dates." />
         </section>
       </div>

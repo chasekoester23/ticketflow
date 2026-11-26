@@ -158,6 +158,8 @@ class SupplierRate(Base):
     # Does the unit price include trucking? 'included' | 'separate' | None (not stated).
     # Included: no hauling charge is added for deliveries priced by this rate.
     freight: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # The unit the price is per. A rate prices only deliveries in the same unit.
+    unit: Mapped[str] = mapped_column(String(10), nullable=False, default="ton", server_default="ton")
     supplier: Mapped[Supplier] = relationship()
     material: Mapped[Material] = relationship()
 
@@ -349,7 +351,17 @@ class Ticket(Base):
     ticket_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     delivery_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     material_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # The approved quantity, in `unit` (tons unless the ticket says otherwise). The name is historical.
     tonnage: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    # ton | cy | load | each | gal (services/units.py). Locked on approval like the quantity.
+    unit: Mapped[str] = mapped_column(String(10), nullable=False, default="ton", server_default="ton")
+    # The figure as written when it was converted (pounds to tons): kept so the record shows its source.
+    source_quantity: Mapped[Decimal | None] = mapped_column(Numeric(14, 3), nullable=True)
+    source_unit: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Scale weights, when the ticket shows them. Checked against the quantity, never applied on their own.
+    gross_weight: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    tare_weight: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    weight_unit: Mapped[str | None] = mapped_column(String(5), nullable=True)  # lb | ton
     supplier: Mapped[str | None] = mapped_column(String(200), nullable=True)
     job_location: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
@@ -528,7 +540,9 @@ class InvoiceComparison(Base):
     material_key: Mapped[str] = mapped_column(String(200), nullable=False)
     date_from: Mapped[date] = mapped_column(Date, nullable=False)
     date_to: Mapped[date] = mapped_column(Date, nullable=False)
+    # The billed quantity, in `unit` (tons unless the line says otherwise). The name is historical.
     billed_tons: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    unit: Mapped[str] = mapped_column(String(10), nullable=False, default="ton", server_default="ton")
     billed_unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
     billed_subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -858,6 +872,12 @@ class HaulingInvoiceLine(Base):
     rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     description: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Billed per ton or per load (kinds "tons" and "loads"): how many, and which delivery
+    # tickets, when the invoice lists them. shift_id: the shift a person chose for a line
+    # that matched more than one. All optional; hourly lines don't use the first two.
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    tickets: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shift_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class HaulingInvoiceEvent(Base):

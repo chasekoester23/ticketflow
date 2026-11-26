@@ -73,6 +73,12 @@ def project_directory(db: Session = Depends(get_db), organization_id: int = Depe
         .group_by(Batch.project_id))}
     uploads = dict(db.execute(select(Batch.project_id, func.max(Batch.created_at)).where(
         Batch.organization_id == organization_id).group_by(Batch.project_id)).all())
+    other: dict[int, list] = {}
+    for row in db.execute(select(Batch.project_id, *aggregates.OTHER_UNIT_COLUMNS).select_from(Ticket)
+                          .join(Batch, Batch.id == Ticket.batch_id)
+                          .where(Ticket.organization_id == organization_id, aggregates.OTHER_UNITS)
+                          .group_by(Batch.project_id, Ticket.unit)):
+        other.setdefault(row.project_id, []).append(row)
     trucking = {row.project_id: row for row in db.execute(
         select(ShiftAllocation.project_id, aggregates.exact_sum(ShiftAllocation.cost, 2).label("cost"))
         .join(TruckShift, TruckShift.id == ShiftAllocation.shift_id)
@@ -101,6 +107,7 @@ def project_directory(db: Session = Depends(get_db), organization_id: int = Depe
             "open_shifts": int(sh.open or 0) if sh else 0,
             "verified_tickets": int(t.verified or 0) if t else 0,
             "verified_tons": str(aggregates.as_decimal(t.tons if t else 0, 3)),
+            "other_units": aggregates.other_units(other.get(job.id, [])),
             "material_cost": str(material),
             "unpriced_tickets": int(t.unpriced or 0) if t else 0,
             "trucking_cost": str(hauling),
