@@ -410,7 +410,8 @@ def check_tickets(
         warnings.append(f"{counts['needs_review']} invoice ticket(s) match a delivery that is "
                         "not verified or is incomplete.")
     if counts["tons_differ"]:
-        warnings.append(f"{counts['tons_differ']} ticket(s) are billed at different tons than verified.")
+        warnings.append(f"{counts['tons_differ']} ticket(s) are billed at different "
+                        f"{units.long(getattr(item, 'unit', None))} than verified.")
     if counts["duplicate_on_invoice"]:
         warnings.append(f"{counts['duplicate_on_invoice']} invoice line(s) repeat a ticket number.")
     if counts["on_another_invoice"]:

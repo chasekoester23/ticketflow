@@ -15,7 +15,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from ..models import Batch, InvoiceComparison, InvoiceTicketLink, InvoiceTicketRef, Project, Ticket
-from . import aggregates, invoice_bridge
+from . import aggregates, invoice_bridge, units
 from .pricing import to_cents
 
 MAX_ROWS = 500
@@ -174,7 +174,10 @@ KINDS = {
     "quantity": "Quantity", "rate": "Rate", "arithmetic": "Invoice arithmetic", "rounding": "Rounding",
 }
 HEADERS = ["Invoice", "Supplier", "Material", "Kind", "Ticket number", "Billed tons", "Approved tons", "Tons difference",
-           "Dollar effect (billed minus approved)", "What to check (not an approval to pay)"]
+           "Dollar effect (billed minus approved)", "Unit", "What to check (not an approval to pay)"]
+# "Billed tons", "Approved tons" and "Tons difference" hold quantities in the row's "Unit".
+# "Unit" sits just before the check column, so the quantity and dollar columns keep their
+# positions and the last column still says it isn't an approval to pay.
 
 
 def differences(line) -> list[dict]:
@@ -185,6 +188,8 @@ def differences(line) -> list[dict]:
     money = line.diagnosis.money.model_dump() if line.diagnosis and line.diagnosis.money else None
     known = money is not None and line.subtotal_difference is not None
     rate = line.billed_unit_price
+    unit = getattr(line, "unit", None) or units.DEFAULT
+    q, per = units.long(unit), units.singular(unit)  # "tons", "ton" for a ton line
     found: list[dict] = []
 
     def add(kind, *, number=None, billed=None, approved=None, tons=None, effect=None, check=""):
@@ -209,14 +214,14 @@ def differences(line) -> list[dict]:
         itemized = line.comparison_mode == "itemized"
         add("quantity", billed=None if itemized else line.billed_tons, approved=None if itemized else line.verified_tons, tons=remainder,
             effect=to_cents(remainder * rate),
-            check="The line's total tons differ from its tickets' tons." if itemized
+            check=f"The line's total {q} differ from its tickets' {q}." if itemized
             else "The invoice bills a different total than approved deliveries add up to. Ask for its ticket list to see which.")
     if known:
         for group in money["rate_groups"]:
             add("rate", approved=group["tons"], effect=group["effect"],
-                check=f"{group['tickets']} ticket(s) locked at ${group['locked_rate']}/ton, billed at ${rate}/ton. Check the agreed price.")
+                check=f"{group['tickets']} ticket(s) locked at ${group['locked_rate']}/{per}, billed at ${rate}/{per}. Check the agreed price.")
         if money["arithmetic_effect"]:
-            add("arithmetic", effect=money["arithmetic_effect"], check="The line's subtotal isn't its billed tons times its rate.")
+            add("arithmetic", effect=money["arithmetic_effect"], check=f"The line's subtotal isn't its billed {q} times its rate.")
         rounding = line.subtotal_difference - sum((entry["dollar_effect"] for entry in found if entry["dollar_effect"] is not None), Decimal(0))
         if rounding:
             add("rounding", effect=rounding, check="Each ticket's cost is rounded to the cent, and the invoice rounds once.")
@@ -238,7 +243,12 @@ def discrepancy_lines(lines) -> Iterator[list]:
         return "" if value is None else str(value)
 
     for line in lines:
+        unit = getattr(line, "unit", None) or units.DEFAULT
         for entry in differences(line):
-            yield [text(line.invoice_number), text(line.supplier_name), text(line.material_name), KINDS[entry["kind"]],
+            kind = KINDS[entry["kind"]]
+            if entry["kind"] == "tons_differ" and unit != units.DEFAULT:
+                kind = f"{units.long(unit).capitalize()} differ"
+            yield [text(line.invoice_number), text(line.supplier_name), text(line.material_name), kind,
                    text(entry["ticket_number"]), number(entry["billed_tons"]), number(entry["approved_tons"]),
-                   number(entry["tons_difference"]), number(entry["dollar_effect"]), text(entry["check"])]
+                   number(entry["tons_difference"]), number(entry["dollar_effect"]), units.long(unit),
+                   text(entry["check"])]

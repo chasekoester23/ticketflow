@@ -439,9 +439,9 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
     if rate_mismatch:
         warnings.append(f"{len(rate_mismatch)} verified ticket rate(s) differ from the invoice rate.")
     if quantity_difference:
-        warnings.append("Billed tons differ from verified ticket tons.")
+        warnings.append(f"Billed {units.long(line_unit)} differ from verified ticket {units.long(line_unit)}.")
     if arithmetic_difference:
-        warnings.append("Invoice line subtotal differs from billed tons × billed unit rate.")
+        warnings.append(f"Invoice line subtotal differs from billed {units.long(line_unit)} × billed unit rate.")
     if subtotal_difference:
         warnings.append("Invoice material subtotal differs from verified ticket material cost.")
     if check:
@@ -468,6 +468,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
     source = context.source(item.id)
     tons_detail = invoice_bridge.tons_bridge(
         verified_ids=verified_ids, verified_tons=verified_tons, billed_tons=item.billed_tons, rows=check.rows,
+        unit=line_unit,
     ) if check else None
     money_detail = invoice_bridge.money_bridge(
         verified_rows=verified, verified_subtotal=verified_subtotal, billed_subtotal=item.billed_subtotal,
@@ -477,7 +478,7 @@ def _line_out(db: Session, item: InvoiceComparison, organization_id: int,
         headline=invoice_bridge.headline(
             status=status, itemized=bool(check), quantity_difference=quantity_difference,
             subtotal_difference=subtotal_difference, pending=len(pending), unclassified=len(unclassified),
-            verified_count=len(verified),
+            verified_count=len(verified), unit=line_unit,
             rounding=status == "discrepancy" and invoice_bridge.rounding_only(
                 quantity_difference=quantity_difference, subtotal_difference=subtotal_difference, money=money_detail,
                 tickets_disagree=bool(check and check.discrepancy) or bool(newly_conflicting))),
@@ -836,6 +837,13 @@ RESULT_LABELS = {
 }
 
 
+def _result_label(name: str, unit: str | None) -> str:
+    """A ticket-check result in the line's own unit ("Tons differ" for tons, as before)."""
+    if name == "tons_differ" and (unit or units.DEFAULT) != units.DEFAULT:
+        return f"{units.long(unit).capitalize()} differ"
+    return RESULT_LABELS[name]
+
+
 def _csv_text(value: str | None) -> str:
     """Make untrusted document text inert when a CSV is opened in Excel.
 
@@ -854,6 +862,7 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     """Download a human-reviewable snapshot, never a payment authorization."""
     item = _owned_or_404(db, organization_id, line_id)
     result = _line_out(db, item, organization_id)
+    q, per = units.long(result.unit), units.singular(result.unit)  # "tons", "ton" for a ton line
     output = StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow(["Quarvera invoice comparison — NOT approval for payment"])
@@ -868,15 +877,15 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     writer.writerow(["Source invoice document",
                      f"Document {result.source_document_id}, page {result.source_page}"
                      if result.source_document_id else "Entered by hand"])
-    writer.writerow(["Invoice tons", str(result.billed_tons)])
-    writer.writerow(["Invoice rate per ton", str(result.billed_unit_price)])
+    writer.writerow([f"Invoice {q}", str(result.billed_tons)])
+    writer.writerow([f"Invoice rate per {per}", str(result.billed_unit_price)])
     writer.writerow(["Invoice material subtotal", str(result.billed_subtotal)])
-    writer.writerow(["Billed tons times rate", str(result.billed_extension)])
+    writer.writerow([f"Billed {q} times rate", str(result.billed_extension)])
     writer.writerow(["Invoice arithmetic difference", str(result.invoice_arithmetic_difference)])
-    writer.writerow(["Verified tons", str(result.verified_tons)])
+    writer.writerow([f"Verified {q}", str(result.verified_tons)])
     writer.writerow(["Verified material subtotal",
                      str(result.verified_subtotal) if result.verified_subtotal is not None else "UNRESOLVED"])
-    writer.writerow(["Billed minus verified tons", str(result.quantity_difference)])
+    writer.writerow([f"Billed minus verified {q}", str(result.quantity_difference)])
     writer.writerow(["Billed minus verified subtotal",
                      str(result.subtotal_difference) if result.subtotal_difference is not None else "UNRESOLVED"])
     writer.writerow(["Verified ticket count", result.verified_count])
@@ -886,11 +895,11 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     writer.writerow(["Rate mismatch count", result.rate_mismatch_count])
     if result.comparison_mode == "itemized":
         writer.writerow(["Invoice ticket lines", sum(1 for r in result.ticket_check if r.line is not None)])
-        writer.writerow(["Itemized billed tons",
+        writer.writerow([f"Itemized billed {q}",
                          str(result.itemized_billed_tons) if result.itemized_billed_tons is not None
                          else "NOT ENTERED FOR EVERY TICKET"])
         for name, count in result.ticket_check_counts.items():
-            writer.writerow([RESULT_LABELS[name] + " count", count])
+            writer.writerow([_result_label(name, result.unit) + " count", count])
     writer.writerow([])
     writer.writerow(["Review warnings"])
     for warning in result.warnings:
@@ -900,7 +909,7 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     writer.writerow([])
     writer.writerow(["Tickets — potential matches must be classified before relying on totals"])
     writer.writerow(["Ticket ID", "Batch ID", "Ticket number", "Scope classification",
-                     "Review status", "Ticket tons (not necessarily verified)", "Locked rate (if verified)"])
+                     "Review status", f"Ticket {q} (not necessarily verified)", "Locked rate (if verified)"])
     for ticket in result.tickets:
         writer.writerow([
             ticket.ticket_id, ticket.batch_id, _csv_text(ticket.ticket_number),
@@ -911,7 +920,7 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     if result.ticket_links:
         writer.writerow([])
         writer.writerow(["Ticket evidence confirmed by people"])
-        writer.writerow(["Ticket number", "Quarvera ticket ID", "Tons when confirmed", "State", "Confirmed by", "Confirmed at (UTC)", "Reasons"])
+        writer.writerow(["Ticket number", "Quarvera ticket ID", f"{q.capitalize()} when confirmed", "State", "Confirmed by", "Confirmed at (UTC)", "Reasons"])
         for link in result.ticket_links:
             writer.writerow([_csv_text(link.listed_number), link.ticket_id, str(link.verified_tons), link.state,
                              _csv_text(link.confirmed_by or "Not recorded"), link.confirmed_at.isoformat(),
@@ -919,17 +928,17 @@ def export_comparison_report(line_id: int, db: Session = Depends(get_db),
     if result.comparison_mode == "itemized":
         writer.writerow([])
         writer.writerow(["Ticket-by-ticket check"])
-        writer.writerow(["Invoice line", "Invoice ticket number", "Billed tons", "Result", "Flags",
+        writer.writerow(["Invoice line", "Invoice ticket number", f"Billed {q}", "Result", "Flags",
                          "Quarvera ticket ID", "Batch ID", "Recorded ticket number", "Delivery date",
-                         "Review status", "Verified tons", "Billed minus verified tons", "Notes"])
+                         "Review status", f"Verified {q}", f"Billed minus verified {q}", "Notes"])
         for row in result.ticket_check:
             t = row.ticket
             writer.writerow([
                 row.line if row.line is not None else "NOT ON INVOICE",
                 _csv_text(row.invoice_ticket_number),
                 str(row.billed_tons) if row.billed_tons is not None else "",
-                RESULT_LABELS[row.result],
-                "; ".join(RESULT_LABELS[f] for f in row.flags),
+                _result_label(row.result, result.unit),
+                "; ".join(_result_label(f, result.unit) for f in row.flags),
                 t.ticket_id if t else "; ".join(str(c.ticket_id) for c in row.candidates),
                 t.batch_id if t else "",
                 _csv_text(t.ticket_number if t else None),

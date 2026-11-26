@@ -9,6 +9,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Iterator
 
+from . import units
 from .pricing import to_cents
 
 _MAX_LISTED = 25
@@ -22,6 +23,14 @@ _LABELS = {
     "not_on_invoice": ("Verified deliveries this invoice doesn't list", "Check whether {list} were billed elsewhere or not yet."),
 }
 _ORDER = tuple(_LABELS)
+
+
+def label(kind: str, unit: str | None = None) -> str:
+    """A bridge group's label in the line's unit (unchanged for tons)."""
+    if kind == "tons_differ" and (unit or units.DEFAULT) != units.DEFAULT:
+        q = units.long(unit)
+        return f"Billed {q} differ from verified {q} on the same ticket"
+    return _LABELS[kind][0]
 
 
 def _names(numbers: list[str]) -> str:
@@ -65,14 +74,15 @@ def tons_changes(*, verified_ids: set[int], rows: list) -> Iterator[dict]:
                    "number": row.ticket.ticket_number or f"record #{row.ticket.ticket_id}"}
 
 
-def tons_bridge(*, verified_ids: set[int], verified_tons: Decimal, billed_tons: Decimal, rows: list) -> dict:
+def tons_bridge(*, verified_ids: set[int], verified_tons: Decimal, billed_tons: Decimal, rows: list,
+               unit: str | None = None) -> dict:
     """From verified tons to billed tons. Holds exactly when ``complete``:
     start + sum(items) + unexplained == billed."""
     groups: dict[str, dict] = {}
     missing_tons = 0
 
     def add(kind: str, tons: Decimal, number: str | None) -> None:
-        group = groups.setdefault(kind, {"kind": kind, "label": _LABELS[kind][0], "tons": Decimal(0), "tickets": []})
+        group = groups.setdefault(kind, {"kind": kind, "label": label(kind, unit), "tons": Decimal(0), "tickets": []})
         group["tons"] += tons
         if number:
             group["tickets"].append(number)
@@ -165,7 +175,8 @@ def rounding_only(*, quantity_difference: Decimal, subtotal_difference: Decimal 
 
 
 def headline(*, status: str, itemized: bool, quantity_difference: Decimal, subtotal_difference: Decimal | None,
-             pending: int, unclassified: int, verified_count: int, rounding: bool = False) -> str:
+             pending: int, unclassified: int, verified_count: int, rounding: bool = False,
+             unit: str | None = None) -> str:
     """One plain sentence for the top of the panel."""
     if status == "no_verified_tickets":
         return "No approved deliveries match this line yet, so there's nothing to compare it with."
@@ -179,10 +190,10 @@ def headline(*, status: str, itemized: bool, quantity_difference: Decimal, subto
         return "Can't be settled yet: something this comparison depends on still needs a person."
     if rounding and subtotal_difference:
         return (f"The only money difference is rounding: ${abs(subtotal_difference)}, from rounding each ticket's cost to the cent "
-                "where the invoice rounds its total once. Tons and rates agree. Still not an approval to pay.")
+                f"where the invoice rounds its total once. {units.long(unit).capitalize()} and rates agree. Still not an approval to pay.")
     parts = []
     if quantity_difference:
-        parts.append(f"billed {abs(quantity_difference)} tons {'more' if quantity_difference > 0 else 'less'} than approved")
+        parts.append(f"billed {abs(quantity_difference)} {units.long(unit)} {'more' if quantity_difference > 0 else 'less'} than approved")
     if subtotal_difference:
         parts.append(f"${abs(subtotal_difference)} {'more' if subtotal_difference > 0 else 'less'} in material cost")
     if parts:
