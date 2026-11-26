@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { requestAccess } from "../../lib/api";
-import { SiteFooter, SiteNav } from "../site-ui";
+import { MARKETING, SiteFooter, SiteNav } from "../site-ui";
 
 const EMPTY = { contact_name: "", company_name: "", email: "", message: "", website: "" };
 type Required = "contact_name" | "company_name" | "email";
@@ -36,10 +36,17 @@ export default function RequestDemoPage() {
     if (first) { refs[first].current?.focus(); return; }
     setPending(true);
     try {
-      await requestAccess({
+      const body = {
         company_name: form.company_name.trim(), contact_name: form.contact_name.trim(), email,
         message: ["Demo request.", form.message.trim()].filter(Boolean).join(" ").slice(0, 1000), website: form.website,
-      });
+      };
+      if (MARKETING) {
+        // The website alone: its own handler emails the request (app/api/demo-request).
+        const response = await fetch("/api/demo-request", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!response.ok) throw new Error(((await response.json().catch(() => ({}))) as { detail?: string }).detail || "Something went wrong. Please try again.");
+      } else {
+        await requestAccess(body);
+      }
       setSent(true);
     } catch (err) {
       setError((err as Error).message || "Something went wrong. Please try again.");

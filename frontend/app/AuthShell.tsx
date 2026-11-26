@@ -133,6 +133,8 @@ export default function AuthShell({ children }: { children: ReactNode }) {
   const mustChangePassword = Boolean(account?.must_change_password);
 
   useEffect(() => {
+    // The marketing website has no application behind it to ask (middleware.ts).
+    if (process.env.NEXT_PUBLIC_SITE_MODE === "marketing") return;
     let cancelled = false;
     getAuthMe().then((me) => {
       if (cancelled) return;

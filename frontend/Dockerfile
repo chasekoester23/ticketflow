@@ -13,7 +13,10 @@ WORKDIR /app
 # Empty means same-origin (/api/... on this site). Inlined into the browser code at
 # build time, so it must be set here, not at run time.
 ARG NEXT_PUBLIC_API_URL=""
+# "marketing": the public website only, with no application behind it (middleware.ts).
+ARG NEXT_PUBLIC_SITE_MODE=""
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+    NEXT_PUBLIC_SITE_MODE=${NEXT_PUBLIC_SITE_MODE} \
     NEXT_OUTPUT=standalone \
     NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
@@ -36,5 +39,5 @@ RUN mkdir -p .next/cache && chown node:node .next/cache
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/login').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/welcome').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 CMD ["node", "server.js"]

@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { SiteMenu } from "./site-menu";
 
+/** quarvera.com runs the website alone (no application to sign in to): see middleware.ts. */
+export const MARKETING = process.env.NEXT_PUBLIC_SITE_MODE === "marketing";
+
 /** The approved logo, unaltered, on the light navbar it was drawn for. No plate behind it. */
 export function SiteLogo({ className = "" }: { className?: string }) {
   return <Link href="/welcome" className={`qs-logo ${className}`} aria-label="Quarvera home">
@@ -24,10 +27,10 @@ export function SiteNav() {
         {LINKS.map((l) => <a key={l.href} href={l.href}>{l.label}</a>)}
       </nav>
       <div className="qs-nav-actions">
-        <Link href="/login" className="qs-nav-signin">Sign in</Link>
+        {!MARKETING && <Link href="/login" className="qs-nav-signin">Sign in</Link>}
         <Link href="/demo" className="qs-btn qs-btn-primary qs-btn-sm">Request a demo</Link>
       </div>
-      <SiteMenu links={LINKS} />
+      <SiteMenu links={LINKS} signIn={!MARKETING} />
     </div>
   </header>;
 }
@@ -50,7 +53,7 @@ export function SiteFooter() {
           <div><h2>Company</h2><ul>
             <li><a href="/welcome#mission">Mission</a></li>
             <li><Link href="/demo">Request a demo</Link></li>
-            <li><Link href="/login">Sign in</Link></li>
+            {!MARKETING && <li><Link href="/login">Sign in</Link></li>}
           </ul></div>
         </nav>
       </div>

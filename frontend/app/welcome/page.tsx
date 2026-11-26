@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { SiteFooter, SiteNav } from "../site-ui";
+import { MARKETING, SiteFooter, SiteNav } from "../site-ui";
 
 export const metadata = {
   title: "Quarvera · Every delivery accounted for.",
@@ -190,7 +190,7 @@ export default function WelcomePage() {
           </div>
           <div className="qs-cta-actions">
             <Link href="/demo" className="qs-btn qs-btn-primary qs-btn-lg">Request a demo</Link>
-            <Link href="/login" className="qs-cta-signin">Already a customer? Sign in</Link>
+            {!MARKETING && <Link href="/login" className="qs-cta-signin">Already a customer? Sign in</Link>}
           </div>
         </div>
       </section>
