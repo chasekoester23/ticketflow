@@ -127,7 +127,9 @@ class Drill:
         samples: dict[int, list[tuple[str, str | None]]] = {}
         for sql, path, hashed in (
             ("SELECT t.organization_id, MAX(t.id) FROM tickets t GROUP BY t.organization_id", "/api/tickets/{}/image", None),
-            ("SELECT b.organization_id, MAX(f.id) FROM uploaded_files f JOIN batches b ON b.id = f.batch_id GROUP BY b.organization_id", "/api/files/{}/pages/1/image", None),
+            # An imported spreadsheet has rows, not pages: its rows are opened as ticket images above.
+            ("SELECT b.organization_id, MAX(f.id) FROM uploaded_files f JOIN batches b ON b.id = f.batch_id "
+             "WHERE b.intake_mode <> 'import' GROUP BY b.organization_id", "/api/files/{}/pages/1/image", None),
             ("SELECT organization_id, MAX(id) FROM invoice_documents GROUP BY organization_id", "/api/invoice-documents/{}/original", "invoice_documents"),
         ):
             for organization_id, row_id in connection.execute(sql).fetchall():

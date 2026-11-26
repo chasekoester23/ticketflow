@@ -19,7 +19,7 @@ from . import rate_limit
 from .config import configuration_problems, environment, settings
 from .proxy import ProxyHeaders
 from .db import Base, engine
-from .routers import access_requests, api, auth as auth_router, exceptions, trucking, invoice_documents, invoices, pricing, projects, records, reports, setup, system, team, scans
+from .routers import access_requests, api, auth as auth_router, delivery_imports, exceptions, trucking, invoice_documents, invoices, pricing, projects, records, reports, setup, system, team, scans
 from .services import system_health
 from .services.job_log import frames
 from .auth import current_user
@@ -307,6 +307,7 @@ app.include_router(system.router, dependencies=[Depends(current_user)])
 app.include_router(team.router, dependencies=[Depends(current_user)])
 app.include_router(scans.router, dependencies=[Depends(current_user)])
 app.include_router(invoice_documents.router, dependencies=[Depends(current_user)])
+app.include_router(delivery_imports.router, dependencies=[Depends(current_user)])
 
 
 @app.get("/health")

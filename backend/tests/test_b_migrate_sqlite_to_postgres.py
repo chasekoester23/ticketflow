@@ -691,6 +691,11 @@ def build_fictional_business(url: str, storage: Path, monkeypatch) -> dict:
         owned = client.post("/api/exceptions/review", headers={"If-Match": exception["revision"]}, json={
             "key": exception["key"], "status": "disputed", "assignee_user_id": ids["first_owner"], "note": "Sent to the supplier."})
         assert owned.status_code == 200, owned.text
+        sheet = client.post("/api/delivery-imports", files={"file": ("deliveries.csv", b"Ticket #,Date,Product,Net Tons,Job\n"
+                                                                     b"S-1,09/14/2026,Sand,12.345,Fictional Road\n", "text/csv")}).json()
+        assert client.put(f"/api/delivery-imports/{sheet['id']}/mapping", json={
+            "columns": sheet["suggested"]["mapping"], "unit": "ton", "supplier": "Example Aggregates", "project_id": project}).status_code == 200
+        assert client.post(f"/api/delivery-imports/{sheet['id']}/commit", json={}).status_code == 200
         with Session() as db:
             db.add(ReviewTiming(organization_id=ids["first"], batch_id=1, intake_mode="manual", seconds=Decimal("41.5"), fields_corrected=2))
             db.add(ExtractionUsage(organization_id=ids["first"], batch_id=1, ticket_id=1, model="stand-in-model", attempts=2,

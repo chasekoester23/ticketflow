@@ -132,7 +132,7 @@ def test_hsts_is_sent_only_when_cookies_are_secure(client, monkeypatch):
 
 EXPECTED_LIMITS = {
     ("POST", "/api/batches"): "uploads", ("POST", "/api/batches/{batch_id}/retry"): "uploads",
-    ("POST", "/api/invoice-documents"): "uploads",
+    ("POST", "/api/invoice-documents"): "uploads", ("POST", "/api/delivery-imports"): "uploads",
     ("GET", "/api/records/export.xlsx"): "exports", ("GET", "/api/records/export.csv"): "exports",
     ("GET", "/api/batches/{batch_id}/export.xlsx"): "exports", ("GET", "/api/reports/project/{project_id}/report.xlsx"): "exports",
     ("GET", "/api/reports/pilot.csv"): "exports", ("GET", "/api/invoice-comparisons/{line_id}/report.csv"): "exports",

@@ -137,8 +137,9 @@ def build_manifest(db: Session, batch: Batch) -> dict:
                 "ticket_status": ticket.status if ticket else None,
             })
         # Finished, or has tickets, but predates the manifest. A file that could
-        # not be opened has no slots either, and is reported as failed instead.
-        is_legacy = not slots_of.get(file.id) and (
+        # not be opened has no slots either, and is reported as failed instead. An
+        # imported spreadsheet has rows, not scanned slots (routers/delivery_imports.py).
+        is_legacy = batch.intake_mode != "import" and not slots_of.get(file.id) and (
             file.status == "ready_for_review" or any(t.file_id == file.id for t in tickets))
         legacy_files += is_legacy
         files_out.append({
