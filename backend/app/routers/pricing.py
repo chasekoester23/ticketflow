@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..auth import current_organization_id
 from ..db import get_db
 from ..permissions import require
-from ..models import Batch, Material, NameAlias, PricingEvent, Project, Supplier, SupplierRate, Ticket, User, as_utc, utcnow
+from ..models import AuditEvent, Batch, Material, NameAlias, PricingEvent, Project, Supplier, SupplierRate, Ticket, User, as_utc, utcnow
 from ..services.accounts import names_by_id
 from ..services import rate_sheet
 from ..services.locks import take_turn
@@ -589,3 +589,57 @@ def pricing_history(db: Session = Depends(get_db), organization_id: int = Depend
          "actor": people.get(e.actor_user_id) if e.actor_user_id else None}
         for e in events
     ]
+
+
+class ApplyRatesIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # False: say what would happen and change nothing. True: price them and record it.
+    apply: bool = False
+
+
+@router.post("/rates/apply-to-unpriced")
+def apply_rates_to_unpriced(body: ApplyRatesIn, db: Session = Depends(get_db), user: User = Depends(require("pricing.manage"))):
+    """Price approved deliveries that were approved before their rate existed.
+
+    A contractor can approve a first batch before entering contract rates. Those
+    tickets are counted as "no rate" (never $0). Once the rates are entered, this
+    prices each one with the rate that applies to it on its delivery date, in its unit,
+    exactly as approval would have. It never changes a price already locked, never
+    touches an override or a legacy ticket, and records each change in the ticket's
+    history. A ticket whose new rate includes freight while hauling was already charged
+    on it is left for a person: re-approving settles which one pays.
+    """
+    organization_id = user.organization_id
+    table = pricing_svc.rate_table(db, organization_id)
+    tickets = list(db.scalars(select(Ticket).where(
+        Ticket.organization_id == organization_id, Ticket.status == "verified", Ticket.tonnage_confirmed.is_(True),
+        Ticket.price_snapshot_state == "unpriced", Ticket.unit_price_override.is_(None)).order_by(Ticket.id)))
+    priced, left = [], []
+    total = Decimal(0)
+    for t in tickets:
+        found = table.for_ticket(t)
+        if found.price is None or t.tonnage is None:
+            left.append({"ticket_id": t.id, "ticket_number": t.ticket_number,
+                         "reason": found.reason or "No rate on file for this supplier and material"})
+            continue
+        if found.freight == "included" and t.haul_billing in ("per_ton", "per_load"):
+            left.append({"ticket_id": t.id, "ticket_number": t.ticket_number,
+                         "reason": "The rate includes freight, but hauling was already charged on this delivery. "
+                                   "Withdraw and re-approve it to settle which one applies."})
+            continue
+        cost = pricing_svc.to_cents(t.tonnage * found.price)
+        total += cost
+        priced.append({"ticket_id": t.id, "batch_id": t.batch_id, "ticket_number": t.ticket_number,
+                       "delivery_date": t.delivery_date.isoformat() if t.delivery_date else None,
+                       "price": str(found.price), "cost": str(cost)})
+        if body.apply:
+            db.add(AuditEvent(ticket_id=t.id, actor_user_id=user.id, field="verified_unit_price", old_value=None,
+                              new_value=f"{found.price} (rate entered after approval)"))
+            t.applied_unit_price, t.applied_price_source = found.price, found.source
+            t.price_snapshot_state, t.approved_cost = "priced", cost
+    if body.apply and priced:
+        db.add(PricingEvent(organization_id=organization_id, actor_user_id=user.id, action="rates_applied_after_approval",
+                            old_value=None, new_value=f"{len(priced)} approved deliveries priced, ${total}"))
+        db.commit()
+    return {"applied": body.apply, "priced": len(priced), "cost": str(total), "rows": priced[:200],
+            "still_unpriced": len(left), "left": left[:200]}

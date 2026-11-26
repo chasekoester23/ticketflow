@@ -890,3 +890,40 @@ class HaulingInvoiceEvent(Base):
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class DeliveryImport(Base):
+    """A supplier's delivery spreadsheet (CSV or Excel) on its way into the normal review.
+
+    Keeps the original file (by storage key, like an upload), the columns a person mapped
+    and what the import did. Imported rows become ordinary unapproved tickets in a batch
+    with intake_mode 'import'; approval, pricing and locks are the ticket's, never this
+    row's. See docs/engineering/delivery-imports.md.
+    """
+    __tablename__ = "delivery_imports"
+    __table_args__ = (
+        Index("ix_delivery_imports_org_created", "organization_id", "id"),
+        # One import makes one batch, and a batch comes from at most one import.
+        Index("uq_delivery_imports_batch", "batch_id", unique=True),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(500), nullable=False)  # internal, never the user-supplied name
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_kind: Mapped[str] = mapped_column(String(10), nullable=False)  # csv | xlsx
+    header_row: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-based row of the file
+    rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # non-blank rows below the header
+    # {field: column index}, and the project, supplier, unit and job for what isn't a column.
+    mapping: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    defaults: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="uploaded")  # uploaded | mapped | imported
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey("batches.id"), nullable=True)
+    imported: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_duplicates: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # rows left out for a problem
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    committed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

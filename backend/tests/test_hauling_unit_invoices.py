@@ -104,7 +104,7 @@ def test_a_delivery_paid_by_an_hourly_shift_isnt_paid_per_ton_too(client, yard):
     _approve(client, linked, work_hours="9", standby_hours="0")
     [line] = _invoice(client, yard, [_tons("70001", quantity="25.000", amount="100.00")])["lines"]
     assert line["supported"] == "0.00"
-    assert any("Already paid by the hour" in i["title"] for i in client.get("/api/exceptions").json()["items"])
+    assert any("Already covered by an hourly shift" in i["title"] for i in client.get("/api/exceptions").json()["items"])
 
 
 def test_per_load_lines_count_loads_and_catch_an_extra_load(client, yard):

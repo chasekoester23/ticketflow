@@ -37,12 +37,14 @@ Hours, standby and minimum lines are matched with approved shifts: hauler, date,
 
 - **Which deliveries.** A line that lists ticket numbers uses exactly those tickets. A line without them uses that day's approved deliveries for the hauler, on the invoice's project, on the line's truck if it names one.
 - **What it should cost.** The sum of those deliveries' locked hauling charges. A difference is split exactly into a quantity effect (tons or loads at the billed rate), a rate effect (on the approved quantity) and the invoice's own arithmetic. The parts add up to the line's difference to the cent.
-- **What can't be paid, and why.** These are never supported:
+- **What can't be supported, and why.** These are never supported:
   - a delivery already billed on another line or invoice (*billed again*);
   - a delivery for another project (*billed against another project*);
   - a ticket number with no record;
-  - a delivery paid by an hourly shift or by a freight-included material price (*already paid*).
-  When nothing on a line can be paid, the line's whole amount sits on the exception that explains it: one problem, one exception, with its dollars.
+  - a delivery covered by an hourly shift or by a freight-included material price (*already covered*).
+  When nothing on a line can be supported, the line's whole amount sits on the exception that explains it: one problem, one exception, with its dollars.
+- **Outside the period.** A listed delivery dated outside the invoice's period is still supported (its hauling is owed once, whichever invoice bills it), and the line gets a *needs a person* question with no dollars.
+- **Split shifts.** A shift whose hours are allocated to several projects is compared, on a project's invoice, with that project's allocated hours and cost: the same figure the cost report and project directory show. Each project's share is billed once; a second bill of the same share, or of the whole shift after a share (or the reverse), is *billed again*. An invoice with no project answers for the whole shift. A split shift with standby or a minimum charge is left to a person, because which project's invoice bills those isn't recorded.
 - **Partial billing.** Approved hauling in an invoice's period and project that the invoice doesn't bill is listed as *not billed yet*, one item per delivery. It is not an error on the invoice. Approved hauling that no invoice covers is grouped per hauler and project.
 - **Uncertain lines.** An hours line that fits two shifts (no truck named) shows "Choose the shift". A person picks one. The choice is saved as a correction of the invoice, with its revision and history, and the line is then checked against that shift.
 

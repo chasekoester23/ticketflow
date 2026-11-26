@@ -38,18 +38,23 @@ class Extractor(Protocol):
 
 PROMPT = """You are reading ONE scanned construction material delivery ticket (often handwritten).
 Return ONLY a JSON object with exactly these keys:
-ticket_number, delivery_date, material_type, tonnage, supplier, job_location, job_number, hours, loads
+ticket_number, delivery_date, material_type, tonnage, unit, supplier, job_location, job_number, hours, loads,
+gross_weight, tare_weight, weight_unit, truck_number
 
 Rules:
 - Copy values as written. Normalize field-name variants: "Ticket No./Load No./Delivery No." -> ticket_number;
-  "Net Tons/Tons" -> tonnage (number of TONS only, no unit text);
+  "Net Tons/Tons/Net Weight/Quantity" -> tonnage (the delivered net quantity as a number only, no unit text);
   "Vendor/Supplier/Quarry" -> supplier; "Job/Project/Destination/Delivery Location" -> job_location.
-- The tonnage field MUST be explicitly stated in tons (or a clearly labeled Net Tons field).
-  Net Weight or Quantity alone is insufficient unless its unit is visibly tons.
-  If the ticket only shows pounds, kilograms, cubic yards, or an ambiguous unit,
-  return null for tonnage. Never convert units, divide by 2000, or infer tons
-  from a gross/tare/net weight value with no explicit tons unit.
-- Do not confuse gross weight, tare weight, truck weight or delivered quantity with net tons.
+- unit: the unit printed for that quantity, as one of "ton", "lb", "cy", "load", "each", "gal"
+  ("Net Tons" -> "ton", "Net lbs" or "lb" -> "lb", "cubic yards/yd" -> "cy"). If no unit is printed for the
+  quantity, or it is any other unit (kilograms, tonnes), return null for unit.
+- Never convert units: a quantity printed in pounds is returned in pounds with unit "lb". Do not divide by
+  2000, and do not work out a quantity from gross minus tare. If you can't tell which printed number is the
+  delivered net quantity, return null for tonnage.
+- gross_weight, tare_weight: the scale's gross and tare weights as numbers, exactly as printed, if shown;
+  weight_unit: "lb" or "ton", the unit printed for those weights, or null if none is printed.
+- Do not confuse gross weight, tare weight, truck weight or a load count with the net quantity.
+- truck_number: the truck or vehicle number, if printed or written; otherwise null.
 - ticket_number is the ticket's own number: usually PRINTED or stamped (often in red) near "Ticket No.", "No.",
   "Ticket #" or "Scale Ticket", and it often has letters or a prefix. Copy it exactly, keeping letters, dashes
   and leading zeros (for example "IV-52330"). It is NEVER the job number, project number, PO number, order

@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Heade
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
@@ -23,7 +24,7 @@ from ..services import haul_billing as haul_svc
 from ..services import units
 from ..services import export as export_svc
 from ..services import duplicates as dup_svc
-from ..services import consistency, pipeline, jobqueue, scan_manifest, storage
+from ..services import consistency, pipeline, jobqueue, scan_manifest, splitter, storage
 from ..services.locks import take_turn
 from ..services import pricing as pricing_svc
 from ..services.accounts import names_by_id
@@ -82,8 +83,8 @@ def create_batch(
 ):
     # Not async: reading and storing files here would otherwise stop every other request.
     organization_id = user.organization_id
-    if layout not in ("single", "grid_2x2"):
-        raise HTTPException(422, "layout must be 'single' or 'grid_2x2'")
+    if layout not in splitter.LAYOUTS:
+        raise HTTPException(422, "layout must be 'auto', 'single' or 'grid_2x2'")
     if intake_mode not in ("extract", "manual"):
         raise HTTPException(422, "intake_mode must be 'extract' or 'manual'")
     if intake_mode == "extract" and not settings.ai_reading_enabled:
@@ -169,6 +170,89 @@ def create_batch(
     _notify_worker(background, job.id)
     db.refresh(batch)
     return batch
+
+
+class RegionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # [left, top, right, bottom] in page pixels, the same as every ticket's crop_box.
+    crop_box: list[float] = Field(min_length=4, max_length=4)
+
+
+MIN_REGION_PIXELS = 20
+
+
+def _overlap(a, b) -> float:
+    """Intersection over union of two boxes."""
+    inter = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+@router.post("/files/{file_id}/pages/{page_no}/regions", response_model=TicketOut, status_code=201,
+             dependencies=[Depends(limited("uploads"))])
+def add_region(file_id: int, page_no: int, body: RegionIn, db: Session = Depends(get_db),
+               user: User = Depends(require("tickets.upload"))):
+    """Recover a ticket the layout missed: a person draws a box on the page and gets a
+    new, unapproved ticket record (needs_review, blank fields, no AI call) cut from it.
+
+    The box is a new slot on the page, marked as a real ticket by this person, so the
+    scan check counts it. Nothing else on the page changes. A wrong region is removed the
+    usual way: skip its ticket (a manager action), which keeps its history.
+    """
+    organization_id = user.organization_id
+    file = db.scalar(select(UploadedFile).join(Batch, Batch.id == UploadedFile.batch_id).where(
+        UploadedFile.id == file_id, Batch.organization_id == organization_id))
+    if file is None:
+        raise HTTPException(404, "File not found")
+    batch = file.batch
+    if batch.status in ("uploaded", "processing"):
+        raise HTTPException(409, "This batch is still processing. Wait until it finishes.")
+    try:
+        pages = pipeline.pages_for(file, storage.current().read(file.storage_path))
+    except (splitter.PdfError, OSError):
+        raise HTTPException(409, "The stored scan could not be read. Nothing was changed.") from None
+    if not 1 <= page_no <= len(pages):
+        raise HTTPException(404, "That page is not available.")
+    page = pages[page_no - 1]
+    box = splitter.clamp_box(body.crop_box, page.width, page.height)
+    if box is None or box[2] - box[0] < MIN_REGION_PIXELS or box[3] - box[1] < MIN_REGION_PIXELS:
+        raise HTTPException(422, f"Draw a box at least {MIN_REGION_PIXELS} pixels wide and high, inside the page.")
+    slots = scan_manifest.slots_by_position(db, file.id)
+    for (slot_page, position), slot in slots.items():
+        if slot_page == page_no and _overlap(slot.crop_box, box) >= 0.9:
+            raise HTTPException(409, f"This area is already on record: page {page_no}, slot {position + 1}.")
+    taken = {position for slot_page, position in slots if slot_page == page_no}
+    taken |= set(db.scalars(select(Ticket.position).where(Ticket.file_id == file.id, Ticket.source_page == page_no)))
+    position = max(taken, default=-1) + 1
+    crop = splitter.Crop(position, box, page.crop(box))
+    try:
+        # The slot's crop path (scan_manifest.record_slot). Replaced, so a crop left by an
+        # earlier attempt that did not commit can never stand in for this box.
+        storage.current().save_png(storage.reference_for(
+            f"crops/{file.batch_id}/f{file.id}_p{page_no}_c{position}.png"), crop.image, replace=True)
+        slot = scan_manifest.record_slot(db, file, slots, page_no, crop, pipeline.sha256_bytes)
+        slot.decision, slot.decided_by_user_id, slot.decided_at = "real_ticket", user.id, scan_manifest.utcnow()
+        db.flush()
+        ticket = Ticket(batch_id=file.batch_id, file_id=file.id, source_page=page_no, position=position,
+                        crop_box=list(box), crop_path=storage.reference_for(slot.crop_path),
+                        crop_sha256=slot.crop_sha256)
+        pipeline.set_blank_fields(ticket)
+        db.add(ticket)
+        db.flush()
+        region = ",".join(str(v) for v in box)
+        db.add(AuditEvent(ticket_id=ticket.id, actor_user_id=user.id, field="created_from_region",
+                          old_value=None, new_value=f"page {page_no}, box {region}"))
+        scan_manifest.record_event(db, batch.id, user.id, "added_region", slot_id=slot.id, new=f"p{page_no} {region}")
+        db.flush()
+        scan_manifest.settle_statuses(db, batch)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Someone else added a region on this page at the same moment. "
+                                 "Reload the page and try again.") from None
+    db.refresh(ticket)
+    return _out(db, ticket, organization_id)
+
 
 @router.get("/batches", response_model=list[BatchOut])
 def list_batches(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):

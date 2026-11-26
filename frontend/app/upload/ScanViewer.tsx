@@ -13,9 +13,11 @@ export const zoomOut = (zoom: number) => Math.max(MIN_ZOOM, Math.round((zoom - 0
  * Click to zoom in on a spot, drag to pan. Rotation here is view-only; it never
  * touches the stored scan.
  */
-export function ScanViewer({ src, alt, zoom, rotation, onZoom }: {
-  src: string;
+export function ScanViewer({ src, alt, ticketId, zoom, rotation, onZoom }: {
+  /** Null while the scan is still on its way (it's being fetched ahead). */
+  src: string | null;
   alt: string;
+  ticketId?: number;
   zoom: number;
   rotation: number;
   onZoom: (zoom: number) => void;
@@ -93,13 +95,15 @@ export function ScanViewer({ src, alt, zoom, rotation, onZoom }: {
     // Unzoomed, a swipe on the scan scrolls the page, which on a phone is most of the screen.
     // Zoomed, a drag pans the scan instead.
     className={`min-h-[260px] flex-1 select-none overflow-auto bg-[#e6e9eb] p-3 max-xl:h-[48vh] xl:min-h-[320px] ${zoom > 1 ? "touch-none cursor-grab active:cursor-grabbing" : "touch-pan-y cursor-zoom-in"}`}>
-    {failed
+    {src === null
+      ? <p role="status" className="m-4 text-sm text-[#526273]" data-testid="scan-loading">Loading the scan…</p>
+      : failed
       ? <p role="alert" className="m-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-900">
         This scan could not be loaded. The stored image may be missing, or your session may have ended. Don&apos;t approve this ticket without seeing the original.
       </p>
       : <div className="relative mx-auto" style={visual ?? { width: "100%" }}>
         {/* eslint-disable-next-line @next/next/no-img-element -- authenticated API image */}
-        <img src={src} alt={alt} draggable={false}
+        <img src={src} alt={alt} draggable={false} decoding="async" data-ticket={ticketId}
           onLoad={(event) => setNatural({ w: event.currentTarget.naturalWidth || 1, h: event.currentTarget.naturalHeight || 1 })}
           onError={() => setFailed(true)}
           className="max-w-none border border-slate-300 bg-white"

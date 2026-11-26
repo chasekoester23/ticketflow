@@ -38,7 +38,7 @@ SELF = SELF_SERVICE | {"/api/auth/me"}
 PATH_PARAMS = {"batch_id": "batch", "ticket_id": "ticket", "link_id": "link", "document_id": "document", "file_id": "file",
                "slot_id": "slot", "view_id": "view", "member_id": "member", "sid": "supplier", "mid": "material", "rid": "rate",
                "pid": "project", "alias_id": "alias", "project_id": "project", "rate_id": "hauling_rate", "shift_id": "shift",
-               "invoice_id": "hauling_invoice"}
+               "invoice_id": "hauling_invoice", "import_id": "import"}
 # Query, body and form fields that name a record. Anything else ending in _id or _ids must be added.
 FIELDS = {"project_id": "project", "ticket_id": "ticket", "ticket_ids": "ticket", "supplier_id": "supplier",
           "material_id": "material", "target_id": "supplier", "view_id": "view", "assignee_user_id": "member",
@@ -85,6 +85,16 @@ def _as(client, org: int, role: str = "owner") -> None:
 
 
 SCAN = make_pdf([make_page(TICKETS)])
+
+
+def _import_csv(job: str) -> bytes:
+    """A supplier's delivery export (routers/delivery_imports.py)."""
+    return f"Ticket #,Date,Product,Net Tons,Job\n90001,09/15/2026,Sand,12,{job}\n".encode()
+
+
+def _import_mapping(ids: dict) -> dict:
+    return {"columns": {"ticket_number": 0, "delivery_date": 1, "material_type": 2, "quantity": 3, "job_location": 4},
+            "unit": "ton", "supplier": "Example Aggregates", "project_id": ids["project"]}
 INVOICE = letterhead_supplier()
 
 
@@ -132,6 +142,9 @@ def _company(client, org: int) -> dict:
                    "amount": "800.00", "description": MARK[org]}]}).json()["id"]
     client.post(f"/api/truck-shifts/{ids['shift']}/timesheet", files={"file": ("sheet.pdf", INVOICE, "application/pdf")})
     client.post(f"/api/hauling-invoices/{ids['hauling_invoice']}/document", files={"file": ("h.pdf", INVOICE, "application/pdf")})
+    sheet = client.post("/api/delivery-imports", files={"file": (f"deliveries-{MARK[org]}.csv", _import_csv(MARK[org]), "text/csv")}).json()
+    ids["import"] = sheet["id"]
+    assert client.put(f"/api/delivery-imports/{sheet['id']}/mapping", json=_import_mapping(ids)).status_code == 200
     return ids
 
 
@@ -176,6 +189,11 @@ def _body(method: str, path: str, ids: dict):
         ("POST", "/api/name-aliases"): {"kind": "supplier", "alias": "Sweep Alias", "target_id": ids["supplier"]},
         ("PUT", "/api/rates"): {"supplier_id": ids["supplier"], "material_id": ids["material"], "unit_price": "12"},
         ("POST", "/api/rates/import"): {"text": "Example Aggregates,Sand,12", "apply": False},
+        ("POST", "/api/rates/apply-to-unpriced"): {"apply": False},
+        ("POST", "/api/setup/import/suppliers"): {"text": "Sweep Supplier Co", "apply": False},
+        ("POST", "/api/setup/import/materials"): {"text": "Sweep Material", "apply": False},
+        ("POST", "/api/setup/import/haulers"): {"text": "Sweep Hauling", "apply": False},
+        ("POST", "/api/setup/import/projects"): {"text": "SW-1\tSweep Job", "apply": False},
         ("POST", "/api/haulers"): {"name": "Sweep Hauler"},
         ("POST", "/api/trucks"): {"hauler_id": ids["hauler"], "identifier": "SW-1", "equipment_type": "tandem"},
         ("POST", "/api/hauling-rates"): {"hauler_id": ids["hauler"], "hourly_rate": "100"},
@@ -209,9 +227,13 @@ def _body(method: str, path: str, ids: dict):
         ("PATCH", "/api/team/members/{member_id}"): {"display_name": "Swept"},
         ("PUT", "/api/batches/{batch_id}/expected-count"): {"expected_ticket_count": 4},
         ("POST", "/api/scan-slots/{slot_id}/rotate"): {"rotation": 90},
+        ("POST", "/api/files/{file_id}/pages/{page_no}/regions"): {"crop_box": [10, 10, 300, 300]},
         ("POST", "/api/invoice-documents"): (None, {"project_id": str(ids["project"])}, {"file": ("i.pdf", INVOICE, "application/pdf")}, None),
         ("POST", "/api/invoice-documents/{document_id}/lines"): (None, None, None, {"page": 1}),
         ("PATCH", "/api/invoice-documents/{document_id}/lines/{line_id}"): {"billed_quantity": "7"},
+        ("POST", "/api/delivery-imports"): (None, None, {"file": ("d.csv", _import_csv("Swept"), "text/csv")}, None),
+        ("PUT", "/api/delivery-imports/{import_id}/mapping"): _import_mapping(ids),
+        ("POST", "/api/delivery-imports/{import_id}/commit"): {},
     }
     found = bodies.get((method, path))
     if isinstance(found, tuple):

@@ -65,6 +65,9 @@ test("photos with the four-per-page layout get a note to use one ticket per phot
     return json(route, { detail: "Unmocked" }, 404);
   });
   await page.goto("/upload");
+  const layout = page.getByRole("combobox", { name: "Document layout" });
+  await expect(layout).toHaveValue("auto"); // finding the tickets is the default; nothing is cut at a fixed line
+  await layout.selectOption("grid_2x2");
   const files = page.locator('input[type="file"]');
   await files.setInputFiles({ name: "scan.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4") });
   await expect(page.getByTestId("photo-layout-note")).toHaveCount(0); // a scan: the grid is fine

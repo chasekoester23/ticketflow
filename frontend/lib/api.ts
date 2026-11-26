@@ -1054,7 +1054,7 @@ export type HaulingInvoiceLine = {
   quantity?: string | null; tickets?: string | null;
   /** The shift a person chose when the line matched more than one. */
   chosen_shift_id?: number | null;
-  result?: "matched" | "differs" | "repeat" | "no_shift" | "no_delivery" | "not_approved" | "ambiguous" | "fee" | "credit" | null;
+  result?: "matched" | "differs" | "repeat" | "no_shift" | "no_delivery" | "not_approved" | "ambiguous" | "needs_review" | "fee" | "credit" | null;
   shift_id?: number | null; supported?: string | null; difference?: string | null;
   ticket_ids?: number[]; candidates?: { id: number; truck: string; hours: string | null; project: string | null }[];
 };
@@ -1097,3 +1097,57 @@ export function quantityText(tons: string | number, other?: OtherUnit[]): string
 }
 /** " CY" after a quantity that isn't in tons; nothing for tons. */
 export const unitSuffix = (unit?: string | null) => (unit && unit !== "ton" ? ` ${UNIT_LABEL[unit]?.short ?? unit}` : "");
+
+// ------------------------------------------------------------------ delivery spreadsheet imports
+// A supplier's CSV or Excel export, into the normal review (backend/app/routers/delivery_imports.py).
+
+export type ImportField = "ticket_number" | "delivery_date" | "material_type" | "quantity" | "unit" | "supplier" | "job_location" | "truck_number";
+export type ImportUnit = "ton" | "cy" | "load" | "each" | "gal" | "lb";
+export type ImportDuplicate =
+  | { kind: "existing"; ticket_id: number; batch_id: number; status: string; project_code: string | null; message: string }
+  | { kind: "file"; row: number; message: string };
+export type ImportPreviewRow = {
+  row: number; action: "import" | "duplicate" | "problem"; errors: string[]; warnings: string[]; duplicate: ImportDuplicate | null;
+  ticket_number: string | null; delivery_date: string | null; material_type: string | null; quantity: string | null; unit: string;
+  source_quantity: string | null; source_unit: string | null; supplier: string | null; job_location: string | null; truck_number: string | null;
+};
+export type DeliveryImport = {
+  id: number; original_name: string; file_kind: "csv" | "xlsx"; status: "uploaded" | "mapped" | "imported";
+  header_row: number; rows: number; project_id: number | null; project_code: string | null; project_name: string | null;
+  mapping: Partial<Record<ImportField, number>> | null;
+  defaults: { supplier: string | null; unit: ImportUnit | null; job_location: string | null } | null;
+  revision: string; created_at: string; committed_at: string | null; batch_id: number | null;
+  result: { imported: number; skipped_duplicates: number; error_rows: number; batch_id: number } | null;
+  fields: { key: ImportField; label: string; required: boolean }[];
+  limits: { bytes: number; rows: number; columns: number };
+  columns?: { index: number; header: string }[];
+  suggested?: { mapping: Partial<Record<ImportField, number>>; unit: ImportUnit | null };
+  sample?: string[][];
+  header_candidates?: { row: number; cells: string[] }[];
+  preview?: { rows: ImportPreviewRow[]; counts: { rows: number; ready: number; problems: number; duplicates_in_file: number;
+    duplicates_existing: number; warnings: number } };
+};
+export type ImportHistoryRow = {
+  id: number; original_name: string; file_kind: string; status: DeliveryImport["status"]; rows: number; imported: number;
+  skipped_duplicates: number; error_rows: number; batch_id: number | null; project_id: number | null; project_code: string | null;
+  created_at: string; created_by: string | null; committed_at: string | null; committed_by: string | null;
+};
+export type ImportMapping = {
+  header_row?: number; columns: Partial<Record<ImportField, number | null>>; project_id?: number | null;
+  supplier?: string | null; unit?: ImportUnit | null; job_location?: string | null;
+};
+export const uploadDeliverySpreadsheet = (file: File): Promise<DeliveryImport> => upload(`${API}/api/delivery-imports`, file);
+export async function getDeliveryImport(id: number): Promise<DeliveryImport> {
+  return (await check(await apiFetch(`${API}/api/delivery-imports/${id}`))).json();
+}
+export async function listDeliveryImports(): Promise<ImportHistoryRow[]> {
+  return (await check(await apiFetch(`${API}/api/delivery-imports`))).json();
+}
+export async function mapDeliveryImport(id: number, body: ImportMapping): Promise<DeliveryImport> {
+  return (await check(await apiFetch(`${API}/api/delivery-imports/${id}/mapping`, json("PUT", body)))).json();
+}
+/** Duplicates not listed as "import" are skipped. Never approves anything. */
+export async function commitDeliveryImport(id: number, body: { duplicates: Record<number, "skip" | "import">; include_problem_rows: boolean; revision: string }): Promise<DeliveryImport> {
+  return (await check(await apiFetch(`${API}/api/delivery-imports/${id}/commit`, json("POST", body)))).json();
+}
+export const deliveryImportFileUrl = (id: number) => `${API}/api/delivery-imports/${id}/file`;

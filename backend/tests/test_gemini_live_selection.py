@@ -29,6 +29,8 @@ def test_gemini_is_default_provider_and_api_status_tracks_its_key(client, monkey
     assert status.status_code == 200
     assert status.json() == {
         "extraction_configured": False, "model": settings.gemini_model, "worker_running": False,
+        # Which environment this is (demo, pilot, production, development), and whether it was declared.
+        "environment": "development", "environment_declared": False,
     }
 
     monkeypatch.setattr(settings, "gemini_api_key", "fictional-test-key")

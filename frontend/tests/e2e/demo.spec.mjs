@@ -36,6 +36,9 @@ test("upload, reconcile the scan, approve, export, draft an invoice, and catch t
   await page.goto("/upload");
   await page.locator("input[type=file]").setInputFiles(`${KIT}/demo-tickets.pdf`);
   await page.getByLabel("Project").selectOption({ index: 1 });
+  // The demo kit is a 2x2 sheet, and this walkthrough checks its four grid slots by position.
+  // (Auto layout, the default, numbers the regions it finds instead: see tests/test_segmentation.py.)
+  await page.getByLabel("Document layout").selectOption("grid_2x2");
   await page.getByLabel("Paper tickets in this upload (optional)").fill("3");
   await page.getByRole("button", { name: "Upload for entry by hand" }).click();
 

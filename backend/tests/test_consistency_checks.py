@@ -90,7 +90,8 @@ def test_catalog_spelling_is_adopted_only_for_an_exact_normalized_match():
     raw = {"supplier": "WABASH RIDGE AGGREGATES", "material_type": "# 8 stone"}
     pipeline.apply_extraction(ticket, ExtractedTicket.model_validate({**raw, "tonnage": "22.10"}), raw, catalog)
     assert (ticket.supplier, ticket.material_type) == ("Wabash Ridge Aggregates", "#8 Stone")
-    assert ticket.raw_extraction == raw  # what was read is kept as read
+    # What was read is kept as read, with how it was read (the reader, not the PDF's text).
+    assert ticket.raw_extraction == {**raw, "source": "reader"}
     other = {"supplier": "Wabash Ridge Aggregate Co", "material_type": "#57 Stone"}
     pipeline.apply_extraction(ticket, ExtractedTicket.model_validate(other), other, catalog)
     assert (ticket.supplier, ticket.material_type) == ("Wabash Ridge Aggregate Co", "#57 Stone")  # never fuzzy

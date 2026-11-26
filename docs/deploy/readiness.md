@@ -39,9 +39,10 @@ Nothing has been purchased, provisioned or deployed. Every step marked **(you)**
 - **Ready:**
   - The seeder builds Ridgeline Civil Constructors through the real API. It refuses to touch any database but its own.
   - The full stack runs on Railway per the guide.
+  - `scripts/seed_demo.py --hosted --database-url ...` seeds a PostgreSQL database. It refuses unless `APP_ENVIRONMENT=demo`, the database and bucket names contain "demo", and the database is empty. Its refusals are tested; the full run on PostgreSQL hasn't been run yet.
+  - `APP_ENVIRONMENT=demo` ([demo.env.example](demo.env.example)) refuses to start with AI reading on, an AI key present, or a database or bucket not named "demo". A pilot refuses anything named "demo".
 - **Needed:**
-  - The seeder writes only to a local SQLite file today. A hosted demo needs either a PostgreSQL target, guarded by "demo" in the database name, or a seeded SQLite file restored into a demo-only PostgreSQL with `scripts/migrate_sqlite_to_postgres.py`. The second works now.
-  - A separate Railway environment and bucket for the demo, so demo data never shares a database with pilot data.
+  - A separate Railway project and bucket for the demo. Steps: [founder-launch-checklist.md](founder-launch-checklist.md).
   - **(you)** the Railway and R2 accounts.
 - **Cost:** about $15–25/month (staging-size services). No AI calls: demo tickets are entered by hand.
 
@@ -50,10 +51,10 @@ Nothing has been purchased, provisioned or deployed. Every step marked **(you)**
 - **Ready:** everything in the table above.
 - **Needed before the first real document:**
   1. **(you)** Railway, R2 and a Gemini API key with a spending cap. Set the variables per `docs/deploy/*.env.example`.
-  2. Production environment: `TICKETFLOW_ENV=production`, `STORAGE_BACKEND=s3` and a `STORAGE_ENCRYPTION_KEY`.
+  2. Pilot environment: `APP_ENVIRONMENT=pilot` (which implies `TICKETFLOW_ENV=production`), `STORAGE_BACKEND=s3`, `MONTHLY_TICKET_READS_PER_ORGANIZATION` above 0, and optionally a `STORAGE_ENCRYPTION_KEY`. Startup refuses default or example passwords and anything named "demo".
   3. Run one backup and one restore drill on the hosted database. Schedule the backup.
   4. Uptime check on `/health/ready`, and an error alert (the monitoring notes are in `docs/operations/monitoring.md`).
-  5. Create the company and its owner with `scripts/create_company.py`. Onboarding is manual, which is fine for the first customers.
+  5. Create the company and its owner with `scripts/create_company.py`. After that, the contractor can upload before entering any rates. Suppliers, materials, haulers and projects can be pasted in at once (`/api/setup/import/*`, API only for now).
   6. A written data-handling note for the contractor: what's stored, where, for how long, and how they get it out (Excel exports exist).
 - **Cost:** about $40–60/month hosting for a few companies, plus AI reading. `costs.md` estimates about $125/month across 5 companies; verify current provider prices first.
 

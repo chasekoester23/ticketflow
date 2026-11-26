@@ -28,7 +28,8 @@ const shown = (previous) => {
   const id = Number(new URLSearchParams(window.location.search).get("ticket"));
   if (!id || id === previous) return null;
   const image = document.querySelector('[data-testid="scan-box"] img');
-  if (!image || !image.src.includes(`/tickets/${id}/image`) || !image.complete || !image.naturalWidth) return null;
+  // A scan fetched ahead is shown from a blob: address, so the ticket is named on the element.
+  if (!image || image.dataset.ticket !== String(id) || !image.complete || !image.naturalWidth) return null;
   return document.getElementById("review-ticket_number") ? id : null;
 };
 

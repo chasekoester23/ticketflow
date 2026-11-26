@@ -48,7 +48,7 @@ export function HaulingRates({ haulers, rates, projects, canPrice, onChanged }: 
   return <section className="tf-panel" aria-label="Trucking rates">
     <div className="tf-panel-heading"><div><h2 className="tf-panel-title">Trucking rates</h2>
       <p className="tf-panel-description"><b>By the hour</b>: prices truck shifts from time sheets, by the most specific agreement that has started (project and truck type, then project, then truck type, then any).
-        {" "}<b>Per ton</b> or <b>per load</b>: prices each approved delivery that names the hauler. A delivery is never paid twice: not when the material price includes freight, and not when it rode on an hourly shift.</p></div></div>
+        {" "}<b>Per ton</b> or <b>per load</b>: prices each approved delivery that names the hauler. A delivery is never charged twice: not when the material price includes freight, and not when it rode on an hourly shift.</p></div></div>
     <div className="space-y-4 p-4">
       {error && <p role="alert" className="tf-alert tf-alert-bad">{error}</p>}
       {canPrice && (haulers.length ? <form className="grid items-end gap-2 sm:grid-cols-4 xl:grid-cols-[1.2fr_1fr_1fr_100px_90px_100px_130px_130px_auto]" onSubmit={(e) => {

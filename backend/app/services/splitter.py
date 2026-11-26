@@ -17,11 +17,16 @@ class PdfError(Exception):
     """Raised for unreadable, corrupted, empty or password-protected PDFs."""
 
 
+LAYOUTS = ("single", "grid_2x2", "auto")
+
+
 @dataclass
 class Crop:
     position: int
     box: Box
     image: Image.Image
+    # Auto layout only: why a person should check this region (segmentation.py), or None.
+    review: str | None = None
 
 
 def fit_scale(width: float, height: float, max_pixels: int) -> float:
@@ -182,7 +187,15 @@ def grid_boxes(width: int, height: int, rows: int, cols: int, margin: float = 0.
 
 
 def split_page(image: Image.Image, layout: str, margin: float = 0.01) -> list[Crop]:
+    """The crops of one page. "auto" finds the tickets wherever they are (segmentation.py):
+    every mark on the page ends up in some crop, a tilted ticket's crop is straightened,
+    and a page it can't make sense of is one whole-page crop marked for review."""
     w, h = image.size
+    if layout == "auto":
+        from . import segmentation
+
+        regions = segmentation.segment_page(image).regions
+        return [Crop(i, r.box, segmentation.crop_region(image, r), r.review) for i, r in enumerate(regions)]
     if layout == "single":
         boxes: list[Box] = [(0, 0, w, h)]
     elif layout == "grid_2x2":
@@ -190,6 +203,14 @@ def split_page(image: Image.Image, layout: str, margin: float = 0.01) -> list[Cr
     else:
         raise ValueError(f"Unsupported layout: {layout}")
     return [Crop(i, b, image.crop(b)) for i, b in enumerate(boxes)]
+
+
+def clamp_box(box, width: int, height: int) -> Box | None:
+    """A drawn box as whole pixels inside the page, or None if nothing of it is left."""
+    left, top, right, bottom = (int(round(float(v))) for v in box)
+    left, right = sorted((max(0, min(width, left)), max(0, min(width, right))))
+    top, bottom = sorted((max(0, min(height, top)), max(0, min(height, bottom))))
+    return (left, top, right, bottom) if right > left and bottom > top else None
 
 
 def is_blank(image: Image.Image, threshold: float = 0.002) -> bool:

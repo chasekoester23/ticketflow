@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import current_organization_id
 from ..db import get_db
-from ..models import Batch, InvoiceComparison, Material, Project, Supplier, SupplierRate, Ticket, User
+from ..models import Batch, InvoiceComparison, Material, Organization, Project, Supplier, SupplierRate, Ticket, User
 from ..permissions import require
 from ..services import system_health, usage
 
@@ -34,18 +34,27 @@ def _count(db: Session, model, *conditions) -> int:
 def onboarding(db: Session = Depends(get_db), organization_id: int = Depends(current_organization_id)):
     """How far this company has got, read from what actually exists. Stores nothing."""
     company = Batch.organization_id == organization_id
+    name = db.scalar(select(Organization.name).where(Organization.id == organization_id)) or ""
+    # Projects, suppliers and rates can all wait until after the first upload: a ticket with
+    # no project is filed later, and one approved with no rate shows "rate missing", never $0.
     steps = [
-        ("project", "Create your first project", "Tickets and invoices are filed under your job numbers.",
+        ("company", "Name your company", "Shown to your team on every page. Set when Quarvera was set up.",
+         "/account", name.strip() not in ("", "Original workspace")),
+        ("project", "Create your first project", "Tickets and invoices are filed under your job numbers. "
+         "Paste a list of them at once, or upload first and file the batch later.",
          "/projects", _count(db, Project, Project.organization_id == organization_id) > 0),
-        ("catalog", "Add suppliers, materials and rates", "Paste your rate sheet, so approved tickets lock in a price.",
+        ("supplier", "Add your suppliers", "Paste a list, or let your first rate sheet add them.",
+         "/pricing", _count(db, Supplier, Supplier.organization_id == organization_id) > 0),
+        ("catalog", "Enter your rates", "Paste your rate sheet, so approved tickets lock in a price. "
+         "It can wait: until then a ticket shows \"rate missing\", never $0.",
          "/pricing", _count(db, SupplierRate, SupplierRate.organization_id == organization_id) > 0),
-        ("team", "Invite your team", "Each person gets their own login, so approvals are attributed to a name.",
-         "/team", _count(db, User, User.organization_id == organization_id, User.active.is_(True)) > 1),
-        ("upload", "Upload your first scans", "A PDF of four tickets per page works, or single images.",
+        ("upload", "Upload your first scans", "A PDF of four tickets per page works, or single images. No rates needed first.",
          "/upload", _count(db, Batch, company) > 0),
         ("approve", "Approve your first ticket", "Check each value against the scan. Only approved tickets count.",
          "/upload", db.scalar(select(func.count()).select_from(Ticket).join(Batch, Batch.id == Ticket.batch_id).where(
              company, Ticket.status == "verified")) > 0),
+        ("team", "Invite your team", "Each person gets their own login, so approvals are attributed to a name.",
+         "/team", _count(db, User, User.organization_id == organization_id, User.active.is_(True)) > 1),
         ("invoice", "Compare your first invoice", "Upload a supplier invoice PDF, or type a line in.",
          "/invoices/documents", _count(db, InvoiceComparison, InvoiceComparison.organization_id == organization_id) > 0),
     ]

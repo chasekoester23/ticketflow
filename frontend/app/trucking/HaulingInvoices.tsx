@@ -7,9 +7,9 @@ import {
 } from "../../lib/api";
 
 const RESULT: Record<string, [string, string]> = {
-  matched: ["Matches approved", "tf-status-open"], differs: ["Differs", "tf-status-attention"], repeat: ["Already paid", "tf-status-error"],
+  matched: ["Matches approved", "tf-status-open"], differs: ["Differs", "tf-status-attention"], repeat: ["Already billed", "tf-status-error"],
   no_shift: ["No shift recorded", "tf-status-error"], no_delivery: ["No approved delivery", "tf-status-error"],
-  not_approved: ["Not approved yet", "tf-status-attention"],
+  not_approved: ["Not approved yet", "tf-status-attention"], needs_review: ["Needs a person", "tf-status-attention"],
   ambiguous: ["Choose the shift", "tf-status-attention"], fee: ["Fee: not in an agreement", "tf-status-attention"],
   credit: ["Credit", "tf-status-open"],
 };

@@ -12,7 +12,7 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
   onUploaded: (batch: Batch) => void | Promise<void>;
   onError: (message: string | null) => void;
 }) {
-  const [layout, setLayout] = useState<"single" | "grid_2x2">("grid_2x2");
+  const [layout, setLayout] = useState<"auto" | "single" | "grid_2x2">("auto");
   // Read automatically when it's set up; entry by hand stays a deliberate choice.
   const [intakeMode, setIntakeMode] = useState<"extract" | "manual">(reading ? "extract" : "manual");
   const chosenMode = useRef(false);
@@ -30,6 +30,9 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
+  const [handheld, setHandheld] = useState(false);
+  useEffect(() => { setHandheld(window.matchMedia("(max-width: 1023px)").matches); }, []);
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
@@ -61,7 +64,7 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
         <h2 className="tf-panel-title">Upload delivery tickets</h2>
         <p className="tf-panel-description">Scans or phone photos: PDF, JPG, or PNG · All selected files must be valid; none are processed if any is rejected</p>
       </div>
-      <a className="tf-link" href="/projects">Manage projects</a>
+      <span className="flex flex-wrap gap-x-4"><a className="tf-link" href="/upload/import">Import a spreadsheet</a><a className="tf-link" href="/projects">Manage projects</a></span>
     </div>
     <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div>
@@ -78,11 +81,17 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
         >
           <span className="mb-2 flex h-10 w-10 items-center justify-center rounded border border-[#dce1e6] bg-white text-xl text-[#657182]" aria-hidden="true">↑</span>
           <span className="text-sm font-semibold text-[#263442]">Drop scanned tickets here, or browse files</span>
-          <span className="mt-1 text-xs text-[#657182]">Single tickets or four tickets per page</span>
+          <span className="mt-1 text-xs text-[#657182]">One or more tickets per page, placed any way</span>
           <input ref={input} type="file" multiple accept=".pdf,.jpg,.jpeg,.png" className="hidden"
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
         </div>
+        {/* Phones and tablets: straight to the camera, one ticket per photo. Each photo is added to the list. */}
+        {handheld && <>
+          <button type="button" className="tf-secondary-button mt-3 w-full" onClick={() => camera.current?.click()}>Take a photo of a ticket</button>
+          <input ref={camera} type="file" accept="image/jpeg,image/png" capture="environment" multiple className="hidden" data-testid="camera-input"
+            aria-label="Take a photo of a ticket" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+        </>}
         {files.length > 0 && <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between text-xs text-[#657182]">
             <span>{files.length} selected file(s)</span>
@@ -122,7 +131,8 @@ export function UploadPanel({ projects, reading, onUploaded, onError }: {
             </div>
           </fieldset>
           <label className="tf-field-label">Document layout
-            <select className="tf-field w-full" value={layout} onChange={(e) => setLayout(e.target.value as "single" | "grid_2x2")}>
+            <select className="tf-field w-full" value={layout} onChange={(e) => setLayout(e.target.value as "auto" | "single" | "grid_2x2")}>
+              <option value="auto">Find the tickets on each page (recommended)</option>
               <option value="grid_2x2">Four tickets per page (2×2)</option>
               <option value="single">One ticket per page</option>
             </select>

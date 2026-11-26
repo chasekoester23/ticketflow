@@ -49,6 +49,16 @@ python scripts/benchmark_ocr.py live --manifest evaluation_data/labels.json \
 
 Prices come from Google's price page, in US dollars per million input and output tokens. The report gives wall time, median and 95th-percentile time per ticket, field accuracy, exact tonnage, failures, tokens and estimated cost per model. It sends your images to Google and costs money, so it refuses to run without `--i-authorize-paid-calls`.
 
+## Digital PDF tickets: read from their own text, no reader call
+
+A ticket a supplier's system printed straight to PDF carries its words as text. Before a crop is sent to the reader, `services/ticket_text.py` looks at the PDF's text layer inside that crop (PyMuPDF word positions, mapped from the rendered pixels with the same zoom the render used). If labelled fields ("Ticket No", "Date", "Supplier", "Material", "Net Tons" / "Quantity 9.5 CY" / "Net 49,000 lb", "Gross", "Tare", "Truck", "Job", "Job No") give ticket number, date, supplier, material, quantity with its unit and job location, each once and without conflict, the ticket is saved from that text. No reader call is made, no `extraction_usage` row is written, and it doesn't count against `MONTHLY_TICKET_READS_PER_ORGANIZATION` (a company over its limit still gets digital tickets read). `raw_extraction["source"]` is `"pdf_text"`, or `"reader"` for a reader call. The ticket is still unapproved and its quantity unconfirmed: a person reviews it exactly as before.
+
+Anything in doubt goes to the configured reader, exactly as before: a missing field, a field printed twice with different values, a quantity with no unit or an unknown one, a net weight that disagrees with the tons, an unparseable number, a rotated page. It never applies to scans: a scanned page has no text layer; a scan carrying a scanner's OCR text (an image under the crop) and hidden text (invisible, transparent or white) are refused too, so text a person can't see never becomes the record. Pounds stay pounds in what was read and are saved as tons by the same rule as a person's entry (`units.pounds_to_tons`, keeping `source_quantity`/`source_unit`). A supplier with no "Supplier:" label is named only when exactly one of the company's own catalog suppliers is a whole line of the ticket.
+
+Measured, synthetic (`reportlab` tickets drawn for the tests, not real supplier PDFs): 20 letter pages, 80 tickets in four layouts (tons, pounds with gross/tare, cubic yards, labels and values in separate columns), with one ticket in five pages missing its job: **76 read from text, 4 reader calls** instead of 80. The text layer costs about 3 ms per page on the development Mac. Scanned fixtures (`make_scan_pdf`) have no text layer and are all sent to the reader. How many real supplier tickets are digital, and labelled this way, is unknown until measured on real files.
+
+The PDF is read from storage a second time for its text (once per file). If AI reading is turned off, the batch still stops before reading, so a digital PDF isn't read from text either; that is unchanged.
+
 ## Settings
 
 | Setting | Default | Notes |
