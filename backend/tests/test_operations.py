@@ -247,7 +247,8 @@ def test_restore_refuses_a_damaged_backup(source, tmp_path):
 
 def test_onboarding_follows_what_actually_exists(client):
     steps = lambda: {s["key"]: s["done"] for s in client.get("/api/onboarding").json()["steps"]}  # noqa: E731
-    assert not any(steps().values())
+    # The fixture's company is already named; nothing else exists yet.
+    assert steps()["company"] and not any(done for key, done in steps().items() if key != "company")
     _seed(1)
     assert steps()["project"] and steps()["upload"] and not steps()["approve"]
     client.post("/api/tickets/1/verify")
