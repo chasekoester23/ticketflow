@@ -89,7 +89,7 @@ const uploads: { href: string; label: string; hint: string; requires: Permission
   { href: "/invoices/documents", label: "Supplier invoice", hint: "PDF, checked against deliveries", requires: "invoices.manage" },
   { href: "/trucking?tab=invoices&new=1", label: "Trucking invoice", hint: "Checked against approved shifts", requires: "invoices.manage" },
 ];
-const PUBLIC_PATHS = ["/welcome", "/login", "/signup"];
+const PUBLIC_PATHS = ["/welcome", "/login", "/signup", "/demo"];
 // Pages change without reloading, so the session is re-checked in the background, at most this often.
 const SESSION_RECHECK_MS = 30_000;
 

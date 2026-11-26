@@ -7,6 +7,7 @@ import "@fontsource/ibm-plex-mono/latin-500.css";
 import "@fontsource/reenie-beanie/latin-400.css";
 import "./globals.css";
 import "./public.css";
+import "./site.css";
 import type { ReactNode } from "react";
 import AuthShell from "./AuthShell";
 

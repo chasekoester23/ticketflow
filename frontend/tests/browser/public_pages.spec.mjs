@@ -28,24 +28,24 @@ test("a first-time visitor to the app lands on the welcome page, with no sign-in
   await mockPublic(page);
   await page.goto("/");
   await expect(page).toHaveURL(/\/welcome$/);
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("before you pay for it");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("Every delivery accounted for.");
   await expect(page.locator("input")).toHaveCount(0);
 });
 
 test("the welcome page leads to sign-in and to create account, and each leads back", async ({ page }) => {
   await mockPublic(page);
   await page.goto("/welcome");
-  await page.getByRole("main").getByRole("link", { name: "Sign in" }).first().click();
+  await page.getByRole("banner").getByRole("link", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "Sign in to Quarvera" })).toBeVisible();
   await page.getByRole("link", { name: "Back to home" }).click();
   await expect(page).toHaveURL(/\/welcome$/);
-  await page.getByRole("main").getByRole("link", { name: "Request access" }).first().click();
-  await expect(page).toHaveURL(/\/signup$/);
-  await expect(page.getByRole("form", { name: "Request access" })).toBeVisible();
+  await page.getByRole("main").getByRole("link", { name: "Request a demo" }).first().click();
+  await expect(page).toHaveURL(/\/demo$/);
+  await expect(page.getByRole("form", { name: "Request a demo" })).toBeVisible();
 });
 
-for (const path of ["/welcome", "/login", "/signup"]) {
+for (const path of ["/welcome", "/login", "/signup", "/demo"]) {
   test(`someone already signed in is sent from ${path} to their workspace`, async ({ page }) => {
     await mockPublic(page, { me: profile("owner") });
     await page.goto(path);
@@ -67,7 +67,7 @@ test("every link on the site goes somewhere", async ({ page, request }) => {
   await mockPublic(page);
   await page.goto("/welcome");
   const hrefs = await page.locator("a[href]").evaluateAll((links) => [...new Set(links.map((link) => link.getAttribute("href")))]);
-  expect(hrefs).toEqual(expect.arrayContaining(["/login", "/signup", "/welcome", "#tickets", "#invoices"]));
+  expect(hrefs).toEqual(expect.arrayContaining(["/login", "/demo", "/welcome", "#how", "#intake", "#reconcile", "#trucking", "#costs"]));
   for (const href of hrefs) {
     if (href.startsWith("#")) await expect(page.locator(href)).toHaveCount(1);
     else expect((await request.get(href)).status(), href).toBe(200);
@@ -80,10 +80,10 @@ test("the site says signing up is gated, labels its examples, and loads nothing 
   await mockPublic(page);
   await page.goto("/welcome");
   await page.evaluate(() => document.fonts.ready);
-  await expect(page.getByRole("main").getByText("You can't sign yourself up yet.")).toBeVisible();
-  await expect(page.getByRole("contentinfo").getByText("fictional examples")).toBeVisible();
+  await expect(page.getByRole("main").getByText("We're working with a small number of contractors to start.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("contentinfo").getByText("fictional demo company", { exact: false })).toBeVisible();
   await expect(page.getByRole("img", { name: /review screen/ })).toBeVisible();
-  expect(await page.locator("img[src^='/site/']").evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
+  expect(await page.locator("img[src^='/site/']").first().evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
   expect(await page.evaluate(() => document.fonts.check('600 40px "Barlow Semi Condensed"'))).toBe(true);
   expect(outside).toEqual([]);
 });
@@ -96,7 +96,7 @@ test("the site can be walked from the keyboard, with a visible focus ring", asyn
     await page.keyboard.press("Tab");
     seen.push(await page.evaluate(() => ({ text: document.activeElement.textContent.trim(), outline: getComputedStyle(document.activeElement).outlineStyle })));
   }
-  expect(seen.map((item) => item.text)).toEqual(expect.arrayContaining(["Tickets", "Invoices", "Sign in", "Request access"]));
+  expect(seen.map((item) => item.text)).toEqual(expect.arrayContaining(["Platform", "How it works", "Sign in", "Request a demo"]));
   expect(seen.every((item) => item.outline !== "none")).toBe(true);
 });
 
@@ -250,11 +250,31 @@ test("the public pages have no automatically detectable accessibility problems",
   await mockPublic(page);
   for (const width of [390, 1366]) {
     await page.setViewportSize({ width, height: 900 });
-    for (const path of ["/welcome", "/login", "/signup"]) {
+    for (const path of ["/welcome", "/login", "/signup", "/demo"]) {
       await page.goto(path);
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       const { violations } = await new AxeBuilder({ page }).analyze();
       expect(violations.map((v) => `${path}@${width}: ${v.id}`)).toEqual([]);
     }
   }
+});
+
+test("a demo request is sent with what the contractor told us, and says what happens next", async ({ page }) => {
+  const log = await mockPublic(page);
+  await page.goto("/demo");
+  await page.getByRole("button", { name: "Request a demo" }).click();
+  await expect(page.getByText("Enter your name.")).toBeVisible();
+  expect(log.requests).toEqual([]);
+  await page.getByLabel("Your name").fill("Pat Example");
+  await page.getByLabel("Company").fill("Example Sitework LLC");
+  await page.getByLabel("Work email").fill("pat@example.com");
+  await page.getByLabel("Your role").selectOption("Controller or finance");
+  await page.getByLabel("Delivery tickets a month").selectOption("500_2000");
+  await page.getByLabel("Hourly trucking").check();
+  await page.getByRole("button", { name: "Request a demo" }).click();
+  await expect(page.getByRole("heading", { name: /We'll be in touch/ })).toBeVisible();
+  expect(log.requests[0]).toMatchObject({ company_name: "Example Sitework LLC", contact_name: "Pat Example", email: "pat@example.com",
+    monthly_tickets: "500_2000", website: "" });
+  expect(log.requests[0].message).toContain("Role: Controller or finance.");
+  expect(log.requests[0].message).toContain("Hourly trucking");
 });
