@@ -726,6 +726,10 @@ class HaulingRate(Base):
     standby_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Time is billed in steps of this many hours (0.25 = quarter hours), rounded "up" or to
+    # the "nearest" step. Blank: billed to the hundredth.
+    billing_increment: Mapped[Decimal | None] = mapped_column(Numeric(4, 2), nullable=True)
+    increment_rounding: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
@@ -765,9 +769,17 @@ class TruckShift(Base):
     applied_hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     applied_standby_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     applied_minimum_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    applied_billing_increment: Mapped[Decimal | None] = mapped_column(Numeric(4, 2), nullable=True)
     approved_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The original time sheet, kept as uploaded.
+    timesheet_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    timesheet_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    timesheet_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # manual | extracted. For extracted: the reader's untouched answer and which model gave it.
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="manual", server_default="manual")
+    extraction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
@@ -789,6 +801,55 @@ class TruckShiftEvent(Base):
     __tablename__ = "truck_shift_events"
     id: Mapped[int] = mapped_column(primary_key=True)
     shift_id: Mapped[int] = mapped_column(ForeignKey("truck_shifts.id"), nullable=False, index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    field: Mapped[str] = mapped_column(String(40), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class HaulingInvoice(Base):
+    """A hauler's bill, as entered or drafted from its PDF. Each line is checked against
+    approved truck shifts (services/hauling_invoices.py); nothing here approves payment."""
+    __tablename__ = "hauling_invoices"
+    __table_args__ = (Index("uq_hauling_invoice_number", "organization_id", "hauler_id", "number_key", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    hauler_id: Mapped[int] = mapped_column(ForeignKey("haulers.id"), nullable=False, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    invoice_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    number_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    invoice_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_from: Mapped[date] = mapped_column(Date, nullable=False)
+    period_to: Mapped[date] = mapped_column(Date, nullable=False)
+    document_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    document_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    document_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class HaulingInvoiceLine(Base):
+    __tablename__ = "hauling_invoice_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("hauling_invoices.id"), nullable=False, index=True)
+    line_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    # hours | standby | minimum | fee
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    truck_identifier: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    work_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+
+class HaulingInvoiceEvent(Base):
+    """Append-only history of a hauling invoice: entered, corrected, its file attached."""
+    __tablename__ = "hauling_invoice_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("hauling_invoices.id"), nullable=False, index=True)
     actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     field: Mapped[str] = mapped_column(String(40), nullable=False)
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)

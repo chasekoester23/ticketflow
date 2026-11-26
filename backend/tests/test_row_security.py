@@ -26,7 +26,7 @@ from .test_t_tenant_sweep import MARK, NOT_SHOWING_MARKS, _as, _identity, _route
 
 pytestmark = pytest.mark.skipif(not TEST_DATABASE_URL, reason="Row-level security is PostgreSQL's (CI).")
 COMPANY_COLUMN = {"batches", "tickets", "projects", "invoice_comparisons", "invoice_documents", "extraction_usage",
-                  "exception_reviews", "exception_events", "haulers", "trucks", "hauling_rates", "truck_shifts"}
+                  "exception_reviews", "exception_events", "haulers", "trucks", "hauling_rates", "truck_shifts", "hauling_invoices"}
 
 
 @pytest.fixture()
@@ -63,7 +63,8 @@ def test_every_core_table_has_a_policy_and_it_is_on(rls):
                                   "invoice_documents", "invoice_ticket_refs", "invoice_ticket_links", "invoice_draft_lines",
                                   "invoice_comparison_events", "invoice_document_events", "scan_slots", "scan_events",
                                   "extraction_usage", "exception_reviews", "exception_events",
-                                  "haulers", "trucks", "hauling_rates", "truck_shifts", "shift_allocations", "truck_shift_events"}
+                                  "haulers", "trucks", "hauling_rates", "truck_shifts", "shift_allocations", "truck_shift_events",
+                                  "hauling_invoices", "hauling_invoice_lines", "hauling_invoice_events"}
     with rls["engine"].connect() as connection:
         assert all(row_security.status(connection)["tables"].values())
 

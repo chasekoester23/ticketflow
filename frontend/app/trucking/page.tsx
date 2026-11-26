@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ApiError, EQUIPMENT_LABEL, HaulerRow, HaulingRate, Project, ShiftFilters, ShiftInput, ShiftsPage, Ticket, TruckShift,
-  approveShift, createHauler, createHaulingRate, createShift, createTruck, deleteHaulingRate, editShift, linkShiftDeliveries,
-  listHaulers, listHaulingRates, listProjects, listShifts, reopenShift, searchRecords, shiftHistory,
+  ApiError, EQUIPMENT_LABEL, HaulerRow, HaulingInvoice, HaulingRate, Project, ShiftFilters, ShiftInput, ShiftsPage, Ticket, TruckShift,
+  approveShift, attachTimesheet, createHauler, createHaulingRate, createShift, createTruck, deleteHaulingRate, disputeShift, editShift,
+  linkShiftDeliveries, listHaulers, listHaulingInvoices, listHaulingRates, listProjects, listShifts, reopenShift, searchRecords,
+  shiftHistory, timesheetUrl,
 } from "../../lib/api";
 import { useAccount } from "../account-context";
+import { HaulingInvoices } from "./HaulingInvoices";
 
 const STATUS: Record<TruckShift["status"], [string, string]> = {
   needs_review: ["Awaiting approval", "tf-status-attention"], approved: ["Approved", "tf-status-open"], disputed: ["Disputed", "tf-status-error"],
@@ -120,6 +122,17 @@ function Detail({ shift, projects, haulers, canEdit, canApprove, onChanged }: {
         <div><dt className="tf-stat-label">Cost code</dt><dd>{shift.cost_code ?? "—"}</dd></div>
       </dl>
 
+      <div className="flex flex-wrap items-center gap-3 text-[12px]" data-testid="shift-timesheet">
+        {shift.timesheet ? <a className="tf-link text-[12px]" href={timesheetUrl(shift.id)} target="_blank" rel="noreferrer">Original time sheet: {shift.timesheet.name}</a>
+          : <span className="text-[#5f6c7b]">No time sheet attached.</span>}
+        {shift.source === "extracted" && <span className="tf-status">Read from the time sheet</span>}
+        {canEdit && <label className="tf-link cursor-pointer text-[12px]">{shift.timesheet ? "Replace" : "Attach the time sheet"}
+          <input type="file" className="sr-only" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void run(() => attachTimesheet(shift.id, file));
+          }} /></label>}
+      </div>
+
       {approved && shift.approved ? <div className="tf-alert tf-alert-good" data-testid="shift-approved">
         Approved by {shift.approved.by ?? "—"}: {hours(shift.approved.work_hours)} working, {hours(shift.approved.standby_hours)} standby,
         {" "}{hours(shift.approved.billable_hours)} billable at {money(shift.approved.hourly_rate)}/h = <b>{money(shift.cost)}</b>. Locked.
@@ -151,7 +164,7 @@ function Detail({ shift, projects, haulers, canEdit, canApprove, onChanged }: {
 
       {error && <p role="alert" className="tf-alert tf-alert-bad">{error}</p>}
 
-      {!approved && canApprove && <form className="space-y-3 border-t border-[#e9edf0] pt-4" aria-label="Approve shift" onSubmit={(e) => {
+      {!approved && shift.status !== "disputed" && canApprove && <form className="space-y-3 border-t border-[#e9edf0] pt-4" aria-label="Approve shift" onSubmit={(e) => {
         e.preventDefault();
         void run(() => approveShift(shift.id, shift.revision, { work_hours: work, standby_hours: standby,
           ...(split.length ? { allocations: split.map((a) => ({ project_id: Number(a.project_id), cost_code: a.cost_code.trim() || null, hours: a.hours })) } : {}) }));
@@ -176,6 +189,13 @@ function Detail({ shift, projects, haulers, canEdit, canApprove, onChanged }: {
           <button type="button" className="tf-secondary-button" onClick={() => setSplit([...split, { project_id: String(shift.project_id), cost_code: shift.cost_code ?? "", hours: "" }])}>
             Split across projects</button>
         </div>
+      </form>}
+
+      {!approved && canApprove && <form className="flex flex-wrap items-end gap-2 border-t border-[#e9edf0] pt-4" aria-label="Dispute"
+        onSubmit={(e) => { e.preventDefault(); void run(() => disputeShift(shift.id, shift.revision, shift.status === "disputed" ? "needs_review" : "disputed", reason)); }}>
+        <label className="tf-field-label min-w-[240px] flex-1">{shift.status === "disputed" ? "What was agreed (settles the dispute)" : "Reason to dispute with the hauler"}
+          <input className="tf-field w-full" minLength={3} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+        <button type="submit" className="tf-secondary-button" disabled={busy || reason.trim().length < 3}>{shift.status === "disputed" ? "Settle dispute" : "Dispute"}</button>
       </form>}
 
       {approved && canApprove && <form className="flex flex-wrap items-end gap-2 border-t border-[#e9edf0] pt-4" onSubmit={(e) => { e.preventDefault(); void run(() => reopenShift(shift.id, shift.revision, reason)); }}>
@@ -207,7 +227,7 @@ function Setup({ haulers, rates, projects, canEdit, canPrice, onChanged }: {
   const [error, setError] = useState<string | null>(null);
   const [hauler, setHauler] = useState("");
   const [truck, setTruck] = useState({ hauler_id: "", identifier: "", equipment_type: "quad_axle" });
-  const [rate, setRate] = useState({ hauler_id: "", project_id: "", equipment_type: "", hourly_rate: "", minimum_hours: "", standby_rate: "", effective_from: "", effective_to: "" });
+  const [rate, setRate] = useState({ hauler_id: "", project_id: "", equipment_type: "", hourly_rate: "", minimum_hours: "", standby_rate: "", effective_from: "", effective_to: "", billing_increment: "", increment_rounding: "up" });
   const act = (fn: () => Promise<void>) => fn().then(onChanged).then(() => setError(null)).catch((e) => setError((e as Error).message));
   const haulerName = (id: number) => haulers.find((h) => h.id === id)?.name ?? `#${id}`;
   const code = (id: number | null) => id === null ? "All projects" : projects.find((p) => p.id === id)?.code ?? `#${id}`;
@@ -234,7 +254,8 @@ function Setup({ haulers, rates, projects, canEdit, canPrice, onChanged }: {
         e.preventDefault();
         void act(() => createHaulingRate({ hauler_id: Number(rate.hauler_id), project_id: rate.project_id ? Number(rate.project_id) : null,
           equipment_type: rate.equipment_type || null, hourly_rate: rate.hourly_rate, minimum_hours: rate.minimum_hours || null,
-          standby_rate: rate.standby_rate || null, effective_from: rate.effective_from || null, effective_to: rate.effective_to || null }));
+          standby_rate: rate.standby_rate || null, effective_from: rate.effective_from || null, effective_to: rate.effective_to || null,
+          billing_increment: rate.billing_increment || null, increment_rounding: rate.billing_increment ? rate.increment_rounding as "up" | "nearest" : null }));
       }}>
         <label className="tf-field-label">Hauler<select className="tf-field w-full" value={rate.hauler_id} onChange={(e) => setRate({ ...rate, hauler_id: e.target.value })}>
           <option value="">Select</option>{haulers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select></label>
@@ -247,15 +268,20 @@ function Setup({ haulers, rates, projects, canEdit, canPrice, onChanged }: {
         <label className="tf-field-label">Standby $/h<input inputMode="decimal" className="tf-field w-full" value={rate.standby_rate} onChange={(e) => setRate({ ...rate, standby_rate: e.target.value })} /></label>
         <label className="tf-field-label">From<input type="date" className="tf-field w-full" value={rate.effective_from} onChange={(e) => setRate({ ...rate, effective_from: e.target.value })} /></label>
         <label className="tf-field-label">Until<input type="date" className="tf-field w-full" value={rate.effective_to} onChange={(e) => setRate({ ...rate, effective_to: e.target.value })} /></label>
+        <label className="tf-field-label">Billed in<select className="tf-field w-full" value={rate.billing_increment} onChange={(e) => setRate({ ...rate, billing_increment: e.target.value })}>
+          <option value="">Hundredths</option><option value="0.25">Quarter hours</option><option value="0.5">Half hours</option><option value="1">Whole hours</option></select></label>
+        {rate.billing_increment && <label className="tf-field-label">Rounded<select className="tf-field w-full" value={rate.increment_rounding} onChange={(e) => setRate({ ...rate, increment_rounding: e.target.value })}>
+          <option value="up">Up</option><option value="nearest">To nearest</option></select></label>}
         <button className="tf-primary-button" disabled={!rate.hauler_id || !rate.hourly_rate}>Save agreement</button>
       </form>}
       {rates.length > 0 ? <div className="tf-table-wrap"><table className="tf-table" aria-label="Hourly agreements">
-        <thead><tr><th>Hauler</th><th>Applies to</th><th>Truck type</th><th className="text-right">$/hour</th><th className="text-right">Minimum</th><th className="text-right">Standby</th><th>From</th><th>Until</th><th /></tr></thead>
+        <thead><tr><th>Hauler</th><th>Applies to</th><th>Truck type</th><th className="text-right">$/hour</th><th className="text-right">Minimum</th><th className="text-right">Standby</th><th>From</th><th>Until</th><th>Billed in</th><th /></tr></thead>
         <tbody>{rates.map((r) => <tr key={r.id}><td className="font-semibold">{haulerName(r.hauler_id)}</td><td>{code(r.project_id)}</td>
           <td>{r.equipment_type ? EQUIPMENT_LABEL[r.equipment_type] : "Any"}</td><td className="text-right tabular-nums">{money(r.hourly_rate)}</td>
           <td className="text-right tabular-nums">{r.minimum_hours ? hours(r.minimum_hours) : "—"}</td>
           <td className="text-right tabular-nums">{r.standby_rate ? money(r.standby_rate) : <span className="text-[#5f6c7b]">Not payable</span>}</td>
           <td>{r.effective_from ? day(r.effective_from) : "Any date"}</td><td>{r.effective_to ? day(r.effective_to) : "Open-ended"}</td>
+          <td>{r.billing_increment ? `${r.billing_increment} h, ${r.increment_rounding}` : "Hundredths"}</td>
           <td className="text-right">{canPrice && <button className="text-[11px] font-semibold text-[#8a5260] hover:underline" onClick={() => {
             if (window.confirm("Remove this agreement? Approved shifts keep the rate they were approved at.")) void act(() => deleteHaulingRate(r.id));
           }}>Remove</button>}</td></tr>)}</tbody>
@@ -276,6 +302,9 @@ export default function TruckingPage() {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState<ShiftForm>(EMPTY_SHIFT);
   const [error, setError] = useState<string | null>(null);
+  const [invoices, setInvoices] = useState<HaulingInvoice[]>([]);
+  const canInvoice = can("invoices.manage");
+  const loadInvoices = useCallback(async () => { setInvoices(await listHaulingInvoices()); }, []);
 
   const loadSetup = useCallback(async () => {
     const [h, r] = await Promise.all([listHaulers(), listHaulingRates()]);
@@ -291,7 +320,10 @@ export default function TruckingPage() {
     const initial: ShiftFilters = {};
     for (const key of ["project_id", "hauler_id", "status", "date_from", "date_to"] as const) { const v = params.get(key); if (v) initial[key] = v; }
     setFilters(initial);
+    const wanted = Number(params.get("shift_id"));
+    if (wanted) setSelected(wanted);
     setReady(true);
+    loadInvoices().catch(() => setInvoices([]));
     listProjects().then(setProjects).catch(() => setProjects([]));
     loadSetup().catch((e) => setError(e.message));
   }, [loadSetup]);
@@ -358,8 +390,11 @@ export default function TruckingPage() {
           </table></div>}
       </section>
       {shift && <Detail shift={shift} projects={projects} haulers={haulers} canEdit={canEdit} canApprove={canApprove}
-        onChanged={(updated) => { replace(updated); void load(); }} />}
+        onChanged={(updated) => { replace(updated); void load(); void loadInvoices().catch(() => undefined); }} />}
     </div>
+
+    <HaulingInvoices invoices={invoices} haulers={haulers} projects={projects} canManage={canInvoice}
+      onChanged={loadInvoices} onOpenShift={(id) => { setSelected(id); window.scrollTo({ top: 0 }); }} />
 
     <Setup haulers={haulers} rates={rates} projects={projects} canEdit={canEdit} canPrice={canPrice} onChanged={loadSetup} />
     <p className="text-[11px] leading-5 text-[#5f6c7b]">Hours are on site less the unpaid break, to the hundredth. Each cost line rounds half up to the cent. Approved cost appears on the <Link prefetch={false} className="tf-link text-[11px]" href="/">Overview</Link> separately from material cost.</p>

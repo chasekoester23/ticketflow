@@ -33,6 +33,9 @@ CATEGORIES = {
     "unmatched_line": "Invoice line with nothing to compare",
     "needs_review": "Needs a person to decide",
     "invoice_arithmetic": "Invoice arithmetic",
+    "hours": "Billed truck hours differ from approved",
+    "missing_shift": "Billed truck time with no shift",
+    "unsupported_fee": "Fee not in an agreement",
 }
 SEVERITIES = ("high", "medium", "low")
 # Billed above approved by at least this much in one cause is high severity.
@@ -69,6 +72,11 @@ class Detected:
     # Approved deliveries not billed (tickets, tons, cost): owed later, never an overcharge.
     unbilled_tickets: int | None = None
     unbilled_cost: Decimal | None = None
+    # Hourly trucking: the shift and hauling invoice involved, and the line all of a cause's
+    # parts belong to (so they're capped at its difference together).
+    shift_id: int | None = None
+    hauling_invoice_id: int | None = None
+    group: str | None = None
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -84,7 +92,7 @@ class Detected:
 def _severity(category: str, amount: Decimal | None) -> str:
     if category == "duplicate" or (amount is not None and amount >= HIGH_AMOUNT):
         return "high"
-    if (amount is not None and amount > 0) or category in ("missing_ticket", "unmatched_line"):
+    if (amount is not None and amount > 0) or category in ("missing_ticket", "unmatched_line", "missing_shift", "unsupported_fee"):
         return "medium"
     return "low"
 
@@ -152,6 +160,14 @@ def detect(db: Session, organization_id: int, items: list[InvoiceComparison], li
             project_id=group[0].project_id if len({g.project_id for g in group}) == 1 else None,
             supplier=group[0].supplier_name, material=group[0].material_name,
             invoice_numbers=sorted({g.invoice_number for g in group}), line_ids=pattern["line_ids"]))
+    from . import hauling_invoices
+    hauling_lines, shifts = hauling_invoices.load(db, organization_id)
+    for f in hauling_invoices.reconcile(hauling_lines, shifts)[1]:
+        found.append(Detected(
+            key=f.key, category=f.category, severity=_severity(f.category, f.amount), title=f.title, explanation=f.explanation,
+            project_id=f.project_id, supplier=f.hauler, material="Hourly trucking",
+            invoice_numbers=[f.invoice_number] if f.invoice_number else [], amount=f.amount, line_billed=f.billed,
+            line_approved=f.expected, shift_id=f.shift_id, hauling_invoice_id=f.invoice_id, group=f.group))
     gaps = reconciliation.unbilled_gaps_by_project(db, organization_id)
     for project in db.query(Project).filter(Project.organization_id == organization_id, Project.id.in_(list(gaps))):
         # One exception per supplier and material in a project, keyed by their names, not by
@@ -181,14 +197,15 @@ def summarize(open_items: list[dict], all_reviews: list[dict]) -> dict:
     positive effect, each counted once. Recovery is only what people recorded."""
     # Per invoice line, never more than the line actually billed above approved: the causes
     # leave out rounding, so their sum can run a cent over it.
-    per_line: dict[int, Decimal] = {}
-    caps: dict[int, Decimal] = {}
+    per_line: dict[object, Decimal] = {}
+    caps: dict[object, Decimal] = {}
     loose: list[Decimal] = []
     for i in open_items:
         if i["amount"] is None or i["amount"] <= 0:
             continue
-        if len(i["line_ids"]) == 1 and i["line_billed"] is not None and i["line_approved"] is not None:
-            line = i["line_ids"][0]
+        group = i.get("group") or (i["line_ids"][0] if len(i["line_ids"]) == 1 else None)
+        if group is not None and i["line_billed"] is not None and i["line_approved"] is not None:
+            line = group
             per_line[line] = per_line.get(line, Decimal(0)) + i["amount"]
             caps[line] = max(Decimal(0), i["line_billed"] - i["line_approved"])
         else:

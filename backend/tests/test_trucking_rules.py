@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.trucking import HaulRate, ShiftError, allocate, choose_rate, hours_between, price_shift
+from app.services.trucking import HaulRate, ShiftError, allocate, choose_rate, hours_between, in_steps, price_shift, to_increment
 
 D = Decimal
 
@@ -104,3 +104,22 @@ def test_allocation_adds_up_to_the_cent(total, shares, parts):
 def test_allocation_refuses_nothing_to_allocate():
     with pytest.raises(ShiftError):
         allocate(D("10"), [D("0")])
+
+
+@pytest.mark.parametrize("hours, increment, rounding, billed", [
+    (D("7.83"), D("0.25"), "up", D("8.00")),       # 7 h 50 m, quarter hours rounded up
+    (D("7.83"), D("0.25"), "nearest", D("7.75")),
+    (D("7.88"), D("0.25"), "nearest", D("8.00")),   # 7 h 52.8 m is past the half step
+    (D("7.625"), D("0.25"), "nearest", D("7.75")),  # exactly half a step rounds up
+    (D("8.00"), D("0.25"), "up", D("8.00")),        # already a whole step
+    (D("6.10"), D("0.5"), "up", D("6.50")),
+    (D("6.10"), None, None, D("6.10")),             # no increment: to the hundredth
+])
+def test_billing_increments(hours, increment, rounding, billed):
+    assert to_increment(hours, increment, rounding) == billed
+
+
+def test_increment_steps_and_bad_settings():
+    assert in_steps(D("8.25"), D("0.25")) and not in_steps(D("8.10"), D("0.25")) and in_steps(D("8.10"), None)
+    with pytest.raises(ShiftError):
+        to_increment(D("8"), D("0.25"), "sideways")
